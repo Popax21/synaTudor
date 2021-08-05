@@ -1,0 +1,1949 @@
+synaCreateDevice:
+-> pnp stuff
+-> power policy stuff
+-> CreateBiometricDevice
+	-> Create biometric device
+	-> set IDeviceInit::SetExtension(biom_device.ext);
+	-> CBiometricDeviceUSB::Initialize
+		-> sets power policy ownership
+		-> CDriver::CreateDevice
+			-> gets device init handle
+			-> creates WDF Device
+			-> allocates CDevice
+			-> set Context to CDevice
+		-> creates IO queue
+			default queue: false
+			dispatch type: paralel
+			power managed: false
+			allow zero length reqs: false
+			handles DeviceControls
+			-> callback:
+				-> creates a CRequest object
+				-> call CBiometricDeviceUSB::IQueueCallback::OnDeviceIoControl
+		-> reads wbfMode from registry
+		-> creates & enables driver interface 
+
+CRequest::SetInformation:
+-> call WdfRequestSetInformation
+
+CRequest::Complete:
+-> call WdfRequestComplete
+-> subtract one from reference count
+
+CRequest::CompleteWithInformation:
+-> call WdfRequestSetInformation
+-> call CRequest::Complete
+
+CRequest::GetParameters
+-> call WdfRequestGetParameters/WdfRequestRetrieveInputBuffer/WdfRequestRetrieveOutputBuffer
+
+CBiometricDevice::GetRequestParameters:
+-> retrieve input/ouput buffer
+
+CBiometricDeviceUSB::OnPrepareHardware:
+-> proxyed by onPrepareHardware
+-> creates USB target device
+-> queries device info
+-> if wbfMode == false: starts queue, else calls CBiometricDevice::PrepareHardware
+	-> creates "Device Data" property
+		-> contains device statistics
+	-> validates data from previous fail
+		-> reads stats from registry
+		-> resets them if they're more than 30000 ticks old
+		-> if failure count is greater than 4, subtract one and issue trace message
+		-> writes stats back
+	-> gets device name
+	-> initializes "NISE Core" (CBiometricDevice::InitializeNiseCore)
+	-> processes power settings (ProcessDevicePowerSettings)
+		-> assigns S0 settings: enabled=WdfUseDefault, dxState=PowerDeviceD3, idleCaps=IdleCannotWakeFromS0, idleTimeoutType=SystemManagedIdleTimeout, idleTimeout=5000ms, powerUpIdleDeviceOnSystemWake=false
+		-> assigns Sx settings: dxState=PowerDeviceMaximum
+	-> creates CEohMohStgOnHostEIV
+	-> starts a new suspended thread
+		-> allocates a CDeviceSimpleWaker (active for the entire thread lifespan)
+		-> calls CBiometricDevice::ProcessPairing
+	-> registers power state control (CUWPPowerStateControl)
+		-> calls callback on resume/suspended (CBiometricDeviceUSB::PowerCallback)
+			-> updates power state variable
+			-> if suspending:
+				-> call method on EIV object (nop)
+				-> calls some misterious function
+					-> TODO
+				-> sets suspending flag
+			-> else:
+				-> if the capture request isn't NULL, start the capture thread (CBiometricDevice::startCaptureThread)
+
+CBiometricDeviceUSB::OnReleaseHardware:
+-> proxyed by onReleaseHardware
+-> if wbfMode == false: stops & purges queue, else calls CBiometricDevice::ReleaseHardware
+	-> if the pairing thread exists, resume and wait for it
+	-> TODO destructs some obj
+	-> releases the statistics property
+	-> waits for the capture thread to exit
+	-> destroys the EIV object
+	-> unregisters power state control
+	-> uninitializes "NISE Core" (CBiometricDevice::UninitializeNiseCore)
+-> TODO does some cleanup
+
+CBiometricDevice::OnD0Entry
+-> proxied by onD0Entry
+-> if wbfMode == false: NOP
+-> logs the current system power action
+-> if we're returning from at least D3, reinitialize "NISE Core"
+-> if we have a running pairing thread, resume it
+
+CBiometricDevice::OnD0Exit:
+-> proxied by onD0Exit
+-> if wbfMode == false: NOP
+-> logs the current system power action
+-> if the current system power action isn't "None", and there is a pairing thread, wait for it to exit
+-> if we're entering at least D3:
+	-> if the capture request is null, wait for the capture thread to finish (CBiometricDevice::waitForCaptureThreadToComplete)
+	-> else abort capturing images (CBiometricDevice::abortCaptureImage) and set a misterious flag
+		-> TODO
+	-> discard EIV entrollement (CEohMohEIV::EnrollmentDiscard)
+		-> TODO
+	-> uninitialize "NISE Core"
+	-> set "initialized" flag to false
+
+CBiometricDevice::OnSurpriseRemoval:
+-> proxied by onSurpriseRemoval
+-> sets "device removed" flag
+-> completes pending request (CBiometricDevice::CompletePendingRequest)
+-> aborts image capture (CBiometricDevice::abortCaptureImage)
+
+CBiometricDevice::OnQueryRemove:
+-> proxied by onQueryRemove
+-> always returns 0
+
+CBiometricDevice::OnQueryStop:
+-> proxied by onQueryStop
+-> sets "device removed" flag
+-> aborts image capture (CBiometricDevice::abortCaptureImage)
+-> always returns 0
+
+CBiometricDeviceUSB::DeviceReset
+-> if "is initializing" is not set, exit
+-> try calling usb_device->ResetDevice
+	-> if failure, set event Global\SynaDevResetEvent, set parameter & global "resetting" to true and exit
+-> set "initialized" and "resetting" to false
+
+CDeviceSimpleWaker:
+-> wrapper around WdfDeviceStopIdle/WdfDeviceResumeIdle
+
+CDeviceIdleSuspendResume:
+-> wrapper around CDeviceSimpleWaker
+-> also aborts/restarts the capture thread
+
+CBiometricDevice::InitializeNiseCore:
+-> sets debug callback
+-> initializes the vfmUtil session
+-> opens the device through vfmUtil using interface 2 & gets a vfm device handle
+	-> initializes vfm (vfmInitialize)
+		-> initializes palCrypto (palCryptoInitialize)
+			-> loads the RSA+AES crypto container "VFS key container", or creates it if it doesn't exist
+		-> initializes palUsbDriver (palUsbDriverInit) (nop)
+		-> gets the ssi module definition
+	-> if no interface given, assume not in WBF mode and try to find the device interface
+	-> opens the device through vfm (vfmDeviceOpen)
+		-> allocates 2 objects: vfmDeviceHandle & vfmDevice
+		-> copys interface path to the device handle
+		-> opens the device through palUsbDriver (palUsbDriverOpen, palUsbDriverCreate)
+			-> if useWbf flag is set, use interface 3 if none specified, else 1
+			-> querys the USB interface (palWinUsbQueryInterface)
+				-> returns a interface filled with (WinUSB) pointers
+			-> copies the device interface to the interface struct
+			-> call palWinUsbDeviceHandleOpen
+			-> creates a critical section
+			-> creates a DPC (palDPCCreate)
+				-> thread func (palUsbDriverThreadFunc):
+					-> while not DPC.exit
+						-> join with DPC event
+						-> call palUsbDriverReadInterrupt
+							-> if the HID context doesn't have a handle, but is initialized
+								-> call palWinHidOpen
+									-> find HID device via VID/PID, and open it
+							-> if the HID context doesn't have a handle
+								-> read from interrupt endpoint (palWinUsbBulkRead)
+							-> else
+								-> call palWinHidRecev
+									-> reads from file handle
+								-> first byte of output must be 0x12
+								-> copy following 7 bytes to HID buffer
+						-> if DPC exit flag is set, log warning and exit
+						-> enter critical section
+						-> if listening is active
+							-> copy hid error to driver struct
+							-> if we have a callback, invoke it
+							-> disable listening
+						-> exit critical section
+		-> performs palUsbDriverIoControl IOCTL 0xc (invalid??!?!?)
+		-> calls tudorOpen
+			-> allocates the sensor object (tudorSensorCreate)
+			-> gets the communcation interface (always type 2 -> USB)
+			-> calls protocol's open function
+				-> stores reference to palUsbDevice in sensor
+		-> sets some device pointers
+			-> TODO
+	-> creates a critical section & the capture event
+-> Set EIV's session, if it exists
+-> sets initialized flag
+-> Call some NOP EIV function
+
+CBiometricDevice::UninitializeNiseCore:
+-> if some flag is set (always zero), calls some EIV virtual function
+-> closes the vfm device through vfmUtil (vfmUtilDeviceClose)
+	-> close the vfm device through vfm (vfmDeviceClose)
+		-> uninitialize the device (_vfmDeviceUninitialize)
+			-> calls an unknown function (TODO)
+			-> closes the sensor (tudorSensorClose)
+				-> closes the TLS session (tudorTlsSessionClose)
+				-> closes the protocol (tudorUsbProtoClose)
+					-> frees some memory
+				-> frees some memory
+			-> some weird matcher stuff (TODO)
+		-> performs palUsbDriverIoControl IOCTL 0xd (invalid??!?!?)
+		-> closes the usb driver (palUsbDriverClose)
+			-> if the interface has references, releases the interface, else:
+				-> set the HID event
+				-> destroy the dpc
+				-> close & cleanup the interface
+					-> closes the interface file handle & unloads WinUSB
+				-> frees some memory & deletes the critical section
+				-> closes the HID context
+					-> closes some handels & deletes the critical section
+		-> free some memory
+	-> uninitialize vfm (vfmUninitialize)
+		-> uninitializes palUsbDriver (palUsbDriverUninit) (nop)
+		-> uninitializes palCrypto (palCryptoUninitialize)
+			-> releases the key container
+	-> destroy the capture event & critical section
+-> releases IDeviceExtension
+-> releases the vfm session
+
+CBiometricDevice::InitializeDevice:
+-> if the pairing thread is running, and we're not it, wait until the pairing thread exits
+-> sets the "is initializing" flag
+	-> when exiting: reset "is initializing" flag
+-> enter the critical section
+-> if already initialized, exit
+-> if we have pairing data, set param blob id=0x65 (vfmSetParamBlob)
+-> set some integer to 4 (phase?)
+-> try 6 times:
+	-> call vfmDeviceInitialize
+		-> if successful, set init_fails = 0
+		-> else set it to min(4, fails+1)
+	-> if there is a stats property, update it
+	-> if vfmDeviceInitialize returned 0xcc (pair device)
+		-> set phase (?) to 4
+		-> return 0x800700cc
+	-> if vfmDeviceInitialize returned 0 (success)
+		-> if another returned int is 3 (caller reset)
+			-> call DeviceReset, and if it says to delay, exit
+		-> if the int is 0
+			-> set the initialized flag
+			-> set phase (?) to 3
+			-> call getDeviceInfo
+			-> exit
+		-> if the int is 2
+			-> set phase (?) to 2
+			-> sleep for 0 ms -> yield remaining time slice
+	-> else
+		-> set phase (?) to 6
+		-> if attempts >= 4, set in_init flag to false
+		-> call DeviceReset, and if it says to delay, exit
+
+CBiometricDevice::ProcessPairing:
+-> start in state 0
+-> while true:
+	-> if state == 0, call InitAndGetState
+		-> call CBiometricDevice::InitializeDevice (store error)
+		-> call CBiometricDevice::getDeviceInfo (ignore error)
+		-> if fails with error 0x800700cc (missing pairing data)
+			-> call readPairingData with device id
+				-> reads HKEY_CURRENT_USER\Software\Synaptics\PairingData\{DEVICE ID}
+			-> call CBiometricDevice::InitializeDevice again
+		-> if the property "PairingInProcess" is true, enter state 1
+		-> if the property "UnairingInProcess" (typo) is true, enter state 2
+		-> if the property "PartitionCreateInProcess" is false
+			-> do ... while the property "DeviceUpdateInProcess" exists
+				-> call CBiometricDevice::DoDeviceUpdate
+					-> if the property "DeviceUpdateInProcess" is true, and the BLOB "UpdateContext" exists
+						-> set context as parameter blob 0x6b (context), and free context afterwards (vfmSetParamBlob)
+					-> do ... while action != 0
+						-> call vfmDeviceUpdateProcess
+						-> if action == 3 and the global "resetting" flag is set
+							-> store parameter blob 0x6b (context) as "UpdateContext" (vfmGetParamBlob)
+							-> set property "DeviceUpdateInProcess" to true
+							-> exit
+					-> free context
+					-> set property "DeviceUpdateInProcess" to false
+					-> if successfull, set update fails to zero, else increment them if they're below 5
+					-> update "updateFirmwareFailureCount"
+				-> if resetting, enter state 5 and exit
+		-> if the property "PartitionCreateInProcess" is false
+			-> call CBiometricDevice::GetHostPartitionInfo
+				-> call vfmGetHostPartitionInfo
+					-> wrapper around tudor IOCTL 0x20 (tudorIoCtl)
+				-> if it returned 0, do partition if no partition exists
+				-> if it returned 0xdc, do_partition = true
+		-> else do_partition = true
+		-> while do_partition
+			-> call CBiometricDevice::DoPartition
+				-> if the property "PartitionCreateInProcess" is true, and the BLOB "PartitionContext" exists
+					-> set context as parameter blob 0x6e (context), and free context afterwards (vfmSetParamBlob)
+				-> do ... while action != 0
+					-> call vfmDeviceCreatePartitions
+						-> proxy to tudor IOCTL 0x1f (tudorIoCtl)
+					-> if action == 3 and the global "resetting" flag is set
+						-> store parameter blob 0x6e (context) as "UpdateContext" (vfmGetParamBlob)
+						-> set property "PartitionCreateInProcess" to true
+						-> exit
+				-> set property "PartitionCreateInProcess" and "EraseDb" to false
+				-> free some buffer
+			-> if resetting, enter state 5 and exit
+			-> do_partition = value of the property "PartitionCreateInProcess"
+		-> if the second initialization attempt also failed with 0x800700cc (missing pairing data)
+			-> if the sensor is paired, enter state 2, else enter state 1 (CBiometricDevice::IsPaired)
+			-> clear device info
+		-> else if initializion succeeded
+			-> print device info (CBiometricDevice::pritnDeviceInfo)
+			-> if provision state is 2, 3 or 5
+				-> if the sensor is paired, enter state 3, else enter state 1 (CBiometricDevice::IsPaired)
+			-> else
+				-> enter state 3
+		-> else enter state 4
+	-> if state == 1
+		-> call CBiometricDevice::DoPairing
+			-> if the property "PairingInProcess" is true, and the BLOB "PairingContext" exists
+				-> set context as parameter blob 0x6c (UNINPLEMENTED), and free context afterwards (vfmSetParamBlob)
+			-> do ... while action != 0 
+				-> while true
+					-> call vfmSecurityDoPair
+						-> proxies to tudor IOCTL 9 (tudorIoCtl)
+					-> if return code != 0x74 (buffer to small), break
+					-> allocate pairing data buffer
+				-> if return code != 0
+					-> set property "PairingInProcess" to false
+					-> increment ownership failure count if it's below 5
+					-> update "SetOwnershipFailureCount"
+					-> exit
+				-> if action == 3 and the global "resetting" flag is set
+					-> store parameter blob 0x6c (UNINPLEMENTED) as "PairingContext" (vfmGetParamBlob)
+					-> set property "PairingInProcess" to true
+					-> exit
+			-> copy pairing data blob to device field
+			-> write pairing data (writePairingData)
+				-> writes HKEY_CURRENT_USER\Software\Synaptics\PairingData\{DEVICE ID}
+			-> set property "PairingInProcess" to false
+		-> set is_initialized to false
+		-> goto state 0
+	-> if state == 2
+		-> call CBiometricDevice::DoUnpairing
+			-> if the property "UnairingInProcess" is true, and the BLOB "UnpairingContext" exists
+				-> set context as parameter blob 0x6c (UNINPLEMENTED), and free context afterwards (vfmSetParamBlob)
+			-> do ... while action != 0 
+				-> while true
+					-> call vfmSecurityUnPair
+						-> proxies to tudor IOCTL 10 (tudorIoCtl)
+					-> if return code != 0x74 (buffer to small), break
+					-> allocate pairing data buffer
+				-> if return code != 0
+					-> set property "UnairingInProcess" to false
+					-> exit
+				-> if action == 3 and the global "resetting" flag is set
+					-> store parameter blob 0x6c (UNINPLEMENTED) as "UnpairingContext" (vfmGetParamBlob)
+					-> set property "UnairingInProcess" to true
+					-> exit
+			-> set paring data field to zero
+			-> write pairing data (writePairingData)
+				-> writes HKEY_CURRENT_USER\Software\Synaptics\PairingData\{DEVICE ID}
+			-> set property "UnairingInProcess" to false
+		-> set is_initialized to false
+		-> goto state 0
+	-> if state == 3
+		-> TODO call some misterious function
+			-> call CEohMohStgOnHostEIV::RetrieveTemplates
+				-> NOP
+			-> TODO call some weird function
+				-> NOP
+		-> call vfmDeviceGetWBFIotaParam
+			-> get device info (tudorGetDeviceInfo)
+			-> get SMI module (smiGetModuleDef)
+			-> call qmGetIotaParam
+				-> calls _qmIotaParseGet
+					-> type must be 1
+					-> return data
+				-> store return value in output
+		-> if param isn't zero
+			-> call CeivMode::SetIOTAParam
+				-> stores parameter in enrollment parameters struct
+		-> exit
+	-> if state == 4
+		-> call CEohMohStgOnHostEIV::RetrieveTemplates
+			-> NOP
+		-> TODO call some weird function
+			-> NOP
+CBiometricDeviceUSB::IQueueCallback::OnDeviceIoControl
+-> TODO call some misterious method
+-> switch ioctl
+	-> 0x440004: ????
+	-> 0x440008: CBiometricDevice::OnReset
+		-> get request parameters (CBiometricDevice::GetRequestParameters)
+		-> output buffer size must be at least 8 bytes
+		-> call CBiometricDevice::abortCaptureImage
+		-> call CRequest::SetInformation/Complete
+	-> 0x44000c: CBiometricDevice::OnCalibrate
+		-> get request parameters (CBiometricDevice::GetRequestParameters)
+		-> output buffer size must be at least 16 bytes
+		-> NOP
+		-> call CRequest::SetInformation/Complete
+	-> 0x440010: CBiometricDevice::OnStatus
+		-> get request parameters (CBiometricDevice::GetRequestParameters)
+		-> output buffer size must be at least 20 bytes
+		-> if the pairing thread is running, and we aren't it, wait for it to exit
+		-> if the sensor is removed, set init_phase to 6
+		-> copy init phase to output
+		-> call CRequest::SetInformation/Complete
+	-> 0x440014: CBiometricDevice::OnCaptureData
+		-> create a CDeviceIdleSuspendResume
+		-> enter critical section
+		-> if the capture request isn't zero, error
+		-> if the capture thread is running 
+			-> leave critical section
+			-> call CBiometricDevice::waitForCaptureThreadToComplete
+			-> reenter critical section
+		-> if the capture request isn't zero anymore, error
+		-> get request parameters (CBiometricDevice::GetRequestParameters)
+		-> input buffer must be at least 0x20 bytes
+		-> output buffer must be at least 0x20 bytes
+		-> TODO input buffer must pass some checks
+		-> set capture request to this request
+		-> mark request cancellable (CRequest::MarkCancelable)
+		-> start capture thread (CBiometricDevice::startCaptureThread)
+		-> call CRequest::Complete
+	-> 0x440018: CBiometricDevice::OnUpdateFirmware
+		-> call CRequest::Complete
+	-> 0x44001c: CBiometricDevice::OnGetSupportedAlgorithms
+		-> call CRequest::Complete
+	-> 0x440020: CBiometricDevice::OnGetIndicator
+		-> call CRequest::Complete
+	-> 0x440024: CBiometricDevice::OnSetIndicator
+		-> call CRequest::Complete
+	-> 0x44002c: CBiometricDevice::OnConnectSecure
+		-> if the pairing thread is running, and we aren't it, wait for it to exit
+		-> get request parameters (CBiometricDevice::GetRequestParameters)
+		-> NOP 
+		-> call CRequest::SetInformation/Complete
+	-> 0x440030: NOP
+	-> 0x442010: ????
+	-> 0x442014: ????
+	-> 0x442018: ????
+	-> 0x44201c: CBiometricDevice::OnEnrollmentDiscard
+		-> get request parameters (CBiometricDevice::GetRequestParameters)
+		-> input buffer size must be 8
+		-> TODO
+		-> create CDeviceIdleSuspendResume 
+		-> call CEohMohEIV::EnrollmentCreate
+			-> "in enrollment" flag mustn't be set
+			-> set "in enrollment" flag
+			-> call vfmUtilEnrollPrep
+				-> set "cancel capture" flag to zero
+				-> reset capture event
+				-> TODO set some integer to 1
+				-> call vfmEnrollBegin
+					-> TODO if we don't have some matcher stuff, allocate new one
+					-> we mustn't have an enrollment context
+					-> allocate a new enrollment context
+					-> call qmInitModule
+						-> allocate module context
+						-> set default parameters
+						-> init context (qmInitContext)
+						-> get parameter id 9 (qm_get_param)
+						-> create version string
+						-> call qm_initialize_enroll
+							-> get parameter 2 = enroll views (qm_get_param)
+							-> get parameter 3 = redundancy level (qm_get_param)
+							-> get parameter 4 = template views (qm_get_param)
+							-> get parameter 15 = ???? (qm_get_param)
+							-> get parameter 18 = ???? (qm_get_param)
+							-> get parameter 0 = template update (qm_get_param)
+						-> call qmFreeSth
+							-> TODO frees 3 misterious objects
+					-> TODO
+				-> TODO set another integer to 1
+		-> if call returned error 0x80098007
+			-> call CEohMohEIV::EnrollmentDiscard
+			-> call CEohMohEIV::EnrollmentCreate
+		-> call CRequest::SetInformation
+		-> destroy CDeviceIdleSuspendResume 
+		-> call CRequest::Complete
+	-> 0x442020: ????
+	-> 0x442028: ????
+	-> 0x44202c: CBiometricDevice::OnEnrollmentCreate
+		-> TODO assign some S0 idle settings
+		-> create CDeviceIdleSuspendResume 
+		-> call CEohMohEIV::EnrollmentDiscard
+			-> "in enrollment" flag must be set
+			-> clear "in enrollment" flag
+			-> call vfmUtilEnrollUnprep
+				-> TODO
+			-> free some memory
+		-> destroy CDeviceIdleSuspendResume 
+		-> call CRequest::Complete
+	-> 0x442030: ????
+	-> 0x442034: ????
+	-> 0x442038: ????
+	-> 0x44203c: ????
+	-> 0x442040: CBiometricDevice::OnResetOwnership
+		-> create a CDeviceIdleSuspendResume
+		-> get request parameters (CBiometricDevice::GetRequestParameters)
+		-> call CBiometricDevice::DoUnpairing
+		-> call CRequest::Complete
+	-> 0x442044: CBiometricDevice::OnSetLEDState
+		-> create a CDeviceIdleSuspendResume
+		-> get request parameters (CBiometricDevice::GetRequestParameters)
+		-> BROKEN NO SIZE CHECK
+		-> call CBiometricDevice::SwitchLed
+			-> if state != 0
+				-> TODO some capture logic
+				-> call vfmUtilSetIndicator
+					-> NOP
+		-> call CRequest::SetInformation/Complete
+	-> 0x442048: ????
+	-> 0x442050: ????
+	-> 0x442054: ????
+	-> 0x442058: ????
+						
+CBiometricDevice::IsPaired
+-> true if we have pairing data and the sensor is in provision state 3 or 10
+
+CBiometricDevice::getDeviceInfo
+-> if dev_info.vid == 0 (aka device info isn't present)
+	-> calls vfmDeviceInfoGet
+		-> calls tudorGetDeviceInfo
+			-> copies sensor->dev_info to out
+		-> call vfmDeviceIsInBlMode -> IOCTL 0x16 "Get bootloader mode" (tudorIoCtl)
+	-> sprintf ID into string
+
+CBiometricDevice::abortCaptureImage:
+-> TODO
+
+CBiometricDevice::waitForCaptureThreadToComplete:
+-> TODO
+
+CBiometricDevice::startCaptureThread:
+-> enter critical section
+-> if a capture thread is already running, wait for it to exit
+-> TODO if we don't have a capture request, or the capture thread is still runnning, or some flag is set, error
+-> TODO if we are suspended, set some flag and error
+-> create capture thread (CBiometricDevice::CaptureThread)
+	-> call CBiometricDevice::CaptureImage
+		-> enter critical section
+		-> the sensor mustn't be removed
+		-> we must have a capture request
+		-> get capture request parameters (CBiometricDevice::GetRequestParameters)
+		-> call misterious method
+			-> NOP
+		-> create CCaptureProcess
+			-> call vfmUtilSetCaptureCancel
+				-> set "cancel capture" flag to false
+		-> leave critical section
+		-> TODO create another mistery object
+		-> create CDeviceIdleSuspendResume
+		-> set capture session session (CCaptureProcess::SetSession)
+		-> sensor must be initialized
+		-> call some EIV function (NOP)
+		-> wait for finger to be removed (CCaptureProcess::WaitUntilFingerRemoved)
+			-> wait for "finger press" or "finger remove" events (CCaptureProcess::WairForEvent)
+				-> event mask & 0x180 != 0
+				-> allocate events buffer
+				-> while true
+					-> while the event mask isn't configured
+						-> call vfmDeviceEventConfigure
+							-> call tudorEventConfig
+								-> event mask must be valid
+								-> if event mask doesn't contain events other than finger ones
+									-> if sensor is in NAV state, set state to 0
+								-> else
+									-> sensor can't be in capture state
+									-> set state to NAV state
+								-> delete existing event state (tudorClearEventState)
+								-> allocate new event state, if our event mask isn't zero
+								-> set new event mask (tudorSetEventMask)
+									-> convert event mask to event list (tudorEncodeEventMask)
+									-> send event list to sensor (tudorCmdEventConfig)
+										-> set sensor event count to respone's one
+							-> set device event mask variable
+						-> if error, reset device (vfmUtilSessionDeviceReset)
+					-> call vfmDeviceEventRead
+						-> events buffer must be at least 0x184 bytes big
+						-> wrapper around tudorEventGet
+							-> we must have an event state
+							-> if the current event state is zero
+								-> set event state to one
+								-> if the vid pid flag is true, return action 1 (wait for cb status)
+							-> if the current event state is one
+								-> call tudorEventDataGet
+									-> call protocol IOCTL 0x6a (tudorUsbProtoIoControl)
+									-> if the sensor's event sequence number doesn't match event data's one, set available flag
+								-> if the "available" flag isn't set, return action 1
+								-> set event state to two
+							-> if the current event state isn't two, exit
+							-> call tudorReadEvents
+								-> allocate buffer for 32 events
+								-> call tudorCmdEventRead
+									-> if command fails with error 0x6f, fallback to legacy mode
+									-> increments sensor's event sequence number
+								-> convert sensor events to tudor events
+							-> if legacy reading was used, return action 2
+							-> if no events are pending
+								-> call tudorEventUpdatePending
+									-> if vid pid flag is set
+										-> call protocol IOCTL 0x6a (tudorUsbProtoIoControl)
+										-> if the sensor's event sequence number doesn't match event data's one
+											-> set number of pending events to event data's event sequence number minus sensor's one
+							-> if no events are pending
+								-> set event state to 1
+								-> return action 1
+							-> else return action 2
+					-> if we got events, iterate over all
+						-> if the event type is 0x100 or 0x80, exit
+					-> if action is 1
+						-> Sleep(action[1])
+					-> else if action is 2
+						-> call vfmUtilWaitForCbStatus
+							-> map event types
+								1 -> 1: ????
+								2 -> 3: ????
+								3 -> 2: ????
+							-> reset capture event (palEventReset)
+							-> call _vfmUtilWaitForCbStatus
+								-> enable device callbacks (vfmDeviceEnableCallback)
+									-> callback: vfmUtilCb
+										-> sets cb state field
+										-> sets capture event
+									-> translate event type to IOCTL (vfmDeviceEventToIoctl)
+										1 -> 7
+										2/3 -> 9
+									-> perform palUsbDriver IOCTL (palUsbDriverIoControl)
+								-> wait for capture event (palEventJoin)
+								-> disable device callbacks (vfmDeviceDisableCallback)
+									-> BROKEN event type is always one
+									-> translate event type to IOCTL (vfmDeviceEventToIoctl)
+										1 -> 8
+										2/3 -> 10
+									-> perform palUsbDriver IOCTL (palUsbDriverIoControl)
+								-> if the session's "cancel capture" flag is set, exit
+					-> else error
+			-> if the event that triggered was "finger press", wait for "finger remove" event (CCaptureProcess::WairForEvent)
+		-> destroy CDeviceIdleSuspendResume
+		-> set "postponed capture start" to false
+		-> call some EIV method
+			-> NOP
+		-> create CIdleDuringCapture
+			-> enables selective suspend (CBiometricDevice::EnableSelectiveSuspend)
+		-> call CCaptureProcess::CaptureImage
+			-> flags: either 4 or 12
+			-> call vfmUtilCaptureImage
+				-> create capture flags
+					-> flags: either 7 or 15
+					-> num frames: always 1
+					-> other parameter: always 1
+				-> call vfmCaptureStart
+				-> if we have a callback
+					-> create vfmEvent type 0x65 without data and call callback
+				-> call vfmUtilCaptureProcess
+					-> store current tickcount in session
+					-> do ... while action != 0
+						-> if "cancel capture" flag is set, exit with error 0x67
+						-> call vfmCaptureProcess
+						-> if status is two, and "finger detected" flag isn't set
+							-> create vfmEvent type 0x66 without data and call callback
+							-> set finger detected flag
+						-> if action is 1, call _vfmUtilWaitForCbStatus
+						-> if action is 2, Sleep(action[1])
+						-> if action is 4, create vfmEvent type 0x1a3 without data and call callback
+						-> if status is 4
+							-> set restart flag
+							-> create vfmEvent type 0x6c without data and call callback
+							-> exit
+					-> create vfmEvent type 0x67 without data and call callback
+				-> if flag 1 is set
+					-> call _vfmUtilGetImage
+						-> wrapper around vfmCaptureGetImageMetrics
+							-> TODO
+				-> 
+			-> TODO 
+		-> destroy CIdleDuringCapture
+			-> disables selective suspend (CBiometricDevice::EnableSelectiveSuspend)
+		-> TODO
+
+CBiometricDevice::CompletePendingRequest:
+-> TODO
+
+vfmUtilSessionDeviceReset:
+-> wrapper around _vfmUtilSessionDeviceReset
+-> do ... while action != 0
+	-> call vfmInitialize
+	-> if action == 2, sleep(action[1])
+	-> if action == 3, call vfmDeviceHardReset
+		-> wrapper around palUsbDriver IOCTL 1 (palUsbDriverIoControl)
+
+vfmGetParamBlob:
+-> 0x01: ???? TODO
+-> 0x02: ???? TODO
+-> 0x67:        -> tudorGetParameterBlob 1 (vfmTudorGetParameterBlobProxy)
+-> 0x69: ???? TODO     
+-> 0x6b/0x6e:	-> tudorGetParameterBlob 9 (vfmTudorGetParameterBlobProxy)
+-> 0x6c: 		-> tudorGetParameterBlob 10 (vfmTudorGetParameterBlobProxy)
+-> 0xc9: ???? TODO
+-> 0xca: ???? TODO
+-> 0xcb: ???? TODO
+
+vfmSetParamBlob:
+-> for param-blobs 0xc9-0x12c
+	-> TODO forward to matcher
+-> else:
+	-> 0x65 		-> tudorSetParameterBlob 2
+	-> 0x69: ???? (TODO)
+	-> 0x6a 		-> tudorSetParameterBlob 8
+	-> 0x6b/0x6e 	-> tudorSetParameterBlob 9
+	-> 0x6c 		-> tudorSetParameterBlob 10
+
+tudorGetParameterBlob
+-> id=1:
+    -> allocate output buffer if not present
+    -> output buffer must be at least 18 bytes big
+    -> TODO call misterious function
+-> id=8: TODO copy buffer back into blob
+-> id=9: update context
+    -> handled by tudorGetUpdateContext
+    -> allocate output buffer if not present
+    -> output buffer must be at least 0x50 bytes big
+    -> copy data from sensor struct pointer
+    -> memset bytes 0x20-0x40 to zero (contains pointers)
+
+tudorSetParameterBlob:
+-> id=2: 
+	-> handled by tudorSensorSetPairingData
+	-> copy pairing data to buffer in sensor struct
+-> id=8: TODO copy to some buffer in sensor struct
+-> id=9: update context
+	-> handled by tudorSetUpdateContext
+	-> data must be 0x50 bytes big
+	-> copy to new buffer and store pointer in sensor struct
+    -> set "delegate reset" flag
+
+palWinUsbDeviceHandleOpen:
+-> opens the interface file
+-> initializes WinUSB
+-> gets the interface descriptor for the first alternate setting
+-> iterate over all endpoints:
+	-> reset endpoint pipe
+	-> last interrupt endpoint is chosen
+-> set endpoint 1's pipe timeout to 2000ms
+-> enables endpoint 0's pipe's short packet terminate
+-> set endpoint 0's pipe timeout to 2000ms
+
+vfmDeviceInitialize:
+-> proxies to tudorInitDevice
+-> if init failure count > 4, return with error
+-> if this isn't a caller reset
+	-> perform protocol IOCTL 0x68 = reset (tudorUsbProtoIoControl)
+	-> if error:
+		-> set first int of output to 3
+		-> set "caller reset" to true
+-> perform protocol IOCTL 4 = initialize (tudorUsbProtoIoControl)
+-> if no error:
+	-> if not initialized, call tudorSensorInitInfo
+		-> send "get version" cmd (tudorSensorCmdGetVersion)
+		-> product id must be 'A', 'B', or 'C'
+		-> get vid/pid/some flag (always zero) through IOCTL 0x65 (tudorUsbProtoIoControl)
+		-> if not in bootloader mode:
+			-> if some flag is not zero, set idle timeout to 200 ms (tudorSensorCmdSetIdleTimeout) (nop)
+			-> read config version iota into device info (tudorSensorReadConfigVersionIota)
+				-> read using tudorCmdIotaRead
+			-> read IPL iota (0x1a) into dev_info (tudorSensorReadPackedIota)
+			-> TODO read some misterious packed iota 0x2e into dev_info (tudorSensorReadPackedIota)
+			-> read WBF parameter packed iota (0x2f) into dev_info (tudorSensorReadPackedIota)
+		-> copy data to dev_info
+	-> else
+		-> if sensor product ID isn't not 'B' or 'C' (aka not in bootloader mode), and some dev_info flag is false, set idle timeout to 200 ms (tudorSensorCmdSetIdleTimeout)
+	-> if sensor product ID isn't is not 'B' or 'C' (aka not in bootloader mode)
+		-> get start info (tudorCmdGetStartInfo)
+		-> initialize TLS session (tudorTlsEstablishSession)
+		-> get frame dimensions (tudorCmdGetFrameDimensions)
+-> if anything errors:
+	-> set first int of output to 2
+	-> set second int of output to 100
+	-> set "caller reset" to false
+	-> increment init fail count
+
+tudorSensorReadPackedIota:
+-> read IOTA like normal via tudorCmdIotaRead
+-> off = 4+iota.size, riota = iota
+-> while off < buf.size & ((iota*) buf+off)->id == id:
+	-> riota = (iota*) buf+off
+	-> off += 4 + riota->size
+-> copy riota into buffer
+
+tudorCmdIotaRead:
+-> offset = 0, size = 0
+-> do ... while offset < size
+	-> send "IOTA read" command with current offset
+	-> if size == 0:
+		-> if resp.size == 0: error: Invalid IOTA id
+		-> size = resp.size
+		-> allocate buffer
+	-> if the response contains too much data, trim the response
+	-> write data into buffer
+	-> off += #data added
+
+vfmDeviceUpdateProcess:
+-> proxies to tudorSensorUpdate
+-> if we don't have a update context, create one
+-> do ... while state != 10
+    -> switch over state
+        -> 0: entry point
+            -> set phase to 0 (exit bootloader)
+            -> if we're in bootloader mode, goto state 2 (exit bootloader mode), else goto state 4 (check MFW)
+		-> 1: enter bootloader mode
+			-> enter bootloader mode (tudorBootLoaderModeEnter)
+			-> close the TLS session (tudorTlsSessionClose)
+			-> goto state 3 (bootloader state update)
+        -> 2: exit bootloader mode
+            -> exit bootloader mode (tudorBootLoaderModeExit)
+            -> goto state 3 (bootloader state update)
+        -> 3: bootloader state update
+            -> if the sensor is uninitialized, initialize it (tudorInitDevice)
+            -> if we're in bootloader mode
+				-> if phase is 0 (exit bootloader)
+					-> log "there is no MFW on device"
+					-> set MFW to builtin MFW (tudorGetBuiltInMFW)
+					-> set phase to 1 (MFW update)
+					-> goto state 5 (update MFW)
+				-> if phase is 1 (MFW update)
+					-> goto state 5 (update MFW)
+				-> if phase is 2 (IOTA patch)
+					-> goto state 7 (patch IOTA)
+				-> if phase is 3 (failure BL exit)
+					-> log "force BL exit failed"
+					-> exit
+			-> else
+				-> if phase is 0 (exit bootloader)
+					-> goto state 4 (check MFW)
+				-> if phase is 1 (MFW update)
+					-> goto state 6 (check IOTA patch)
+				-> if phase is 2 (IOTA patch)
+					-> goto state 8 (success)
+				-> if phase is 3 (failure BL exit)
+					-> goto state 10 (exit)
+        -> 4: check MFW
+            -> load builtin MFW (tudorGetBuiltInMFW)
+			-> call tudorMFWVerify
+				-> create tag-value container (palTagValContainerCreate)
+				-> decode MFW as tag-value container (palTagValSetContainerDataAsBlobWO)
+				-> get metadata tag=1 (palTagValContainerGet)
+				-> MFW must be compatible (tudorUpdateIsCompatible)
+				-> if major and minor versions of sensor and MFW match, and MFW build number is higher, set "update MFW" flag
+			-> if the "update MFW" flag is set
+				-> set phase to one (MFW update)
+				-> goto state 1 (enter bootloader mode)
+			-> else goto state 6 (check IOTA patch)
+        -> 5: update MFW
+            -> set pipe timeouts to 12s (_tudorSetPipeTimeouts)
+				-> just proxy to protocol IOCTL 5/6 (get/set pipe timeout) (tudorUsbProtoIoControl)
+            -> if we don't have a MFW, get builtin one (tudorGetBuiltInMFW)
+			-> apply MFW update (tudorSensorApplyUpdate)
+			-> restore old pipe timeout (_tudorSetPipeTimeouts)
+			-> goto state 2
+        -> 6: check IOTA patch
+            -> call tudorGetBuiltInIOTAPatch
+				-> if the sensor is not in bootloader mode
+					-> copy config version IOTA to context
+				-> while true
+					-> do ... while patch.size == 0
+						-> if patch_num >= 3, exit
+						-> patch++
+					-> create a tag-value container (palTagValContainerCreate)
+					-> decode patch as tag-value container (palTagValSetContainerDataAsBlobWO)
+					-> get metadata tag=3 (palTagValContainerGet)
+					-> patch must be compatible (tudorUpdateIsCompatible)
+					-> if major and minor versions of sensor's config version IOTA and patch match, and the patches revision number is higher, set "patch IOTAs" flag
+			-> if "patch IOTAs" flag is set
+				-> set phase to two (IOTA patch)
+				-> goto state 1 (enter bootloader mode)
+			-> else goto state 8 (sucess)
+        -> 7: patch IOTA
+            -> if we don't have a IOTA patch, get builtin one (tudorGetBuiltInIOTAPatch)
+			-> apply IOTA patch (tudorSensorApplyUpdate)
+			-> goto state 2
+        -> 8: success
+            -> exit
+        -> 9: failure
+            -> if phase is 3 (failure BL exit), exit
+			-> if we're in bootloader mode
+				-> set phase to 3 (failure BL exit)
+				-> goto state 2 (exit bootloader mode)
+			-> else, exit
+-> if state is 10 (exit), free context
+
+tudorCreateStoragePartition:
+-> if we don't have a update context, create one
+-> while state != 7
+	-> switch state
+		-> 0: initial
+			-> if we're in bootloader mode, goto state 2, exit bootloader mode else goto state 1 (enter bootloader mode)
+		-> 1: enter bootloader mode
+			-> enter bootloader mode (tudorBootLoaderModeEnter)
+			-> close the TLS session (tudorTlsSessionClose)
+			-> goto state 3 (bootloader state update)
+        -> 2: exit bootloader mode
+            -> exit bootloader mode (tudorBootLoaderModeExit)
+            -> goto state 3 (bootloader state update)
+		-> 3: bootloader state update
+            -> if the sensor is uninitialized, initialize it (tudorInitDevice)
+            -> if we're in bootloader mode
+				-> if phase is 0 (exit bootloader)
+					-> get builtin partition patch (tudorGetBuiltInPartitionPatch)
+					-> set phase to 1 (partition patch)
+					-> goto state 4 (partition patch)
+				-> if phase is 1 (partition patch)
+					-> goto state 4 (partition patch)
+				-> if phase is 2 (failure BL exit)
+					-> log "force BL exit failed"
+					-> exit
+			-> else
+				-> if phase is 0 (exit bootloader)
+					-> goto state 6 (failure)
+				-> if phase is 1 (partition patch)
+					-> goto state 5 (success)
+				-> if phase is 2 (failure BL exit)
+					-> goto state 6 (exit)
+		-> 4: partition patch
+			-> send partition patch to sensor (tudorCmdDownloadBootLoaderPatch)
+			-> clear "patch partition" flag
+			-> goto state 2 (exit bootloader mode)
+		-> 5: success
+			-> exit
+		-> 6: failure
+			-> if phase is 2 (failure BL exit), exit
+			-> if we're in bootloader mode
+				-> set phase to 2 (failure BL exit)
+				-> goto state 2 (exit bootloader mode)
+			-> else, exit
+-> if state is 7 (exit), free context
+
+tudorUpdateIsCompatible:
+-> first field of header must be 0x41
+-> sensor product ID must be 'A' or 'B'
+
+tudorSensorApplyUpdate:
+-> create tag-value container (palTagValContainerCreate)
+-> decode update as tag-value container (palTagValSetContainerDataAsBlobWO)
+-> if this is a MFW update, get tag 2, else get tag 4 (palTagValContainerGet)
+-> while patch.size != 0
+	-> get 4 bytes patch size & validate it
+	-> send patch to sensor (tudorCmdDownloadBootLoaderPatch)
+
+format update:
+-> 0-[-0x101]: tag-value container
+	-> tag 1: MFW metadata
+		-> 0-3: must be 0x41
+		-> 4-0xb: ????
+		-> 0xc-0x10: firmware build num
+		-> 0x10: firmware major version
+		-> 0x11: firmware minor version
+	-> tag 2: MFW patches
+		-> array of patches
+			-> 0-3: patch length
+			-> 4-*: patch data
+
+	-> tag 3: IOTA patch metadata
+		-> 0-3: must be 0x41
+		-> 4-7: major version
+		-> 8-0xb: minor version
+		-> 0xc-0xd: revision number
+		-> 0xe-0xf: ????
+	-> tag 4: IOTA patches
+		-> same as MFW patches
+-> [-0x100]-[-1]: ????
+
+tudorBootLoaderModeEnter:
+-> wrapper around proto IOCTL 0x69 (write DFT) (tudorUsbProtoIoControl)
+    -> values: 0,0,0,0,0,0,1,0
+
+tudorBootLoaderModeExit:
+-> wrapper around proto IOCTL 0x69 (write DFT) (tudorUsbProtoIoControl)
+    -> values: 0,0,0,0,0,0,0,0
+
+tudorCmdDownloadBootLoaderPatch:
+-> just prepend command id (0x7d), and send to sensor
+
+tudorSecurityDoPair:
+-> if we don't have a paring context, create a new one
+-> create a tag-value container (palTagValContainerCreate)
+-> do ... while ctx->state != 3
+	-> switch state
+		-> 0: inital state
+			-> if provision state isn't 3, exit without error
+			-> if advanced security isn't present, exit with error
+			-> allocate ECC host keypair
+			-> set curve data to SECP256R1
+			-> call _tudorSecurityGenHostKeyPair
+				-> keypair must be type 1 (ECC)
+				-> BROKEN keypair's public key must be NULL, else crash
+				-> import keypair's curve (palCryptoEccEllipticCurveSet)
+				-> generate keypair (palCryptoEccKeypairGenerate)
+				-> export public key (palCryptoEccExportPublicKey)
+				-> copy public key into keypair buffer
+				-> export privat key (palCryptoEccExportPrivateKey)
+				-> store private key as tag 2 (palTagValSetBlobDataProperty)
+			-> call _tudorSecurityPreparePairingParams
+				-> keypair must be type 1 (ECC)
+				-> create host certificate
+				-> call _tudorSecuritySignHPubK
+					-> pad key strength to nearest multiple of 32 -> param_len
+					-> TODO allocate param_len sized BLOB
+					-> call palGenHSPrivKey
+						-> call palGenHSIn
+							-> just returns aaaa
+						-> call palSynaKmGet
+							-> just fills output buffer with constants
+							-> 71 7c d7 2d 09 62 bc 4a
+							-> 28 46 13 8d bb 2c 24 19
+							-> 25 12 a7 64 07 06 5f 38
+							-> 38 46 13 9d 4b ec 20 33
+						-> call palSymKeyGen (label=HS_KEY_PAIR_GEN)
+					-> import keypair's curve (palCryptoEccEllipticCurveSet)
+					-> create handle to private key (palCryptoEccCreatePrivateKeyHandle)
+					-> create SHA256 hash of certificate (palCryptoDigest)
+					-> sign hash using ECDSA (palCryptoECDSASign)
+			-> set paring data version (palTagValSetWordProperty, tag=0)
+				-> wrapper around palTagValContainerAdd
+			-> call _tudorSecuritySendPairingCommand
+				-> keypair must be type 1 (ECC)
+				-> call tudorCmdPair
+				-> set host certificate as tag 2 (palTagValSetBlobDataProperty)
+				-> set curve data as tag 4 (palTagValSetBlobDataProperty)
+			-> call _tudorSecurityGetCertificate
+				-> call _tudorSecuritySensorCertificateValidate
+					-> get the sensor public key (tudorSecurityGetSSPubKey)
+					-> calculate hash of sensor certificate (palCryptoDigest)
+					-> get curve data and import it (palTagValContainerGet, palCryptoEccEllipticCurveSet)
+					-> create public key handle from sensor key (palCryptoEccCreatePublicKeyHandle)
+					-> verify certificate signature (palCryptoECDSAVerify)
+				-> set sensor certificate as tag 3 (palTagValSetBlobDataProperty)
+			-> call _tudorSecuritySetPairingData
+				-> we mustn't have pairing data already
+				-> call palTagValGetContainerDataAsBlob
+				-> wrap pairing data, store output in sensor struct (_wrapPairingData)
+					-> wrapper around palSecureWrap
+			-> destroy keypair (tudorSecurityHostKeyPairDestroy)
+			-> goto state 1
+		-> 1: copy pairing data
+			-> copy pairing data to output
+			-> exit
+		-> 2: failure
+			-> destroy keypair (tudorSecurityHostKeyPairDestroy)
+			-> exit
+-> if unsuccessfull, free pairing data
+-> if state == 3, or unsuccessfull, free host keypair and pairing context
+
+tudorSecurityDoUnPair:
+-> provision state must be 3
+-> close TLS session (tudorTlsSessionClose)
+-> free paring context & data
+
+vfmCaptureStart:
+-> TODO set some buffer to zeros
+-> store current tickcount in device struct
+-> do ... while action != 0
+	-> call tudorCaptureStart
+		-> sensor can't be in NAV state
+		-> call tudorClearCaptureContext
+		-> create new capture context
+		-> put sensor into capture state
+		-> TODO some capture flags logic
+		-> set frame index to zero
+		-> send "frame acq" command (tudorCmdFrameAcq)
+		-> set "report finger" flag
+-> clear capture op (vfmClearCaptureOp)
+-> create new capture op
+
+vfmCaptureProcess:
+-> call tudorCaptureProcess
+	-> capture flags
+		1: finger lift fatal
+		2: ????
+		4: post process
+	-> we must have a capture context
+	-> switch context state
+		-> 0:
+			-> set state to 1
+			-> if vid pid flag is set, return action 1
+			-> else goto state 1
+		-> 1: tudorCaptureFrameReadyStatusGet
+			-> get frame status (tudorGetFrameStatus)
+				-> get event data using protocol IOCTL 0x6a (tudorUsbProtoIoControl)
+				-> if event data's frame sequence number changed since last event data get, set "frame ready" flag
+				-> TODO if event data byte 0 is 2, set some flag
+			-> if "report finger" flag is set, and at least one frame flag is set
+				-> set status to 2
+				-> reset "report finger" flag
+			-> if the "frame ready" flag isn't set, return action 1
+			-> store current tick count in context
+			-> set state to 2
+			-> goto state 2
+		-> 2: tudorCaptureFrameRead
+			-> call tudorReadFrame
+				-> allocate frame data buffer
+				-> call tudorCmdFrameRead
+				-> if capture flag 1 is set and frame flag "last frame" is clear
+					-> log "The last frame is not recevied" and error
+				-> copy two frame flags to capture context
+				-> copy frame data to output
+			-> store current tick count in context
+			-> set state to 3
+			-> goto state 3
+		-> 3: tudorCapturePostProcess
+			-> if capture flag "post processing" is set
+				-> call tudorFramePostProcess
+					-> if "finger lifted" frame flag is set, exit with error
+					-> call _tudorIplOpen
+						-> map product ids to IPL types
+							'8' -> 1
+							':' -> 2
+							'<' -> 3
+							'5' -> 0
+							'A' -> 4
+						-> copy IPL blob to params
+						-> call tudorIplOpen
+							-> allocate image buffer (size=2*width*height)
+							-> only IPL type 4 is implemented
+							-> init A LOT of variables
+					-> call tudorIplProcessFrame
+						-> call tudorIplProcessFrameData
+							-> frame data must be large enough
+							-> import frame (tudorIplImportFrame)
+							-> if height is smaller than width
+								-> rotate image (tudorImageRotate)
+							-> call tudorIplImageFixup
+								-> TODO
+						-> call tudorIplGetImage
+							-> copy image buffer to output
+			-> if "last frame" frame flag isn't set
+				-> call tudorFrameIsNextReady
+					-> set "next ready" to false
+					-> if the vid pid flag is set, update event data using protocol IOCTL 0x6a (tudorUsbProtoIoControl)
+					-> if the event data's frame sequence number isn't frame_index + 1, set "next ready" to true
+				-> if "next ready" is set
+					-> set state to 2
+					-> goto state 2
+				-> else
+					-> set state to 1
+					-> return action 1
+		-> 4: tudorCaptureComplete
+			-> exit
+-> depending on state, store some tick counts
+-> if status is 3, call _vfmCaptureGetImage
+	-> wrapper around tudorCaptureImage
+		-> copies image from context to output
+
+tudorCaptureFinish:
+-> if forcefull, call tudorCmdFrameFinish
+-> else
+	-> if "in capture" flag is set, call tudorCmdFrameFinish
+	-> log profiling info
+-> call tudorClearCaptureContext
+
+qmInitContext:
+-> allocate context
+-> set pointers to malloc/free/memset wrappers
+-> call qm_init
+	-> TODO allocate two misterious objects
+	-> TODO call qmInitSth2
+		-> verify context (qmVerifyContext)
+		-> set some fields on qmSth2
+	-> TODO allocate another misterious object
+	-> set version/description
+
+qm_get_param:
+-> switch id:
+	-> 0: template update
+	-> 2: enroll views
+	-> 3: redundancy level
+	-> 4: template views
+	-> 9: constant 9
+	-> TODO
+
+tudorSendCommand:
+-> log command (tudorLogCmdReq)
+-> encrypt command (tudorEncryptCommand)
+	-> if no tls context, log warning, but continue!
+	-> actual encrpytion (ssiTlsWrap)
+-> TODO if a field in the device info is true (vid_pid_flag), and the command is 0x7f (invalid?)
+	-> perform proto IOCTL 0x12=set power policy (tudorUsbProtoIoControl)
+		-> TODO arguments
+-> perform proto IOCTL 0x67=send command (tudorUsbProtoIoControl)
+-> decrypt response (tudorDecryptCommand)
+	-> if no tls context, log warning, but continue!
+	-> actual decrpytion (ssiTlsUnwrap)
+-> if no error, and response is larger than 0 bytes, log response (tudorLogCmdResp)
+-> if failed with error 0xca, close tls session (tudorTlsSessionClose)
+
+tudorTlsEstablishSession:
+-> if the sensor isn't provisioned, exit (no error)
+-> if pairing data is missing, exit (with error)
+-> get host session status: (tudorTlsInSession)
+-> get remote session status (tudorTlsSensorSessionStatusGet)
+-> if both are in a session, exit
+-> if the host is in a session, but the device isn't, suspend the host session (tudorTlsSuspendSession) and exit
+	-> BROKEN gives sensor, not TLS context as argument
+	-> if we're not in a session, close it (tudorTlsSessionClose)
+	-> if we should notify the sensor, call ssiTlsAlertNotify
+-> if the host isn't in a session, but the device is, set the reset flag and error
+-> if we don't have a TLS session object, create one (always ECC, never PSK) (tudorTlsInitCtx)
+-> while we shouldn't exit
+	-> call ssiTlsEstablish
+		-> switch over init state
+			-> 0: prepare & validate
+				-> call ssiTlsVerifyDeviceCertificate
+					-> crypto algorithm must be ECC
+					-> unprotect server certificate
+					-> if header is 0x5f3f
+						-> get signature and signature size
+					-> else TODO
+					-> calculate hash of certificate (palCryptoDigest)
+					-> reprotect server certificate
+					-> create elliptic curve with parameters (palCryptoEccEllipticCurveSet)
+					-> create public key handle from remote key (palCryptoEccCreatePublicKeyHandle)
+					-> call palCryptoECDSAVerify
+				-> unprotect private key (palCryptoProtectMem)
+				-> call palCryptoEccCreatePrivateKeyHandle
+				-> protect private key (palCryptoProtectMem)
+				-> goto state 1
+			-> 1: send client hello
+				-> call ssiTlsHandshakeStart
+					-> set request size to zero
+					-> call ssiTlsHandshakeClientHello
+						-> if we don't have a random buffer, allocate one
+						-> use random number as timestamp (ssiTlsGenRandom)
+						-> fill the rest of the client secret randomly (ssiTlsGenRandom)
+						-> session id length = 7
+						-> if we have a session id, copy it
+							-> session id is uninitialized if we don't have one!
+						-> advertise all known ciphers (must be 5)
+						-> set compression_methods.length = 0
+							-> BROKEN according to standard, must contain at least CompressionMethod.NULL
+						-> if we use ECC
+							-> set two extensions: 
+								-> supported_groups: domain's curve 
+								-> ec_point_formats: uncompressed
+						-> call ssiTlsHandshakeProtoWrap
+						-> set expected handshake message to "server_hello"
+					-> call ssiTlsCiphertextWrap
+					-> set first byte of request data to 0x44
+					-> increase request size by 4
+				-> copy request data from context to req BLOB
+				-> goto state 2
+			-> 2: call ssiTlsReceiveData
+				-> goto state 3
+			-> 3: send request buffer
+				-> goto state 4
+			-> 4: call ssiTlsReceiveData
+				-> goto state 7
+			-> 5: tls alert
+				-> log it, goto state 6
+			-> 6: failure:
+				-> set exit flag
+				-> return with error
+			-> 7: success
+				-> destroy ECC curve & private key
+				-> set exit flag
+				-> return with no error
+	-> if we have response data, free it
+	-> if we have request data
+		-> send it using proto IOCTL 0x67 (tudorUsbProtoIoControl)
+		-> free request data
+	-> yield remaining time slice (Sleep(0))
+
+tudorTlsSessionClose:
+-> if we should notify the sensor, and it is in a session
+	-> create a close notify alert (ssiTlsAlertNotify)
+	-> send it via the "tls data" command
+-> call ssiTlsUninit
+	-> free some stuff
+
+tudorTlsInitCtx:
+-> get sensor public key (tudorSecurityGetSSPubkey)
+-> create a tagged value container (palTagValContainerCreate)
+-> get pairing data (tudorSecurityGetPairingData)
+-> if algo == PSK
+	-> get key (tag 5) from container
+	-> BROKEN some blobs not initialized -> crash
+-> if algo == ECC
+	-> get tag 4 from container -> curve data
+	-> get tag 3 from container -> device certificate
+	-> get tag 1 from container -> host certificate
+	-> get tag 2 from container -> private key
+-> call ssiTlsInit
+	-> allocate TLS context
+	-> init palCrypto (palCryptoInitialize), if we manage it
+	-> set current cipher suite to "unencrypted" (ssiTlsGetCipherSuite)
+	-> create SHA256 hash object (ssiTlsInitDigest/palCryptoDigestInit)
+	-> copy sensor key to context
+	-> copy ECC curve data to context (even if algo=PSK!)
+	-> if psk crypto type
+		-> copy psk key to context and protect it (palCryptoProtectMem)
+		-> set init state to 1
+	-> if ecc crypto type
+		-> copy device certificate to context and protect it (palCryptoProtectMem)
+		-> set init state to 0
+	-> copy host certificate to contex and protect it (palCryptoProtectMem)
+	-> copy private key to context and protect it (palCryptoProtectMem)
+-> destroy the tagged value container (palTagValContainerDestroy)
+
+ssiTlsUninit:
+-> free some blobs
+-> destroy private key handle (palCryptoEccHandleDestroy)
+-> free some more blobs
+-> if we manage palCrypto, call palCryptoUninitialize
+
+ssiTlsReceiveData:
+-> while true
+	-> data must be at least 5 bytes long
+	-> fragment version must be 3.3 (TLS 1.3)
+	-> fragment size must be valid (bigger than 0, fit in data size)
+	-> if the read cipher flag is not zero, and either the content isn't an alert or the fragment is bigger than 0x10 bytes
+		-> unprotect key block (palCryptoProtectMem)
+		-> if the cipher suite has the "GCM" flag set, call ssiTlsAes256GcmSha384Unwrap
+			-> create additional data = device seq_num + header
+			-> create iv = key block IV + nonce
+			-> decrypt data (palCryptoDecryptAuth)
+			-> increment device sequence number
+		-> else call ssiTlsAes256CbcShaUnwrap
+			-> decrypt the content (ssiTlsAesCbc)
+			-> check padding size
+			-> calculate MAC (ssiTlsCalcMAC)
+			-> increment device sequence number (ssiTlsIncSeqNum)
+			-> calculated MAC must match MAC in message
+		-> reprotect key block (palCryptoProtectMem)
+	-> if the plaintext length is bigger than 0x10000, error
+	-> if content type is 20 (change_cipher_spec)
+		-> the next expected handshake message must be "finished"
+		-> verify message is valid
+		-> call ssiTlsSetReceiveCipherFlag
+	-> if content type is 21 (alert)
+		-> plaintext must be at least 2 bytes long
+		-> copy alert level and descr to context
+		-> if we receive a warning decode error, resume session????!?!?!??
+			-> set expected handshake message to 0xff
+		-> if we receive a close_notify alert, just do nothing???!?!?!?
+		-> if we receive an alert 42 (bad_certificate), return 0xcc (pair device)
+		-> else log alert and exit with error
+	-> if content type is 22 (handshake)
+		-> call ssiTlsHandshakeReceive
+			-> while true
+				-> message must be at least 4 bytes long
+				-> if the message type doesn't match the expected message type, exit with error
+				-> if the message type is 2 (server_hello), 11 (certificate), 13 (certificate_request), 14 (server_hello_done), update hash (ssiTlsHandshakeUpdateHash)
+				-> switch over message type
+					-> server_hello(2): ssiTlsHandshakeReceiveServerHello
+						-> TODO if the minor version has it's highest bit set, set flag 0x100
+						-> version must be 3.3 (TLS 1.2)
+						-> copy server random to context
+						-> if no session id is supplied, set session id to NULL and clear "resumed" flag, else
+							-> if our session id matches the returned one, set "resumed" flag, else
+								-> set current cipher suite to CipherSuite.null
+								-> copy session id to context
+								-> clear "resumed" flag
+						-> if the "resumed" flag is zero
+							-> set current cipher suite to ServerHello's suite
+						-> else
+							-> we currently must have the same suite
+						-> compression method must be null
+						-> if the "resumed" flag is zero
+							-> if crypto type is ECC, expect "certificate_request" next 
+							-> if crypto type is PSK, expect "server_hello_done" next
+						-> else
+							-> call ssiTlsCalcKeyBlock with no premaster secret
+								-> BROKEN errors!
+							-> expect "finished" next
+					-> certificate_request(13): ssiTlsHandshakeReceiveCertificateRequest
+						-> there must only be one certificate type, "ecdsa_sign" (64)
+						-> BROKEN assume following length fields are 2 bytes long (they are 4 bytes long)
+						-> expect "server_hello_done" next
+					-> server_hello_done(14): ssiTlsHandshakeReceiveServerHelloDone
+						-> if crypto type is PSK
+							-> create key exchange (ssiTlsHandshakeClientKeyExchange)
+							-> wrap message (ssiTlsCiphertextWrap)
+						-> if crypto type is ECC
+							-> create "Client Certificate" message (ssiTlsHandshakeClientCertificate)
+								-> crypto type must be ECC
+								-> if header is 0x5f3f, size is 400
+								-> else TODO
+								-> create certificate message
+								-> BROKEN certificates.len is 2 bytes to small
+								-> BROKEN there are 2 misterious bytes after cert.len
+							-> create "Client Key Exchange" (ssiTlsHandshakeClientKeyExchange)
+							-> create "Client Certificate Verfiy" message (ssiTlsHandshakeClientCertifcateVerify)
+								-> get handshake messages hash (ssiTlsHandshakeHash)
+								-> sign hash using cipher suite funcion (ssiTlsEccSign)
+									-> wrapper around palCryptoECDSASign
+								-> destroy host private key handle
+							-> wrap messages (ssiTlsCiphertextWrap)
+						-> create "Change CipherSpec" message (ssiTlsChangeCipherSpec)
+						-> create "Finished" message (ssiTlsHandshakeFinished)
+						-> expect "Finished" next
+					-> finished(20): ssiTlsHandshakeReceiveFinished
+						-> message size must be correct
+						-> get server verify data (ssiTlsHandshakeHash)
+						-> verify data must match with message
+						-> if resumed flag is zero
+							-> end handshake (expect message 0xff)
+						-> else
+							-> send "Change CipherSpec" and "Finished" (ssiTlsChangeCipherSpec, ssiTlsHandshakeFinished)
+		-> if content type is 23 (application data)
+			-> handshake must be done and receive cipher flag must be set
+	-> if we consumed all data, exit
+
+ssiTlsSetReceiveCipherFlag:
+-> set device sequence number to zero
+-> if our cipher suite isn't the NULL one
+	-> set read cipher flag to one
+
+ssiTlsSetSendCipherFlag:
+-> set host sequence nummber to zero
+-> if our cipher suite isn't the NULL one
+	-> set read cipher flag to one
+
+ssiTlsChangeCipherSpec:
+-> create "Change Ciphertext" message and wrap it (ssiTlsCiphertextWrap)
+-> set send cipher flag (ssiTlsSetSendCipherFlag)
+
+ssiTlsCiphertextWrap:
+-> set size & type
+-> if the write cipher flag is one
+	-> unprotect key block (palCryptoProtectMem)
+	-> if the "GCM" flag is set in the cipher suite object, call ssiTlsAes256GcmSha384Wrap
+		-> set frament size to plaintext size
+		-> generate nonce and prepend it to content (ssiTlsGenerateRandom)
+		-> create additional data = device seq_num + header
+		-> create IV = key block IV + nonce
+		-> encrypt data (palCryptoEncryptAuth)
+		-> increment host sequence number
+	-> else call ssiTlsAes256CbcShaWrap
+		-> calculate MAC and append to content (ssiTlsCalcMAC)
+		-> increment host sequence number (ssiTlsIncSeqNum)
+		-> append padding
+		-> create random IV (ssiTlsGenRandom)
+		-> encrypt data (ssiTlsAesCbc)
+	-> reprotect key block (palCryptoProtectMem)
+
+ssiTlsCalcMAC:
+-> calculate MAC using palCryptoMAC*
+	-> involved parameters: sequence number, header, MAC
+
+ssiTlsAesCbc:
+-> wrapper around palCryptoEncrypt/palCryptoDecrypt
+
+ssiTlsWrap:
+-> session must be initialized, established & encrypted (no error if not)
+-> call ssiTlsSendApplicationData
+	-> create "Application Data" message and wrap it (ssiTlsCiphertextWrap)
+
+ssiTlsUnwrap:
+-> session must be initialized, established & encrypted (no error if not)
+-> call ssiTlsReceiveData
+-> copy application data from buffer
+
+ssiTlsHandshakeProtoWrap:
+-> set size & message type
+-> if the message isn't "finished", update handshake hash (ssiTlsHandshakeUpdateHash)
+
+ssiTlsHandshakeClientKeyExchange:
+-> allocate pre master secret buffer
+-> if the crypto type is PSK
+	-> identity.size is 0
+	-> create pre master secret according to RFC 4279
+-> if the crypto type is ECC
+	-> call cipher suite's "create_key_exchange" method (ssiTlsEccCreateKeyExchange)
+		-> TODO depending on first short, get location of certificate public key
+		-> create certificate public key handle (palCryptoEccCreatePublicKeyHandle)
+		-> export certificate public key to ECPoint (palCryptoEccExportRFC5480)
+		-> create key pair (palCryptoEccKeypairGenerate)
+		-> export public key to message ECPoint (palCryptoEccExportPublicKey, palCryptoEccExportRFC5480)
+		-> create premaster secret from key pair and certificate public key (palCryptoECDHGenSecret)
+			-> private key handle must be for a private key
+			-> get curve domain and bcrypt data
+			-> import private key (BCryptImportKeyPair)
+			-> import public key (palCryptoEccImportRFC5480, BCryptImportKeyPair)
+				-> import key (palCryptoEccImportRFC5480)
+					-> get curve domain
+					-> ECPoint must be uncompressed and valid
+					-> x & y buffers must be big enough
+					-> copy x & y to argument buffers
+					-> swap bytes of x & y (BE->LE)
+				-> swap bytes of x & y again (LE->BE)
+				-> actual key import (BCryptImportKeyPair)
+			-> create secret key (BCryptSecretAgreement)
+			-> create palCryptoSecret with id 0x21485342 (BSH!)
+
+-> create handshake message (ssiTlsHandshakeProtoWrap)
+-> call ssiTlsCalcKeyBlock with created premaster secret
+
+ssiTlsHandshakeFinished:
+-> get client verify data (ssiTlsHandshakeHash)
+-> create message (ssiTlsHandshakeProtoWrap)
+
+ssiTlsHandshakeHash:
+-> if we're getting the client's verify data, duplicate digest (palCryptoDigestDuplicate)
+	-> if we're resuming, switch roles
+-> get digest hash
+-> if we're getting verify data, feed into PRF function (palPRF)
+
+ssiTlsCalcKeyBlock:
+-> call ssiTlsCalcMasterSecret
+	-> if the "resumed" flag is zero
+		-> calculate master secret from randoms (palPRF)
+	-> else
+		-> unprotect master secret
+-> expand master secret into key block (palPRF)
+
+ssiTlsGenRandom:
+-> wrapper around palCryptoRng
+
+ssiTlsAlertNotify:
+-> call ssiTlsAlertCreate to create close_notify alert
+	-> alerts 10 (unexpected_message), 20 (bad_record_mac), 40 (handshake_failure) and 47 (illegal_parameter) are fatal
+	-> create alert and set context send_alert fields
+	-> call ssiTlsCiphertextWrap
+-> set closed flag
+
+tudorTlsInSession:
+-> proxy to ssiTlsInSecureSession
+-> session mustn't be NULL, and handshake must be done (expected message 0xff)
+
+tudorTlsSensorSessionStatusGet:
+-> perform protocl IOCTL 0x66 (tudorUsbProtoIoControl)
+-> return boolean result
+
+tudorSecurityGetSSPubkey:
+-> iterate over 3 keys:
+	-> check if the key matches FW major, FW minor and key flag
+	-> if yes, return it
+
+tudorSecurityGetPairingData:
+-> call _unwrapPairingData -> calls palSecureUnwrap (no keys)
+-> decode unwrapped blob as tag-value container (palTagValSetContainerDataAsBlob)
+
+palSecureWrap:
+-> if we have no HMAC key: palSecureProtect
+	-> protect protected region (CryptProtectData)
+	-> calculate output size, output buffer must be big enough
+	-> allocate output buffer
+	-> copy header to output
+	-> copy unencrypted region to output
+	-> copy protected data to touput
+	-> calculate SHA256 hash (palCryptoDigest)
+	-> protect hash (CryptProtectData)
+-> else: palCryptoEncryptAndSign
+	-> if we only have unencrypted data
+		-> allocate output buffer
+		-> copy unencrypted data to output buffer
+	-> else
+		-> calculate padding size
+		-> create random IV
+		-> allocate output buffer
+		-> copy unencrypted data to output buffer
+		-> copy IV to output buffer
+		-> copy (soon to be) encrypted data to output buffer
+		-> create padding
+		-> allocate encrypted data buffer
+		-> encrypt data into buffer (palCryptoEncrypt) 
+		-> copy encrypted data to output buffer
+	-> copy header to output
+	-> calculate MAC (palCryptoMAC)
+
+palSecureUnwrap:
+-> if we have no HMAC key: palSecureUnprotect
+	-> copy header to local buffer
+	-> check header version
+	-> calculate SA256-Hash of header + regions (palCryptoDigest)
+	-> unprotect stored hash (CryptUnprotectData)
+	-> compare hashes (must match)
+	-> unprotect encrypted region (CryptUnprotectData)
+	-> copy unencrypted region + unprotected data to the output buffer
+-> else: palCryptoVerifyAndDecrypt:
+	-> copy header to local buffer
+	-> check header version
+	-> check header region sizes
+		-> if we have no decryption key, all the payload must be the plaintext section
+		-> else both must add up to the entire payload size
+	-> calculate HMAC of everything except last 32 bytes via RC4/SHA256 (hmac section) (palCryptoMAC)
+	-> compare calculated HMAC with last 32 bytes (must match)
+	-> if no encrypted region
+		-> copy unencrypted region into output buffer
+	-> else
+		-> call palCryptoDecrypt
+		-> padding must be valid
+		-> copy unencrypted region + decrypted region into output buffer 
+
+format secure wrapped:
+-> 0-15: header
+	-> 0: version major (1)
+	-> 1: version minor (0)
+	-> 2-3: ????
+	-> 4-7: unencrypted region size
+	-> 8-11: encrypted region size
+	-> 12-15: hash size
+-> 16-*: unencrypted region
+-> *-*: encrypted region (AES CBC/CryptProtectData)
+union:
+	-> *-(-1): protected hash of header+regions (CryptProtectData)
+	-> (-32)-(-1): HMAC of header+regions (RC4/SHA256)
+
+palCryptoRng:
+-> wrapper around CryptGenRandom
+
+palCryptoDigest:
+-> call palCryptoDigestInit
+	-> create SHA256/SHA384 WinCrypt hash object
+-> call palCryptoDigestUpdate
+	-> add data using CryptHashData
+-> call palCryptoDigestFinal
+	-> extract data using CryptGetHashParam
+
+palCryptoDigestDuplicate:
+-> duplicate hash object
+-> duplicate hash handle (CryptDuplicateHash)
+
+palCryptoMAC:
+-> call palCryptoMACInit
+	-> allocate palMAC object
+	-> import key as WinCrypto RC4 session key
+	-> create WinCrypto HMAC object
+	-> set HMAC hash algorithm based on parameter
+-> call palCryptoMACUpdate
+	-> add data to WinCrypto object
+-> call palCryptoMACFinal
+	-> get hash from WinCrypto object
+	-> destroy palMAC object
+
+palCryptoEncrypt/palCryptoDecrypt:
+-> only valid algorithm: 2 (palCryptoAesCbc)
+-> convert key to session key (palCryptoAESConvertSessionKey)
+	-> only valid key sizes: 0x10, 0x18, 0x20 for AES 128, 192, 256
+	-> import key via CryptImportKey
+-> set key cypher mode to CBC
+-> allocate buffer
+-> if encryption, call CryptEncrypt, else call CryptDecrypt
+-> copy to output buffer
+-> copy last block to IV buffer
+	
+palCryptoEncryptAuth/palCryptoDecryptAuth
+-> only valid algorithm: 3 (palCryptoAesGcm)
+-> nonce must be 12 bytes long
+-> key must be 16, 24 or 32 bytes long
+-> open "AES" BCrypt algorithm provider (BCryptOpenAlgorithmProvider)
+-> set "ChainingMode" to "GCM" (BCryptSetProperty)
+-> get "AuthTagLen" (BCryptGetProperty)
+-> tag buffer size must be in range
+-> open key (BCryptGenerateSymmetricKey)
+-> if encryption, call BCryptEncrypt, else call BCryptDecrypt
+
+palCryptoProtectMem: wrapper around CryptProtectMemory/CryptUnprotectMemory
+
+palCryptoEccEllipticCurveSet:
+-> allocate handle with id ECDP=Elliptic Curve Data Possesion
+-> allocate a crypto tagged container
+-> allocate ECC domain object
+-> copy curve name to domain
+-> copy curve strength to domain
+-> calculate length of field buffers based on strength
+-> allocate palCryptoEccBCryptData object
+-> open ECDH & ECDSA algorithms (BCryptOpenAlgorithmProvider)
+-> transfer data into the tagged container (palCryptoTaggedContainerCreate & palCryptoTaggedContainerTransferData)
+	-> 0x134: domain
+	-> 0x13b: ecdh algorithm handle
+	-> 0x13c: ecdsa algorithm handle
+	-> 0x13d: bcrypt data
+
+palCryptoEccCreatePublicKeyHandle:
+-> get domain (palCryptoEccCurveGetDomain)
+-> x/y size must be at least param_len
+-> allocate a handle object with id ECPU=Elliptic Curve PUblic key
+-> allocate key buffer size=param_len*2
+-> copy x to buffer and swap bytes (LE->BE)
+-> copy y to buffer and swap bytes (LE->BE)
+-> add buffer to handle with tag=0x13a (palCryptoEccHandleSetData)
+
+palCryptoEccCreatePrivateKeyHandle:
+-> get domain of curve
+-> size must be param_len
+-> allocate a new handle id=ECPR (Elliptic Curve PRivate key)
+-> allocate key buffer size=param_len*3
+-> copy data to buf+param_len*3 and swap bytes (LE->BE)
+-> add key buffer to container tag=0x139
+
+palCryptoEccKeypairGenerate:
+-> seed must be null
+-> get curve domain/bcrypt data
+-> create new BCrypt ECDH key pair (BCryptGenerateKeyPair, BCryptFinalizeKeyPair)
+-> allocate public & private key handles (ids ECPU, ECPR)
+-> export keys (BCryptExportKey)
+-> set handle data (palCryptoEccHandleSetData)
+
+palCryptoEccExportPublicKey:
+-> get curve domain (palCryptoEccGetDomain)
+-> get XY buffer data (palCryptoEccHandleGetData)
+-> x & y buffers must be big enough
+-> swap bytes of x & y (BE->LE)
+-> copy data to x & y buffers
+
+palCryptoEccExportPrivateKey:
+-> get curve domain (palCryptoEccGetDomain)
+-> get key buffer data (palCryptoEccHandleGetData)
+-> secret buffer must be big enough
+-> swap bytes of secret (BE->LE)
+-> copy secret to secret buffer
+
+palCryptoEccHandleDestroy:
+-> TODO if we have data taged 0x138=???? (some HCRYPTKEY)
+	-> destroy key
+-> if we have data tagged 0x13b=ecdh algorithm handle
+	-> release handle
+-> if we have data tagged 0x13c=ecdsa algorithm handle
+	-> release handle
+-> destroy the tagged container (palCryptoTaggedContainerDestroy)
+-> free the curve object
+
+palCryptoEccExportRFC5480:
+-> if mode is "SubjectPublicKeyInfo"
+	-> determine if output buffer is big enough by calling palCryptoEccExportSubjectPublicKeyInfo
+-> create uncompressed ECPoint
+-> swap bytes of x & y (LE->BE)
+-> if mode is "SubjectPublicKeyInfo"
+	-> export to SubjectPublicKeyInfo (palCryptoEccExportSubjectPublicKeyInfo)
+		-> curve must be secp256r1
+		-> wrap in SubjectPublicKeyInfo format
+
+palCryptoECDSASign:
+-> private key handle must be for a private key (id ECPR)
+-> get curve domain & bcrypt data (palCryptoEccCurveGetDomain, palCryptoEccCurveGetBCryptData)
+-> import private key into BCrypt (BCryptImportKeyPair)
+-> sign hash using BCrypt (BCryptSignHash)
+-> signature size must be 2*param_len
+-> encode signature as ECDSA-Sig-Value (see RFC5480) (CryptEncodeObject)
+
+palCryptoECDSAVerify:
+-> get domain and bcrypt data (palCryptoEccGetDomain, palCryptoEccGetBCryptData)
+-> create a BCRYPT_ECCKEY_BLOB
+-> get key buffer from key (palCryptoEccHandleGetData)
+-> import key (BCryptImportKeyPair)
+-> decode the X509 ECC signature (CertDecodeObject)
+-> malloc a buffer size=param_len*2
+-> memcpy r and s into it
+-> swap bytes of r & s (LE->BE)
+-> call BCryptVerifySignature
+
+palPRF:
+-> if argument is a palCryptoSecret:
+	-> call BCryptDeriveKey with arguments depending on function
+		-> 0: TLS_PRF SHA256
+		-> 1: TLS_PRF SHA384
+		-> 2: SHA256
+-> else
+	-> switch function:
+		-> 0: prfTLS12 SHA256
+		-> 1: prfTLS12 SHA384
+			-> calculate A(1) by creating MAC of label+input (palCryptoMAC, key=secret)
+			-> while not enough output generated
+				-> calculate temporary MAC of A(i)+label+input (palCryptoMAC, key=secret)
+				-> copy MAC bytes to output
+				-> calculate A(i+1) as MAC of A(i) (palCryptoMAC, key=secret)
+		-> 2: prfAesCmac
+			-> if the secret isn't exactly 16 bytes, transform to 16 bytes via palCryptoAesCmac (in=secret, key=all zeros)
+			-> call palCryptoAesCmac (in=label key=16 byte secret)
+				-> key and output must be 16 bytes long
+				-> generate subkeys (_generateSubKeys)
+					-> AES-CBC encrypt key (palCryptoEncrypt, iv=all zeros)
+					-> generate K1 & K2 (_generateSubKey)
+						-> left shift by one
+						-> if MSB of first byte is set, xor with 0x87 for 64 bit, else 0x1b
+				-> if the input isn't block algined, increment block count
+				-> if we have less than two input blocks
+					-> if the input is not empty, the tag block is the first 16 bytes of input
+				-> else
+					-> encrypt all except last block using AES-CBC (palCryptoEncrypt, iv=all zeros)
+					-> copy last block of encrypted input to "before tag block"
+					-> copy last block of input to tag block
+				-> if we have a empty or non aligned input, choose subkey K2, else choose K1
+				-> xor tag block with choosen subkey
+				-> encrypt xored tag block using AES-CBC (palCryptoEncrypt, iv=pre tag block)
+
+palSymKeyGen:
+-> if no secret is given, generate a random one (palCryptoRng)
+-> if no input is given, generate a random one (palCryptoRng)
+-> call palPRF (algorithm = TLS_PRF SHA256)
+
+palTagValGetContainerDataAsBlob:
+-> buffer size must match container size
+-> iterate over all nodes
+	-> get node tag & size and copy them to output
+	-> if type is neither 0 nor 1
+		-> call HostToLittleEndian
+			-> must NOP, as host is already LE
+			-> no need for reverse engineering
+	-> copy value to output
+
+palTagValContainerDecode:
+-> called by palTagValSetContainerDataAsBlob (transfer_ownership=false)
+-> called by palTagValSetContainerDataAsBlobWO (transfer_ownership=true)
+-> decodes blob and puts its values into a container
+-> iterates over all entries:
+	-> decode tag & size
+	-> call palTagValContainerAdd to add nodes
+
+palTagValSetBlobDataProperty:
+-> wrapper around palTagValContainerAdd
+
+palTagValContainerAdd
+	-> tag must be in range 0-0xfff0 (exclusive)
+	-> TODO set 2 misterious fields
+	-> if value_size > 0
+		-> if copy_value, copy value, else just take the pointer we're given
+	-> insert add end of node list
+
+palCryptoTaggedContainerTransferData:
+-> iterate over all data
+	-> create copy of data
+	-> call palCryptoTaggedContainerAddData
+		-> iterate over all nodes in container
+			-> if one has same tag, call palCryptoTaggedContainerRemoveNode
+				-> remove node from linked list
+		-> call palCryptoTaggedContainerAddNode
+			-> allocate a node
+			-> add it to the linked list
+
+palCryptoTaggedContainerGetData:
+-> iterate over all nodes, return data of node if match
+
+format encoded tag-val container:
+-> array of entries
+	-> 0-1: tag
+	-> 2-5: data size
+	-> 6-*: data
+
+tudorIoCtl:
+-> if ioctl < 100:
+	-> switch
+		-> 1,2: error 0x71
+		-> 3: send command
+			-> handled by tudorSendAnyCommand, wrapper around tudorSendCommand
+		-> 4: tudorBootLoaderModeEnter
+		-> 5: tudorBootLoaderModeExit
+		-> 6: ??? 
+			-> TODO
+		-> 7: read iota
+			-> call tudroCmdIotaRead
+		-> 9: pair device
+			-> call tudorSecurityDoPair
+		-> 10: tudorSecurityDoUnPair
+			-> call tudorSecurityDoUnPair
+		-> 0x16: is in bootloader mode? (check using mode char in device info)
+		-> 0x1d: ???
+			-> TODO
+		-> 0x1f: tudorCreateStoragePartition
+		-> 0x20: tudorGetStorageInfo
+			-> call tudorCmdGetStorageInfo
+			-> TODO num sths must be greater than 0
+-> else: __tudorIoctlExt
+	-> TODO
+
+tudorUsbProtoIoControl:
+-> 1,4,5,6,0x12: proxy to palUsbDriverIoControl
+-> 0x65: device info
+	-> 0-1: pid (proxy to palUsbDriverIoControl IOCTL 2)
+	-> 2-3: vid (proxy to palUsbDriverIoControl IOCTL 2)
+	-> 4: 0x00
+	-> 5: 0x01
+-> 0x66: get remote tls session status
+	-> get device status (palUsbProtoGetStatus): perform control request (palUsbDriverCtrlRequest):
+		-> request type: 0xc0 (device2host vendor transfer)
+		-> request: 0x14
+		-> value: 0
+	-> first of two bytes is returned
+-> 0x67: send data in=request, out=response BLOB
+	-> handled by palUsbDriverWrite
+	-> write request to endpoint 0 (palUsbDriverWritePipe)
+	-> read response from enpoint 1 (palUsbDriverReadPipe)
+-> 0x68: reset (proxy to palUsbDriverIoControl IOCTL 1)
+-> 0x69: write DFT (usually 8 bytes)
+    -> handled by palUsbDriverWriteDFT
+    -> send control request
+        -> request type: 0x40 (host2device vendor transfer)
+        -> request: 0x15
+        -> value: 0
+-> 0x6a: event data
+	-> call palUsbDriverIoControl IOCTL 3
+	-> out 0: pal out 0
+	-> out 1: pal out 5
+	-> out 2: pal out 6
+
+palUsbDriverIoControl:
+-> 1: hard reset
+	-> call palWinUsbReset
+		-> close HID (palWinHidClose)
+		-> call interface reset method
+-> 2: get vid/pid
+	-> handled by palUsbDriverGetVidPid
+	-> call palWinUsbGetDeviceDescriptor
+		-> TODO
+	-> TODO
+-> 3: event data
+	-> call palUsbDriverGetEventData
+		-> if the HIF error is zero, copy HID buffer to output 
+-> 4: initialize
+	-> call interface "initialize" function (palInterfaceInitialize)
+		-> call some function
+			-> try for 1 second
+				-> query pipe for endpoint 0 for interface 0
+				-> if error, exit unsuccessfully
+				-> query pipe policy 3 for pipe
+				-> if no error, exit successfuly
+				-> else sleep for 30 ms
+			-> return 1 if not exited
+		-> if 1 is returned, try for 1 second
+			-> call palWinUsbDeviceHandleOpen
+			-> if no error, break
+			-> else sleep for 50 ms
+		-> if we didn't break, return error of last palWinUsbDeviceHandleOpen invocation
+	-> memset HID context to zero
+	-> set some field to zero (TODO)
+-> 5: get pipe timeout
+	-> handled by palWinUsbGetPipeTimeout
+	-> proxy to WinUSB_GetPipePolicy
+-> 6: set pipe timeout
+	-> handled by palWinUsbSetPipeTimeout
+	-> proxy to WinUSB_SetPipePolicy
+-> 7: listen for device event
+	-> call palUsbDriverEventListen
+		-> enter critical section
+		-> if another callback is already installed, exit
+		-> copy callback to driver struct
+		-> set DPC event (palEventSet)
+		-> exit critical section
+-> 8: stop listenting for device event
+	-> call palUsbDriverEventStopListen
+		-> enter critical section
+		-> if no callback is installed, exit
+		-> clear callback
+		-> stop pending transfer on interrupt endpoint (palWinUsbStopPendingTransfers)
+			-> call WinUsb_QueryPipe/WinUsb_AbortPipe
+		-> exit critical section
+-> 0xe: NOP
+-> 0xf: NOP
+-> 0x12: set power policy
+	-> TODO

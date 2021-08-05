@@ -1,0 +1,23 @@
+identify_template:
+DeviceIoControl(0x442054, all templates, NULL); function 0x815
+DeviceIoControl(0x443058, identity, giant response structure); function 0xc16
+
+create_enrollment:
+DeviceIoControl(0x44200c, zero-QWORD, unused); function 0x803
+
+update_enrollment:
+DeviceIoControl(0x442010, NULL, some struct); function 0x804
+
+check_for_duplicate:
+DeviceIoControl(0x442014, NULL, Identity + SubFactor + IsDuplicate); function 0x805
+
+commit_enrollment:
+DeviceIoControl(0x442050, identity, TemplateBlobSize); function 0x814
+
+//TODO Intended double ioctl?
+DeviceIoControl(0x442050, identity, TemplateBlob);
+
+discard_enrollment:
+DeviceIoControl(0x44201c, NULL, NULL); function 0x807
+
+

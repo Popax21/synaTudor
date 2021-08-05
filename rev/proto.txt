@@ -1,0 +1,239 @@
+all integers are little endian
+
+endpoints:
+    0: commands [host2device]
+    1: responses [device2host]
+    2: event polling [device2host, interrupt]
+        0-4: ????
+        5: frame index (& 0x7)
+        6: event sequence number (& 0x1f)
+
+vendor control transfers:
+-> 0x14 (device2host): TLS session status
+    -> 0: TLS session established
+-> 0x15 (host2device): Write DFT (?)
+    -> 0-5: ????
+    -> 6: bootloader mode
+    -> 7: ????
+
+requests:
+    base structure:
+        0: id
+
+    0x1: get version
+        resp:
+            2-5: ????
+            6-9: FW build num
+            10: FW version major
+            11: FW version minor
+            12: ????
+            13: product id
+            14-17: ????
+            18-23: ???? (id)
+            24-36: ????
+            37: provision state (& 0xf)
+    0x5: reset
+    0x7: peek
+    0x8: poke
+    0xe: provision
+    0x10: reset ownership
+    0x19: get start info
+        resp:
+            2: start type
+            3: reset type
+            4-7: start status
+            8-11: sanity panic
+            12-15: sanity code
+            16-67: reset nvinfo (array of 13 ulongs)
+    0x39: LED ex2
+    0x3e: storage info get
+        resp:
+            2-3: ????
+            4-5: ????
+            6-7: ????
+            8-9: ????
+            0xa-0xb: ????
+            0xc-0xd: ????
+            0xe-0xf: num sths
+            0x10-*: sth array
+                -> 0-0xb: ????
+    0x3f: storage part format
+    0x40: storage part read
+    0x41: storage part write
+    0x44: tls data
+        only when commands aren't encrypted
+        req:
+            4-*: tls data
+        resp: NO STATUS
+            0-*: tls data
+    0x47: db object create
+    0x4f: take ownership ex2
+    0x50: get certificate ex
+    0x57: set idle timeout:
+        req:
+            1-2: timeout (ms*1000/80)
+    0x7d: bootloader patch
+        req:
+            1-*: patch data
+    0x7f: frame read
+        req:
+            1-2: frame sequence number
+            3-4: ????
+            5-6: max size [?]
+            7-8: ???? (always 3)
+        resp:
+            2-3: frame flags
+                -> 1: last frame
+                -> 2: finger lifted
+            4-5: ????
+            6-7: frame index
+    0x80: frame acq
+        req:
+            1-4: ????
+            5-8: number of frames
+            9-0xa: ???? (always 1)
+            0xb: ???? 
+            0xc: ???? (always 8)
+            0xd: ????
+            0xe: ????
+            0xf: ????
+            0x10: ???? (always 0)
+            0x11-0x12: ???? (always 1)
+            0x13: ????
+            0x14: ???? (always 0xc)
+            0x15-0x16: ???? (always 0x14)
+            0x17: ???? (always 2)
+            0x18: ???? (always 0)
+    0x81: frame finish
+    0x82: frame state get
+        req:
+            1-6: ???? (0)
+            7: ???? (2)
+            8: ???? (7)
+        resp:
+            2-13: ????
+            14-31: dimensions
+                0-1: pixel bits
+                2-3: width 
+                4-5: frame header size
+                6-7: x offset
+                8-9: x size
+                10-11: height
+                12-13: column header size
+                14-15: y offset
+                16-17: y size
+    0x86: event config
+        req:
+            repeat 8 times: (always the same)
+                0-3: event mask
+            33-36: 4 if no events, else 0
+        resp:
+            2-0x3f: ????
+            0x40-0x41: current event sequence number
+    0x87: event read
+        req:
+            1-2: current host event sequence number
+            3-4: max number of events in response
+            [ 5-8: always 1 (left out when using legacy event reading) ]
+        resp:
+            2-5: num events
+            6-(-2): events
+                0: event type
+                1-3: ????
+                4-7: ????
+                8-0xb: ????
+            (-2)-(-1): dependent on reading mode
+                legacy: total number of events (requested + pending)
+                new: num pending events
+    0x8b: frame stream
+    0x8e: read iota
+        req:
+            1-2: IOTA id
+            3-4: ??? (flags, 2)
+            5-8: ??? (0)
+            9-12: offset
+            13-16: ????
+        resp:
+            2-5: IOTA size (0 if invalid id)
+            5-*: data
+    0x93: pair
+        req:
+            1-0x44: host certificate
+        resp:
+            2-0x45: host certificate echo
+            0x46-0x89: device certificate
+    0x9e: db2 get db info
+    0x9f: db2 get object list
+    0xa0: db2 get object info
+    0xa1: db2 get object data
+    0xa3: db2 delete object
+    0xa3: db2 cleanup
+    0xa5: db2 format
+
+responses:
+    base structure:
+        0-1: status
+    
+    success: 0, 0x412, 0x5cc
+    specific error code:
+        0x401 -> 0xd1
+        0x404 -> 0x68
+        0x405-0x407 -> 0x6f
+        0x509 -> 0x12e
+        0x5b6 -> 0xda
+        0x6e0 -> 0xdc
+    others: failure -> 0xca
+
+provision states:
+    0,1: not provisioned
+    3: provisioned
+    ????
+
+TLS 1.2 layer: sess "tls data" command
+-> client advertises:
+-> TLS_ECDH_ECDSA_WITH_AES_256_CBC_SHA
+-> TLS_ECDH_ECDSA_WITH_AES_256_GCM_SHA384
+-> TLS_RSA_WITH_AES_256_CBC_SHA256 (unusable!)
+-> TLS_PSK_WITH_AES_256_CBC_SHA (unusable!)
+-> TLS_PSK_WITH_AES_128_GCM_SHA256 (unusable!)
+-> extensions: ??? (TODO)
+
+certificate:
+0-1: magic (3f5f)
+2-3: curve name (23=SECP256R1)
+4-0x47: public key x
+0x48-0x8b: public key y
+0x8c-0x8d: ????
+0x8e-0x8f: signature size
+0x90-0x18f: signature
+
+IOTA:
+0-1: size
+2-3: type
+
+IOTA 9 (config version):
+4-7: major
+8-0xb: minor
+0xc-0xd: revision
+0xe-0x14: ????
+
+IOTA 0x1a (IPL iota): PACKED
+
+
+IOTA 0x2e (WBF parameter): PACKED
+0-2: ????
+3: version
+4-7: data
+
+event types: also event mask bit indices
+-> at most 32 events can be pending
+1: finger press
+2: finger remove
+3: ????
+4: ????
+5: ????
+6: ????
+7: ????
+8: ????
+9: ????
+24: ????

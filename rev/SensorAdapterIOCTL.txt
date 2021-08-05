@@ -1,0 +1,9 @@
+query_status:
+DeviceIoControl(0x440010, NULL, resp); function: 0x4
+
+reset:
+DeviceIoControl(0x440008, NULL, resp); function: 0x2
+
+start/finish_capture:
+query_status();
+DeviceIoControl(0x440014, format thing, SampleBuffer); function: 0x5
