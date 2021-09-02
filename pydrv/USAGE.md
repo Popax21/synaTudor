@@ -1,15 +1,8 @@
 # Usage of the driver script
-## Dependencies
-You'll need:
-* python3
-* cryptography
-* pyusb
-* matplotlib
-
 ## Invocation
 The script needs to be run as `root` to be able to access the sensor. You can then invoke it like this:
 ```shell
-sudo python <path to repo>/pydrv/driver.py <arguments> <communication mode> <communication arguments>
+sudo python -m tudor.driver <arguments> <communication mode> <communication arguments>
 ```
 
 Argument | Description
