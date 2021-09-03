@@ -95,7 +95,9 @@ class USBCommunication(CommunicationInterface):
         self.tls_session = None
 
     def close(self):
-        usb.util.release_interface(dev, 0)
+        usb.util.release_interface(self.dev, 0)
+        self.dev.reset()
+        self.dev = None
 
     def reset(self):
         self.tls_session = None
