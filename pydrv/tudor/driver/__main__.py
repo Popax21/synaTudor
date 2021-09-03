@@ -66,3 +66,6 @@ if __name__ == "__main__":
                         print("Error while executing command: %s" % traceback.format_exc())
             except EOFError: break
             except KeyboardInterrupt: break
+
+    #Close communication interface
+    comm.close()

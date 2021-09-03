@@ -6,6 +6,7 @@ import time
 import logging
 import threading
 import usb.core
+import usb.util
 import tudor.tls
 from .log import *
 
@@ -53,6 +54,8 @@ class CommandFailedException(Exception):
         self.status = status
 
 class CommunicationInterface:
+    def close(self): raise NotImplementedError()
+
     def reset(self): raise NotImplementedError()
     def send_command(self, cmd : bytes, resp_size : int, timeout : int = 2000, raw : bool = False) -> bytes: raise NotImplementedError()
 
@@ -90,6 +93,9 @@ class USBCommunication(CommunicationInterface):
 
         #Init the TLS session
         self.tls_session = None
+
+    def close(self):
+        usb.util.release_interface(dev, 0)
 
     def reset(self):
         self.tls_session = None
@@ -137,6 +143,10 @@ class LogCommunicationProxy(CommunicationInterface):
 
     def __init__(self, proxied):
         self.proxied = proxied
+
+    def close(self):
+        logging.log(LOG_COMM, "---------------------- CLOSE ---------------------")
+        self.proxied.release()
 
     def reset(self):
         logging.log(LOG_COMM, "---------------------- RESET ---------------------")
