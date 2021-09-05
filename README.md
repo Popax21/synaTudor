@@ -11,4 +11,4 @@ Potentially others too
 ## Subsections
 + [Reverse engineering documentation](rev)
 + [Python prototype driver](pydrv)
-+ libfprint integration **TODO**
++ [libfprint integration](libfprintTod)

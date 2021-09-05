@@ -1,6 +1,7 @@
 from .cmd import *
 from .context import *
 
+import os
 import tudor.sensor
 
 @cmd("load_pdata")
@@ -51,3 +52,14 @@ class CmdUnpair(Command):
         ctx.sensor.unpair(ctx.pairing_data)
         ctx.pairing_data = None
         print("Successfully unpaired sensor")
+
+@cmd("fprintd_setup")
+class CmdFprintdSetup(Command):
+    """Sets up pairing data for fprintd"""
+
+    def run(self, ctx : CmdContext, args : list):
+        if ctx.pairing_data == None: raise Exception("No pairing data present!")
+
+        if not os.path.exists("/etc/tudor"): os.makedirs("/etc/tudor");
+        with open("/etc/tudor/%s.pdata" % ctx.sensor.id.hex(), "wb") as f: ctx.pairing_data.save(f)
+        print("Successfully setup pairing data for fprintd")
