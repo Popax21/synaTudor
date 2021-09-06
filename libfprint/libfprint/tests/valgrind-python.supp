@@ -1,0 +1,55 @@
+{
+   ignore_py_cond
+   Memcheck:Cond
+   ...
+   fun:Py*
+}
+
+{
+   ignore__py_cond
+   Memcheck:Cond
+   ...
+   fun:_Py*
+}
+
+{
+   ignore_py_value8
+   Memcheck:Value8
+   ...
+   fun:Py*
+}
+
+{
+   ignore__py_value8
+   Memcheck:Value8
+   ...
+   fun:_Py*
+}
+
+{
+   ignore_py_addr4
+   Memcheck:Addr4
+   ...
+   fun:Py*
+}
+
+{
+   ignore__py_addr4
+   Memcheck:Addr4
+   ...
+   fun:_Py*
+}
+
+{
+   ignore_py_leaks
+   Memcheck:Leak
+   ...
+   fun:Py*
+}
+
+{
+   ignore__py_leaks
+   Memcheck:Leak
+   ...
+   fun:_Py*
+}

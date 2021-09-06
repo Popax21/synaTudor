@@ -1,0 +1,57 @@
+diff --git a/libfprint/nbis/mindtct/contour.c b/libfprint/nbis/mindtct/contour.c
+index 3e9416c..31f32d0 100644
+--- mindtct/contour.c
++++ mindtct/contour.c
+@@ -440,6 +440,8 @@ int get_centered_contour(int **ocontour_x, int **ocontour_y,
+    int *contour_x, *contour_y, *contour_ex, *contour_ey, ncontour;
+    int i, j, ret;
+ 
++   g_assert (half_contour > 0);
++
+    /* Compute maximum length of complete contour */
+    /* (2 half contours + feature point).         */
+    max_contour = (half_contour<<1) + 1;
+diff --git a/libfprint/nbis/mindtct/minutia.c b/libfprint/nbis/mindtct/minutia.c
+index 0b29aa0..77cf09d 100644
+--- mindtct/minutia.c
++++ mindtct/minutia.c
+@@ -1625,7 +1625,7 @@ int process_horizontal_scan_minutia_V2(MINUTIAE *minutiae,
+                             dmapval, bdata, iw, ih, lfsparms);
+ 
+    /* If minuitia IGNORED and not added to the minutia list ... */
+-   if(ret == IGNORE)
++   if(ret != 0)
+       /* Deallocate the minutia. */
+       free_minutia(minutia);
+ 
+@@ -1776,7 +1776,7 @@ int process_vertical_scan_minutia_V2(MINUTIAE *minutiae,
+                             dmapval, bdata, iw, ih, lfsparms);
+ 
+    /* If minuitia IGNORED and not added to the minutia list ... */
+-   if(ret == IGNORE)
++   if(ret != 0)
+       /* Deallocate the minutia. */
+       free_minutia(minutia);
+ 
+diff --git a/libfprint/nbis/mindtct/ridges.c b/libfprint/nbis/mindtct/ridges.c
+index f0d9cd3..9902585 100644
+--- mindtct/ridges.c
++++ mindtct/ridges.c
+@@ -147,6 +147,8 @@ int count_minutia_ridges(const int first, MINUTIAE *minutiae,
+ {
+    int i, ret, *nbr_list, *nbr_nridges, nnbrs;
+ 
++   g_assert (lfsparms->max_nbrs > 0);
++
+    /* Find up to the maximum number of qualifying neighbors. */
+    nbr_list = NULL;
+    if((ret = find_neighbors(&nbr_list, &nnbrs, lfsparms->max_nbrs,
+@@ -407,6 +409,8 @@ int insert_neighbor(const int pos, const int nbr_index, const double nbr_dist2,
+ {
+    int i;
+ 
++   g_assert (pos >= 0);
++
+    /* If the desired insertion position is beyond one passed the last     */
+    /* neighbor in the lists OR greater than equal to the maximum ...      */
+    /* NOTE: pos is zero-oriented while nnbrs and max_nbrs are 1-oriented. */

@@ -1,0 +1,6 @@
+LIBFPRINT_2.0.0 {
+global:
+	fp_*;
+local:
+	*;
+};

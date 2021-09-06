@@ -1,0 +1,24 @@
+option('drivers',
+       description: 'Drivers to integrate, "default" selects the default set, "all" selects all drivers',
+       type: 'string',
+       value: 'default')
+option('introspection',
+       description: 'Build GObject Introspection repository',
+       type: 'boolean',
+       value: true)
+option('udev_hwdb',
+       description: 'Whether to create a udev hwdb',
+       type: 'feature',
+       value: 'auto')
+option('udev_hwdb_dir',
+       description: 'Installation path for udev hwdb',
+       type: 'string',
+       value: 'auto')
+option('gtk-examples',
+       description: 'Whether to build GTK+ example applications',
+       type: 'boolean',
+       value: false)
+option('doc',
+       description: 'Whether to build the API documentation',
+       type: 'boolean',
+       value: true)

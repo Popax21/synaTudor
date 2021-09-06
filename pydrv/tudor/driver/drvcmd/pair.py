@@ -60,6 +60,9 @@ class CmdFprintdSetup(Command):
     def run(self, ctx : CmdContext, args : list):
         if ctx.pairing_data == None: raise Exception("No pairing data present!")
 
-        if not os.path.exists("/etc/tudor"): os.makedirs("/etc/tudor");
+        if not os.path.exists("/etc/tudor"): 
+            os.makedirs("/etc/tudor");
+            os.chmod("/etc/tudor", 0o700)
+        
         with open("/etc/tudor/%s.pdata" % ctx.sensor.id.hex(), "wb") as f: ctx.pairing_data.save(f)
         print("Successfully setup pairing data for fprintd")

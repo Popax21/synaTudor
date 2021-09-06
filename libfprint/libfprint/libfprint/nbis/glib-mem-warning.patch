@@ -1,0 +1,13 @@
+diff --git a/libfprint/nbis/mindtct/shape.c b/libfprint/nbis/mindtct/shape.c
+index 28bc66c..c399f36 100644
+--- mindtct/shape.c
++++ mindtct/shape.c
+@@ -86,7 +86,7 @@ int alloc_shape(SHAPE **oshape, const int xmin, const int ymin,
+ {
+    SHAPE *shape;
+    int alloc_rows, alloc_pts;
+-   int i, j, y;
++   int i, y;
+ 
+    /* Compute allocation parameters. */
+    /* First, compute the number of scanlines spanned by the shape. */

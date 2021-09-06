@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# This wrapper just disables the malloc checker
+exec /usr/bin/scan-build -disable-checker unix.Malloc "$@"

@@ -1,0 +1,13 @@
+Current maintainers of libfprint are:
+
+ * Benjamin Berg <bberg@redhat.com>
+ * Marco Trevisan (Treviño) <mail@3v1n0.net>
+
+Many drivers are not actively maintained and may not be fully functional.
+We are happy to receive contributions, but the support we can give is
+limitted unfortunately. For many drivers we may not even have test devices.
+
+Maintained drivers are:
+ * synaptics:
+   Contributed and maintained by Synaptics Inc.
+   Contact: Vincent Huang <vincent.huang@tw.synaptics.com>

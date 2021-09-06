@@ -1,0 +1,10 @@
+# The commits that did automated reformatting. You can ignore them
+# during git-blame with `--ignore-rev` or `--ignore-revs-file`.
+#
+#   $ git config --add 'blame.ignoreRevsFile' '.git-blame-ignore-revs'
+#
+
+d1fb1e26f3b79e54febc94496c1184763cf2af3d
+e4f9935706be4c0e3253afe251c182019ff7ccef
+65e602d8c72baa7020efb62d10bf28e621feb05d
+4115ae7ced77d392ee11ea55212206d9404356f0

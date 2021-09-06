@@ -26,7 +26,7 @@ class CmdCaptureImages(Command):
 
         #Show images
         for i in range(len(images)):
-            plt.figure("Image %d" % (i+1))
-            plt.imshow([[images[i][x,y] for x in range(images[i].width)] for y in range(images[i].height)], vmin=0, vmax=0xffff, cmap="viridis")
+            plt.figure("Image %d%s" % (i+1, "" if images[i].enough_coverage else " - INSUFFICIENT COVERAGE"))
+            plt.imshow([[images[i][x,y] for x in range(images[i].width)] for y in range(images[i].height)], vmin=0, vmax=0xff, cmap="viridis")
             plt.axis("off")
             plt.show(block=False)

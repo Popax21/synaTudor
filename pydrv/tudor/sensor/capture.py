@@ -2,12 +2,26 @@ from __future__ import annotations
 
 import struct
 import logging
+import ctypes
 import tudor
 from .sensor import *
 from .event import *
 
+class SensorTudorIplParameters(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("pixel_bits", ctypes.c_uint16), 
+        ("frame_header_size", ctypes.c_uint16), ("width", ctypes.c_uint16), ("x_off", ctypes.c_uint16), ("x_size", ctypes.c_uint16), 
+        ("col_header_size", ctypes.c_uint16), ("height", ctypes.c_uint16), ("y_off", ctypes.c_uint16), ("y_size", ctypes.c_uint16),
+        ("__pad1", ctypes.c_uint8*2),
+        ("config_ver_major", ctypes.c_uint32), ("config_ver_minor", ctypes.c_uint32),
+        ("ipl_type", ctypes.c_uint8),
+        ("__pad2", ctypes.c_uint8*2),
+        ("iota_size", ctypes.c_uint32), ("__pad3", ctypes.c_uint8*4), ("iota_data", ctypes.POINTER(ctypes.c_uint8))
+    ]
+
 class SensorImage:
-    def __init__(self, width : int, height : int, data : list = None):
+    def __init__(self, width : int, height : int, data : list = None, enough_coverage : bool = True):
         assert 0 < width and 0 < height
         self.width = width
         self.height = height
@@ -17,17 +31,20 @@ class SensorImage:
             self.data = data
         else: self.data = [[0 for _ in range(height)] for _ in range(width)]
 
+        self.enough_coverage = enough_coverage
+
     def __getitem__(self, idx : tuple) -> int: return self.data[idx[0]][idx[1]]
     def __setitem__(self, idx : tuple, val : int): self.data[idx[0]][idx[1]] = val
 
-    def rotate(self):
-        nimg = SensorImage(self.height, self.width)
-        for x in range(nimg.width):
-            for y in range(nimg.height):
-                nimg[x,y] = self[y,x]
-        return nimg
-
 class SensorFrameCapturer:
+    IPL_TYPES = {
+        0x35: 0,
+        0x38: 1,
+        0x3a: 2,
+        0x3c: 3,
+        0x41: 4
+    }
+
     def __init__(self, sensor : Sensor, dim_data : bytes):
         self.sensor = sensor
 
@@ -90,15 +107,39 @@ class SensorFrameCapturer:
     def frame_to_image(self, frame : bytes) -> SensorImage:
         if self.sensor.product_id != SensorProductId.PROD_ID5: raise Exception("Image conversion not supported for product id %r" % self.sensor.product_id)
 
-        #Parse frame as image
-        assert self.pixel_bits == 16
-        img = SensorImage(self.width, self.height)
-        for x in range(self.width):
-            for y in range(self.height):
-                o = self.frame_header_size + self.frame_stride * (self.x_off + x) + self.col_header_size + 2 * (self.y_off + y)
-                img[x,y] = int.from_bytes(frame[o:o+2], "little")
+        #Load native library
+        ln = ctypes.cdll.LoadLibrary(str(pathlib.Path(__file__).parent) + "/libnative/libnative.so")
+        ln.process_frame.argtypes = [ctypes.POINTER(SensorTudorIplParameters), ctypes.POINTER(ctypes.c_ubyte), ctypes.c_uint, ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_bool)]
+        ln.process_frame.restype = ctypes.c_int
 
-        #If width is greater than height, rotate image
-        if img.width > img.height: img = img.rotate()
+        ln.free_image.argtypes = [ctypes.POINTER(ctypes.c_uint8)]
+        ln.free_image.restype = None
+
+        #Process frame
+        img_data = ctypes.POINTER(ctypes.c_uint8)()
+        img_width, img_height = ctypes.c_int(), ctypes.c_int()
+        enough_coverage = ctypes.c_bool()
+
+        try:
+            r = ln.process_frame(ctypes.byref(SensorTudorIplParameters(
+                    pixel_bits=self.pixel_bits, 
+                    frame_header_size=self.frame_header_size, width=self.width, x_off=self.x_off, x_size=self.x_size,
+                    col_header_size=self.col_header_size, height=self.height, y_off=self.y_off, y_size=self.y_size,
+                    config_ver_major=self.sensor.cfg_ver.major, config_ver_minor=self.sensor.cfg_ver.minor,
+                    ipl_type=SensorFrameCapturer.IPL_TYPES[self.sensor.product_id],
+                    iota_size=len(self.sensor.ipl_iota.payload), iota_data=(ctypes.c_uint8 * len(self.sensor.ipl_iota.payload)).from_buffer_copy(self.sensor.ipl_iota.payload)
+                )), 
+                (ctypes.c_ubyte * len(frame)).from_buffer_copy(frame), len(frame), 
+                ctypes.byref(img_data), ctypes.byref(img_width), ctypes.byref(img_height), ctypes.byref(enough_coverage)
+            )
+            if r != 0: raise Exception("Couldn't process frame data: %d" % r)
+
+            #Convert image
+            img_width = img_width.value
+            img_height = img_height.value
+            img = SensorImage(img_width, img_height, [[(int(img_data[x*img_height + y]) + (1 << 7)) % (1 << 8) for y in range(img_height)] for x in range(img_width)], enough_coverage)
+        finally:
+            #Free image
+            if img_data: ln.free_image(img_data)
 
         return img

@@ -1,0 +1,27 @@
+.libfprint_common_variables:
+  LIBFPRINT_DEPENDENCIES:
+    doxygen
+    flatpak-builder
+    gcc
+    gcc-c++
+    gcovr
+    git
+    glib2-devel
+    glibc-devel
+    gobject-introspection-devel
+    gtk-doc
+    gtk3-devel
+    libabigail
+    libgusb-devel
+    libX11-devel
+    libXv-devel
+    meson
+    nss-devel
+    pixman-devel
+    python3-cairo
+    python3-gobject
+    systemd
+    umockdev
+    uncrustify
+    valgrind
+    clang-analyzer

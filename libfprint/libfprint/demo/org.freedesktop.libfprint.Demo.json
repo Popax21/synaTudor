@@ -1,0 +1,63 @@
+{
+    "app-id": "org.freedesktop.libfprint.Demo",
+    "runtime": "org.gnome.Platform",
+    "runtime-version": "3.36",
+    "sdk": "org.gnome.Sdk",
+    "command": "gtk-libfprint-test",
+    "finish-args": [
+        /* X11 + XShm access */
+        "--share=ipc", "--socket=x11",
+        /* Wayland access */
+        "--socket=wayland",
+        /* OpenGL access */
+        "--device=dri",
+        /* USB access */
+        "--device=all"
+    ],
+    "cleanup": [ "/include", "/lib/pkgconfig/" ],
+    "modules": [
+        {
+            "name": "libusb",
+            "config-opts": [ "--disable-static", "--disable-udev" ],
+            "cleanup": [
+                "/lib/*.la",
+                "/lib/pkgconfig",
+                "/include"
+            ],
+            "sources": [
+                {
+                    "type": "archive",
+                    "url": "https://github.com/libusb/libusb/archive/v1.0.22.tar.gz",
+                    "sha256": "3500f7b182750cd9ccf9be8b1df998f83df56a39ab264976bdb3307773e16f48"
+                }
+            ],
+            "post-install": [
+                "install -Dm644 COPYING /app/share/licenses/libgusb/COPYING"
+            ]
+        },
+        {
+            "name": "libgusb",
+            "buildsystem": "meson",
+            "config-opts": [ "-Dtests=false", "-Dvapi=false", "-Ddocs=false", "-Dintrospection=false" ],
+            "sources": [
+                {
+                    "type": "archive",
+                    "url": "https://github.com/hughsie/libgusb/archive/0.3.0.tar.gz",
+                    "sha256": "b36310f8405d5fd68f6caf4a829f7ab4c627b38fd3d02a139d411fce0f3a49f1"
+                }
+            ]
+        },
+        {
+            "name": "libfprint",
+            "buildsystem": "meson",
+            "config-opts": [ "-Dudev_hwdb=disabled", "-Dx11-examples=false", "-Dgtk-examples=true", "-Ddrivers=all" ],
+            "sources": [
+                {
+                    "type": "git",
+                    "url": "https://gitlab.freedesktop.org/libfprint/libfprint.git",
+                    "branch": "wip/benzea/v2"
+                }
+            ]
+        }
+    ]
+}

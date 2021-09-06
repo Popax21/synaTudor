@@ -1,0 +1,153 @@
+include:
+  - local: '.gitlab-ci/libfprint-templates.yaml'
+  - project: 'wayland/ci-templates'
+    ref: master
+    file: '/templates/fedora.yml'
+  - remote: 'https://gitlab.gnome.org/GNOME/citemplates/-/raw/master/flatpak/flatpak_ci_initiative.yml'
+
+variables:
+  extends: .libfprint_common_variables
+  FDO_DISTRIBUTION_TAG: latest
+  FDO_DISTRIBUTION_VERSION: rawhide
+  FEDORA_IMAGE: "$CI_REGISTRY/libfprint/$CI_PROJECT_NAME/fedora/$FDO_DISTRIBUTION_VERSION:$FDO_DISTRIBUTION_TAG"
+  BUNDLE: "org.freedesktop.libfprint.Demo.flatpak"
+  LAST_ABI_BREAK: "056ea541ddc97f5806cffbd99a12dc87e4da3546"
+
+stages:
+  - check-source
+  - build
+  - test
+  - flatpak
+
+image: "$FEDORA_IMAGE"
+
+.build_one_driver_template: &build_one_driver
+  script:
+    # Build with a driver that doesn't need imaging, or nss
+    - meson --werror -Ddrivers=$driver . _build
+    - ninja -C _build
+    - rm -rf _build/
+
+.build_template: &build
+  script:
+    # And build with everything
+    - meson --werror -Ddrivers=all . _build
+    - ninja -C _build
+    - ninja -C _build install
+
+.build_template: &check_abi
+  script:
+    - ./.ci/check-abi ${LAST_ABI_BREAK} $(git rev-parse HEAD)
+
+build:
+  stage: build
+  except:
+    variables:
+      - $CI_PIPELINE_SOURCE == "schedule"
+  variables:
+    driver: virtual_image
+  <<: *build_one_driver
+  <<: *build
+#  <<: *check_abi
+  artifacts:
+    expose_as: "HTML Documentation"
+    paths:
+    - _build/doc/html/
+    expire_in: 1 week
+
+test:
+  stage: test
+  except:
+    variables:
+      - $CI_PIPELINE_SOURCE == "schedule"
+  script:
+    - meson --werror -Ddrivers=all -Db_coverage=true . _build
+    - ninja -C _build
+    - meson test -C _build --verbose --no-stdsplit --timeout-multiplier 3
+    - ninja -C _build coverage
+    - cat _build/meson-logs/coverage.txt
+  artifacts:
+    paths:
+      - _build/meson-logs
+    expire_in: 1 week
+  coverage: '/^TOTAL.*\s+(\d+\%)$/'
+
+test_valgrind:
+  stage: test
+  except:
+    variables:
+      - $CI_PIPELINE_SOURCE == "schedule"
+  script:
+    - meson -Ddrivers=all . _build
+    - ninja -C _build
+    - meson test -C _build --verbose --no-stdsplit --setup=valgrind
+
+test_scan_build:
+  stage: test
+  except:
+    variables:
+      - $CI_PIPELINE_SOURCE == "schedule"
+  allow_failure: true
+  script:
+    - meson -Ddrivers=all . _build
+    # This is ugly, the wrapper disables the malloc checker
+    - SCANBUILD=$CI_PROJECT_DIR/.gitlab-ci/scan-build ninja -C _build scan-build
+    # Check that the directory is empty
+    - "! ls -A _build/meson-logs/scanbuild | grep -q ."
+  artifacts:
+    paths:
+      - _build/meson-logs
+    expire_in: 1 week
+
+test_indent:
+  stage: check-source
+  except:
+    variables:
+      - $CI_PIPELINE_SOURCE == "schedule"
+  script:
+    - scripts/uncrustify.sh
+    - git diff
+    - "! git status -s | grep -q ."
+
+test_unsupported_list:
+  stage: check-source
+  except:
+    variables:
+      - $CI_PIPELINE_SOURCE == "schedule"
+  allow_failure: true
+  script:
+    - tests/hwdb-check-unsupported.py
+
+flatpak:
+  stage: flatpak
+  extends: .flatpak
+  image: registry.gitlab.gnome.org/gnome/gnome-runtime-images/gnome:3.36
+  variables:
+    MANIFEST_PATH: "demo/org.freedesktop.libfprint.Demo.json"
+    FLATPAK_MODULE: "libfprint"
+    APP_ID: "org.freedesktop.libfprint.Demo"
+  rules:
+    - if: '$CI_PROJECT_PATH != "libfprint/libfprint"'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == "master"'
+      when: always
+    - if: '$CI_COMMIT_TAG'
+      when: always
+    # For any other (commit), allow manual run.
+    # This excludes MRs which would create a duplicate pipeline
+    - if: '$CI_COMMIT_BRANCH'
+      when: manual
+      allow_failure: true
+
+# CONTAINERS creation stage
+container_fedora_build:
+  extends: .fdo.container-build@fedora
+  only:
+    variables:
+      - $CI_PIPELINE_SOURCE == "schedule" && $CRON_TASK == "BUILD_CI_IMAGES"
+  variables:
+    GIT_STRATEGY: none # no need to pull the whole tree for rebuilding the image
+    # a list of packages to install
+    FDO_DISTRIBUTION_PACKAGES: $LIBFPRINT_DEPENDENCIES
