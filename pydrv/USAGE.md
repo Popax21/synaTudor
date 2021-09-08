@@ -18,7 +18,7 @@ After you start the script, you should be dropped in a shell waiting for user co
 
 ## Tutorial
 ### First invocation
-The first step is to check if the sensor gets found and responds to basic commands. You can verify this by just starting the script. If nothing goes wrong, and you see the prompt for commands, nothing should have gone wrong. You can now get sensor info by using the command `info`
+The first step is to check if the sensor gets found and responds to basic commands. You can verify this by just starting the script. If you see the prompt for commands, nothing should have gone wrong. You can now get sensor info by using the command `info`
 ```
 $ sudo python pydrv/driver.py usb
    INFO  Found sensor on bus 1 device 4
