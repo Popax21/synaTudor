@@ -18,7 +18,7 @@ After you start the script, you should be dropped in a shell waiting for user co
 
 ## Tutorial
 ### First invocation
-The first step is to check if the sensor gets found and responds to basic commands. You can verify this by just starting the script. If you see the prompt for commands, nothing should have gone wrong. You can now get sensor info by using the command `info`
+The first step is to check if the sensor gets found and responds to basic commands. You can verify this by just starting the script. If you see the prompt for commands, nothing should have gone wrong. You can now get sensor information by using the command `info`
 ```
 $ sudo python pydrv/driver.py usb
    INFO  Found sensor on bus 1 device 4
@@ -42,7 +42,7 @@ Sensor info:
 ### Paring the sensor
 After that, you should pair the sensor via the command `pair`. The `info` command should now say that pairing data is present.
 
-You can pair the sensor as many times as you want, but it is adviced to pair it once, and then save the pairing data using the command `save_pdata`. The pairing data can be loaded again using `load_pdata`.
+You can pair the sensor as many times as you want, but it is adviced to pair it only once, and then save the pairing data using the command `save_pdata`. The pairing data can then be loaded again using `load_pdata`.
 ```
 tudor> pair
    INFO  Pairing sensor...
@@ -71,15 +71,15 @@ Successfully loaded pairing data
 ```
 
 ### Initalization
-The next step is to initialize the sensor using the command `init`. This is only possible with present pairing data (see previous step). After you're done using the sensor, you can uninitialize it using the command `uninit`, or let the driver do this automatically when you exit.
+The next step is to initialize the sensor using the command `init`. This is only possible after you paired the sensor (see previous step). After you're done using the sensor, you can uninitialize it using the command `uninit`, or let the driver do this automatically when you exit.
 ```
-tudor> init     
+tudor> init
    INFO  Initializing sensor...
    INFO  Sucessfully initialized sensor
 ```
 
 ### Events
-When the sensor is initialized, you can wait for sensor events to occur using the command `wait_event`. It takes a list of event names described below, and returns when either one of the listed events occurs, or it's interrupted using Ctrl+C. Note that if the event's condition is already satisfied when executing the command, the event will be triggered immediately.
+When the sensor is initialized, you can wait for sensor events to occur using the command `wait_event`. It takes a list of event names described below, and returns when either one of the listed events occurs, or the command is interrupted using Ctrl+C. Note that if one event's condition is already satisfied when executing the command, the command will return immediately.
 
 Event name | Description
 --- | ---
@@ -92,7 +92,7 @@ Event raised: SensorEvent(type=<SensorEventType.FINGER_PRESS: 1>)
 ```
 
 ### Image capture
-Now you can capture images using the command `capture_images`. It takes the number of images as an argument, and displays them in new popup windows.
+You can now capture images using the command `capture_images`. It takes the number of images as an argument, and displays them in popup windows.
 ```
 tudor> capture_images 1
 Waiting for finger to be lifted...
