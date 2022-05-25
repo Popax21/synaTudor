@@ -52,12 +52,17 @@ static bool drop_root_priv() {
     return true;
 }
 
-static libusb_device_handle *open_sensor_device(libusb_context *usb_ctx, int vid, int pid) {
+struct open_params {
+    libusb_context *usb_ctx;
+    int vid, pid;
+};
+
+static libusb_device_handle *open_sensor_device(struct open_params *params) {
     int usb_err;
 
     //Find the sensor device
     libusb_device **usb_devs;
-    ssize_t num_usb_devs = libusb_get_device_list(usb_ctx, &usb_devs);
+    ssize_t num_usb_devs = libusb_get_device_list(params->usb_ctx, &usb_devs);
     if(num_usb_devs < 0) {
         log_error("Error getting USB device list: %d [%s]", (int) num_usb_devs, libusb_error_name(num_usb_devs));
         return NULL;
@@ -75,7 +80,7 @@ static libusb_device_handle *open_sensor_device(libusb_context *usb_ctx, int vid
         }
 
         //Check VID and PID
-        if(dev_descr.idVendor != vid || dev_descr.idProduct != pid) continue;
+        if(dev_descr.idVendor != params->vid || dev_descr.idProduct != params->pid) continue;
 
         sensor_dev = dev;
         log_info("Found sensor USB device [bus %d addr %d vid 0x%04x pid 0x%04x]", (int) libusb_get_bus_number(dev), (int) libusb_get_device_address(dev), (int) dev_descr.idVendor, (int) dev_descr.idProduct);
@@ -85,7 +90,7 @@ static libusb_device_handle *open_sensor_device(libusb_context *usb_ctx, int vid
     libusb_free_device_list(usb_devs, true);
 
     if(!sensor_dev) {
-        log_error("Couldn't find sensor USB device! [vid 0x%04x pid 0x%04x]", vid, pid);
+        log_error("Couldn't find sensor USB device! [vid 0x%04x pid 0x%04x]", params->vid, params->pid);
         return NULL;
     }
 
@@ -331,7 +336,12 @@ int main(int argc, char **argv) {
     }
 
     //Open the sensor device
-    libusb_device_handle *usb_dev = open_sensor_device(usb_ctx, sensor_vid, sensor_pid);
+    struct open_params open_params = {
+        .usb_ctx = usb_ctx,
+        .vid = sensor_vid, .pid = sensor_pid
+    };
+
+    libusb_device_handle *usb_dev = open_sensor_device(&open_params);
     if(!usb_dev) return EXIT_FAILURE;
 
     //Drop root privileges (if we have them)
@@ -366,7 +376,7 @@ int main(int argc, char **argv) {
     //Open the device
     log_info("Opening tudor device...");
     struct tudor_device device;
-    if(!tudor_open(&device, usb_dev, NULL)) {
+    if(!tudor_open(&device, usb_dev, NULL, (tudor_reenumerate_fnc*) open_sensor_device, &open_params)) {
         log_error("Error opening tudor device!");
         return EXIT_FAILURE;
     }

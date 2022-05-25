@@ -10,7 +10,7 @@ static NTSTATUS tudor_devctrl(struct tudor_device *device, ULONG code, void *in_
     return status;
 }
 
-bool tudor_open(struct tudor_device *device, libusb_device_handle *usb_dev, struct tudor_device_state *state) {
+bool tudor_open(struct tudor_device *device, libusb_device_handle *usb_dev, struct tudor_device_state *state, tudor_reenumerate_fnc *reenum_fnc, void *reenum_ctx) {
     HRESULT hres;
     NTSTATUS status;
 
@@ -23,8 +23,15 @@ bool tudor_open(struct tudor_device *device, libusb_device_handle *usb_dev, stru
     //Reset the USB device
     int usb_err;
     if((usb_err = libusb_reset_device(usb_dev)) != 0) {
-        log_error("libusb_reset_device failed: %d [%s]", usb_err, libusb_error_name(usb_err));
-        return false;
+        if(usb_err == LIBUSB_ERROR_NOT_FOUND) {
+            //Re-enumerate the device
+            log_info("Re-enumerating USB device...");
+            usb_dev = reenum_fnc(reenum_ctx);
+            if(!usb_dev) return false;
+        } else {
+            log_error("libusb_reset_device failed: %d [%s]", usb_err, libusb_error_name(usb_err));
+            return false;
+        }
     }
 
     //Open the device through the driver
