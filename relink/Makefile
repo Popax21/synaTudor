@@ -1,7 +1,7 @@
 TUDOR = out/tudor
 
-CFLAGS = -O0 -g3 -Wall -D_GNU_SOURCE -lpthread -lcrypto $(shell pkg-config --cflags libusb)
-LFLAGS = -O0 -g3 -Wall -D_GNU_SOURCE -Wl,--copy-dt-needed-entries -lpthread -lcrypto $(shell pkg-config --libs libusb)
+CFLAGS = -O0 -g3 -Wall -D_GNU_SOURCE -lpthread -lcrypto $(shell pkg-config --cflags libusb-1.0)
+LFLAGS = -O0 -g3 -Wall -D_GNU_SOURCE -Wl,--copy-dt-needed-entries -lpthread -lcrypto $(shell pkg-config --libs libusb-1.0)
 
 ifdef DBGIMPORT
 	CFLAGS := $(CFLAGS) -DDBGIMPORT
