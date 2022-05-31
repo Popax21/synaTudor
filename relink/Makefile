@@ -23,11 +23,11 @@ all: $(TUDOR)
 
 $(TUDOR): $(OBJS) $(addprefix bin/windrv/,$(DRVDLLS:.dll=.o))
 	@mkdir -p $(dir $@)
-	$(CC) $(LFLAGS) -o $@ $^
+	$(CC) -o $@ $^ $(LFLAGS)
 
 bin/src/%.o: src/%.c
 	@mkdir -p $(dir $@)
-	$(CC) -MMD -c -Isrc $(CFLAGS) -o $@ $<
+	$(CC) -MMD -c -o $@ $< -Isrc $(CFLAGS)
 
 bin/windrv/%.o: windrv/%.dll
 	@mkdir -p $(dir $@)
