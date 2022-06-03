@@ -233,7 +233,7 @@ __winfnc NTSTATUS WdfUsbTargetDeviceResetPortSynchronously(WDF_DRIVER_GLOBALS *g
 
     return STATUS_SUCCESS;
 }
-WDFFUNC(WdfUsbTargetDeviceRetrieveInformation, 214)
+WDFFUNC(WdfUsbTargetDeviceResetPortSynchronously, 214)
 
 __winfnc WDFOBJECT WdfUsbTargetDeviceGetInterface(WDF_DRIVER_GLOBALS *globals, WDFOBJECT usb_dev_obj, UCHAR interface_idx) {
     struct wdf_usb_device *usb_dev = (struct wdf_usb_device*) usb_dev_obj;
