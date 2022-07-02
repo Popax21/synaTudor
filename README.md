@@ -17,4 +17,8 @@ This project is split over multiple folders, all providing different parts of
 the functionality:
 - [libtudor](libtudor/README.md): Contains the common library code handling
   relinking and interfacing with the driver.
-- [cli](cli/README.md): Contains a simple CLI wrapper for the relinked drivers.
+- [cli](cli/README.md): Contains a simple CLI wrapper for the relinked driver.
+- [libfprint-host](libfprint-host/README.md): Contains the host application for
+  libtudor, used by the libfprint module.
+- [libfprint-tod](libfprint-tod/README.md): Contains the libfprint module, to be
+  loaded by a the libfprint TOD fork.
