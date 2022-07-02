@@ -12,6 +12,9 @@
 #include <seccomp.h>
 #include "sandbox.h"
 
+#define strfy(x) _strfy(x)
+#define _strfy(x) #x
+
 #define ABORT_PERROR(msg) { perror(msg); abort(); }
 
 static void write_to(const char *fname, const char *cnts) {
@@ -51,9 +54,9 @@ static void setup_uid_gid() {
         sprintf(path_buf, "/proc/%d/setgroups", cpid);
         write_to(path_buf, "deny");
         sprintf(path_buf, "/proc/%d/uid_map", cpid);
-        write_to(path_buf, "3333 3333 1");
+        write_to(path_buf, strfy(SANDBOX_UID) " " strfy(SANDBOX_UID) " 1");
         sprintf(path_buf, "/proc/%d/gid_map", cpid);
-        write_to(path_buf, "3333 3333 1");
+        write_to(path_buf, strfy(SANDBOX_GID) " " strfy(SANDBOX_GID) " 1");
 
         //Notify child process
         if(kill(cpid, SIGUSR1) < 0) ABORT_PERROR("Couldn't notify child process");
@@ -65,8 +68,8 @@ static void setup_uid_gid() {
     }
 
     //Change UID / GID
-    if(setresuid(3333, 3333, 3333) < 0) ABORT_PERROR("Couldn't change UID");
-    if(setresgid(3333, 3333, 3333) < 0) ABORT_PERROR("Couldn't change GID");
+    if(setresuid(SANDBOX_UID, SANDBOX_UID, SANDBOX_UID) < 0) ABORT_PERROR("Couldn't change UID");
+    if(setresgid(SANDBOX_GID, SANDBOX_GID, SANDBOX_GID) < 0) ABORT_PERROR("Couldn't change GID");
 
     //Restore signal mask
     sigandset(&oldsigs, &oldsigs, &sigs);
