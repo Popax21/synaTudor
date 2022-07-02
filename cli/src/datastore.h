@@ -1,0 +1,13 @@
+#ifndef TUDOR_DATASTORE_H
+#define TUDOR_DATASTORE_H
+
+#include <stdio.h>
+#include <tudor/tudor.h>
+
+bool load_datastore_pair_data(FILE *file);
+bool save_datastore_pair_data(FILE *file);
+
+bool load_datastore_records(FILE *file, struct tudor_device *device);
+bool save_datastore_records(FILE *file, struct tudor_device *device);
+
+#endif

@@ -15,5 +15,6 @@ USE AT YOUR OWN RISK.
 ## Structure
 This project is split over multiple folders, all providing different parts of
 the functionality:
-- [relink](relink/README.md): Currently the only part. Contains a simple CLI
-  wrapper for the relinked drivers
+- [libtudor](libtudor/README.md): Contains the common library code handling
+  relinking and interfacing with the driver.
+- [cli](cli/README.md): Contains a simple CLI wrapper for the relinked drivers.
