@@ -1,5 +1,5 @@
-#ifndef TUDOR_DATASTORE_H
-#define TUDOR_DATASTORE_H
+#ifndef CLI_DATASTORE_H
+#define CLI_DATASTORE_H
 
 #include <stdio.h>
 #include <tudor/tudor.h>
