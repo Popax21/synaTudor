@@ -60,6 +60,7 @@ void winmodule_unregister(struct winmodule *module) {
 static __thread struct winmodule *cur_module;
 
 struct winmodule *winmodule_get_cur() {
+    WIN_CLOBBER_NONVOL_REGS
     return cur_module;
 }
 

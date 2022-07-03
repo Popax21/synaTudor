@@ -2,11 +2,27 @@
 #include "internal.h"
 
 static NTSTATUS tudor_devctrl(struct tudor_device *device, ULONG code, void *in_buf, size_t in_size, void *out_buf, size_t *out_size) {
+    if(LOG_LEVEL <= LOG_VERBOSE) {
+        cant_fail(pthread_mutex_lock(&LOG_LOCK));
+        printf("[DEVCTRL][0x%x] -> in (size 0x%lx): ", code, in_size);
+        for(size_t i = 0; i < in_size; i++) printf("%02x", ((uint8_t*) in_buf)[i]);
+        puts("");
+        cant_fail(pthread_mutex_unlock(&LOG_LOCK));
+    }
+
     struct winmodule *mod = winmodule_get_cur();
     winmodule_set_cur(&tudor_driver_dll->module);
     NTSTATUS status = winwdf_devctrl_file(device->wdf_file, code, in_buf, in_size, out_buf, out_size);
     winmodule_set_cur(mod);
-    log_verbose("DEVCTRL 0x%x in 0x%lx out 0x%lx status 0x%x", code, in_size, *out_size, status);
+
+    if(LOG_LEVEL <= LOG_VERBOSE) {
+        cant_fail(pthread_mutex_lock(&LOG_LOCK));
+        printf("[DEVCTRL][0x%x] <- status 0x%x out (size 0x%lx): ", code, status, *out_size);
+        for(size_t i = 0; i < *out_size; i++) printf("%02x", ((uint8_t*) out_buf)[i]);
+        puts("");
+        cant_fail(pthread_mutex_unlock(&LOG_LOCK));
+    }
+
     return status;
 }
 
@@ -60,6 +76,7 @@ bool tudor_open(struct tudor_device *device, libusb_device_handle *usb_dev, stru
     log_debug("Initializing WINBIO pipeline...");
     device->pipeline = (WINBIO_PIPELINE*) malloc(sizeof(WINBIO_PIPELINE));
     if(!device->pipeline) { perror("Error allocating WINBIO pipeline"); abort(); }
+    *device->pipeline = (WINBIO_PIPELINE) {0};
     device->pipeline->EngineInterface = tudor_engine_adapter;
     device->pipeline->SensorInterface = tudor_sensor_adapter;
     device->pipeline->StorageInterface = tudor_storage_adapter;

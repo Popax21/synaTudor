@@ -5,6 +5,8 @@
 #include <tudor/log.h>
 #include "windows.h"
 
+#define WIN_CLOBBER_NONVOL_REGS __asm__("" ::: "%rbx","%rsi","%rdi");
+
 //APIs
 struct __winapi_descr {
     const char *name;

@@ -5,8 +5,8 @@ CFLAGS = -shared -fPIC -Wall -Wno-strict-aliasing -D_GNU_SOURCE -I inc -lpthread
 LFLAGS = -shared -fPIC -Wall -D_GNU_SOURCE -Wl,--copy-dt-needed-entries -lpthread -lcrypto $(shell pkg-config --libs libusb-1.0)
 
 ifdef DEBUG
-	CFLAGS := $(CFLAGS) -O0 -g3 -fstack-protector -fsanitize=address
-	LFLAGS := $(LFLAGS) -O0 -g3 -fstack-protector -fsanitize=address
+	CFLAGS := $(CFLAGS) -O0 -g3 -fstack-protector
+	LFLAGS := $(LFLAGS) -O0 -g3 -fstack-protector
 else
 	CFLAGS := $(CFLAGS) -O2
 	LFLAGS := $(LFLAGS) -O2

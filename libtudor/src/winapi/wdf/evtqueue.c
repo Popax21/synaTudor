@@ -12,6 +12,8 @@ static __thread bool flushing_queue = false;
 static struct wdf_evtqueue_action *queue_head = NULL;
 
 void winwdf_event_queue_flush() {
+    WIN_CLOBBER_NONVOL_REGS
+
     cant_fail(pthread_mutex_lock(&queue_mutex));
     flushing_queue = true;
 
@@ -34,6 +36,8 @@ void winwdf_event_queue_flush() {
 }
 
 void wdf_evtqueue_enqueue(struct wdf_object *obj, wdf_evtqueue_action_fnc *action) {
+    WIN_CLOBBER_NONVOL_REGS
+
     //Create action object
     struct wdf_evtqueue_action *act = (struct wdf_evtqueue_action*) malloc(sizeof(struct wdf_evtqueue_action));
     if(!act) { perror("Couldn't allocate memory for WDF event queue action"); abort(); }
