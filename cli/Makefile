@@ -28,4 +28,4 @@ bin/src/%.o: src/%.c
 	@mkdir -p $(dir $@)
 	$(CC) -MMD -c -o $@ $< -Isrc $(CFLAGS)
 clean:
-	rm -rf bin out
+	rm -rf bin

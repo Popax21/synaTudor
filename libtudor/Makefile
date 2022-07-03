@@ -58,4 +58,4 @@ windrv/installer.exe:
 	shasum -c installer.sha
 
 clean:
-	rm -rf bin out
+	rm -rf bin
