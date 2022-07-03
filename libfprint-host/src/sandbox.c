@@ -141,6 +141,6 @@ void activate_sandbox(int *sockfd, int *seccomp_notif_fd) {
     if(cap_set_proc(cap) < 0) ABORT_PERROR("Couldn't set capabilities");
     if(cap_free(cap) < 0) ABORT_PERROR("Couldn't free capabilities");
 
-    //Restrict all syscalls using seccomp, only keep the ones required to communicate with the module
+    //Restrict all syscalls using SECCOMP, only keep the ones required to communicate with the module
     setup_seccomp(seccomp_notif_fd);
 }
