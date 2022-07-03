@@ -92,7 +92,7 @@ bool tudor_open(struct tudor_device *device, libusb_device_handle *usb_dev, stru
 bool tudor_close(struct tudor_device *device);
 
 int tudor_wipe_records(struct tudor_device *device, RECGUID *guid, enum tudor_finger finger);
-void tudor_add_record(struct tudor_device *device, RECGUID guid, enum tudor_finger finger, const void *data, size_t data_size);
+bool tudor_add_record(struct tudor_device *device, RECGUID guid, enum tudor_finger finger, const void *data, size_t data_size);
 
 bool tudor_enroll_start(struct tudor_device *device, RECGUID guid, enum tudor_finger finger);
 bool tudor_enroll_capture(struct tudor_device *device, bool *done);

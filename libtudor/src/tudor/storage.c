@@ -26,7 +26,17 @@ int tudor_wipe_records(struct tudor_device *device, RECGUID *guid, enum tudor_fi
     return num_deleted;
 }
 
-void tudor_add_record(struct tudor_device *device, RECGUID guid, enum tudor_finger finger, const void *data, size_t data_size) {
+bool tudor_add_record(struct tudor_device *device, RECGUID guid, enum tudor_finger finger, const void *data, size_t data_size) {
+    cant_fail(pthread_mutex_lock(&device->records_lock));
+
+    //Check for duplicate record
+    for(struct tudor_record *rec = device->records_head; rec; rec = rec->next) {
+        if(memcmp(&rec->guid, &guid, sizeof(RECGUID)) == 0 && rec->finger == finger) {
+            cant_fail(pthread_mutex_unlock(&device->records_lock));
+            return false;
+        }
+    }
+
     //Create record
     struct tudor_record *rec = malloc(sizeof(struct tudor_record));
     if(!rec) { perror("Couldn't allocate record"); abort(); }
@@ -44,12 +54,13 @@ void tudor_add_record(struct tudor_device *device, RECGUID guid, enum tudor_fing
     memcpy(rec->data, data, data_size);
 
     //Add to record list
-    cant_fail(pthread_mutex_lock(&device->records_lock));
     rec->prev = NULL;
     rec->next = device->records_head;
     if(device->records_head) device->records_head->prev = rec;
     device->records_head = rec;
+
     cant_fail(pthread_mutex_unlock(&device->records_lock));
+    return true;
 }
 
 __winfnc static HRESULT storage_NOTIMPL() {

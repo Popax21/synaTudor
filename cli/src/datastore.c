@@ -120,7 +120,10 @@ bool load_datastore_records(FILE *file, struct tudor_device *device) {
         }
 
         //Add record
-        tudor_add_record(device, guid, finger, data, data_size);
+        if(!tudor_add_record(device, guid, finger, data, data_size)) {
+            log_error("Duplicate record!");
+            return false;
+        }
 
         free(data);
     }
