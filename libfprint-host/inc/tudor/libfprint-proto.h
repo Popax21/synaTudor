@@ -14,6 +14,7 @@ enum ipc_msg_type {
     IPC_MSG_READY,
     IPC_MSG_SHUTDOWN,
     IPC_MSG_ACK,
+    IPC_MSG_CANCEL,
 
     IPC_MSG_ADD_RECORD,
     IPC_MSG_DEL_RECORD,
