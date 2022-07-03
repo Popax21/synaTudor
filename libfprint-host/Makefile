@@ -24,7 +24,7 @@ $(LIBFPRINT_HOST): $(OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) -o $@ $^ $(LFLAGS)
 
-	cp -rf inc $(OUT)/inc
+	cp -rf inc/* $(OUT)/inc
 
 bin/src/%.o: src/%.c
 	@mkdir -p $(dir $@)

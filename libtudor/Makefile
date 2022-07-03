@@ -35,7 +35,7 @@ $(LIBTUDOR): $(OBJS) $(addprefix bin/windrv/,$(DRVDLLS:.dll=.o))
 
 	$(CC) -o $@ $^ $(LFLAGS)
 
-	cp -rf inc $(OUT)/inc
+	cp -rf inc/* $(OUT)/inc
 
 bin/src/%.o: src/%.c
 	@mkdir -p $(dir $@)
