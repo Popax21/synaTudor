@@ -20,8 +20,8 @@ static void write_to(const char *fname, const char *cnts) {
     int len = strlen(cnts);
     FILE *file = fopen(fname, "w");
     if(!file) abort_perror("Couldn't open file");
-    if(fwrite(cnts, 1, len, file) < len) abort_perror("Couldn't write to file");
-    if(fclose(file) < 0) abort_perror("Couldn't close file");
+    cant_fail(fwrite(cnts, 1, len, file));
+    cant_fail(fclose(file));
 }
 
 static void setup_uid_gid() {
@@ -30,23 +30,22 @@ static void setup_uid_gid() {
     sigset_t sigs, oldsigs;
     sigemptyset(&sigs);
     sigaddset(&sigs, SIGUSR1);
-    if(sigprocmask(SIG_BLOCK, &sigs, &oldsigs) < 0) abort_perror("Error setting signal mask");
+    cant_fail(sigprocmask(SIG_BLOCK, &sigs, &oldsigs));
 
-    int ppid = (int) getpid();
-    int cpid = (int) fork();
-    if(cpid < 0) abort_perror("Couldn't fork process");
+    pid_t ppid = getpid(), cpid;
+    cant_fail(cpid = fork());
     if(cpid == 0) {
         //Unshare user namespace
-        if(unshare(CLONE_NEWUSER) < 0) abort_perror("Couldn't unshare user namspace");
+        cant_fail(unshare(CLONE_NEWUSER));
 
         //Notify and wait for parent process
         int sig;
-        if(kill(ppid, SIGUSR1) < 0) abort_perror("Couldn't notify parent process");
-        if(sigwait(&sigs, &sig) < 0) abort_perror("Couldn't wait for parent process");
+        cant_fail(kill(ppid, SIGUSR1));
+        cant_fail(sigwait(&sigs, &sig));
     } else {
         //Wait for child process to be ready
         int sig;
-        if(sigwait(&sigs, &sig) < 0) abort_perror("Couldn't wait for child process");
+        cant_fail(sigwait(&sigs, &sig));
 
         //Write UID / GID map
         char path_buf[128];
@@ -58,62 +57,59 @@ static void setup_uid_gid() {
         write_to(path_buf, strfy(SANDBOX_GID) " " strfy(SANDBOX_GID) " 1");
 
         //Notify child process
-        if(kill(cpid, SIGUSR1) < 0) abort_perror("Couldn't notify child process");
+        cant_fail(kill(cpid, SIGUSR1));
 
         //Wait for child
         int status;
-        if(wait(&status) < 0) abort_perror("Couldn't wait for child");
+        cant_fail(wait(&status));
         exit(status);
     }
 
     //Change UID / GID
-    if(setresuid(SANDBOX_UID, SANDBOX_UID, SANDBOX_UID) < 0) abort_perror("Couldn't change UID");
-    if(setresgid(SANDBOX_GID, SANDBOX_GID, SANDBOX_GID) < 0) abort_perror("Couldn't change GID");
+    cant_fail(setresuid(SANDBOX_UID, SANDBOX_UID, SANDBOX_UID));
+    cant_fail(setresgid(SANDBOX_GID, SANDBOX_GID, SANDBOX_GID));
 
     //Restore signal mask
     sigandset(&oldsigs, &oldsigs, &sigs);
-    if(sigprocmask(SIG_UNBLOCK, &oldsigs, NULL) < 0) abort_perror("Couldn't restore signal mask");
+    cant_fail(sigprocmask(SIG_UNBLOCK, &oldsigs, NULL));
 }
 
 static void unmount_root() {
     //Create a temporary directory and remount it as a bind mount point
     char tmpRoot[] = "/tmp/tudorRootXXXXXX";
     if(!mkdtemp(tmpRoot)) abort_perror("Couldn't create temporary root directory");
-    if(mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) < 0) abort_perror("Couldn't change filesystem propagation");
-    if(mount(tmpRoot, tmpRoot, NULL, MS_BIND | MS_NOSUID | MS_RDONLY, NULL) < 0) abort_perror("Couldn't remount tmp root");
+    cant_fail(mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL));
+    cant_fail(mount(tmpRoot, tmpRoot, NULL, MS_BIND | MS_NOSUID | MS_RDONLY, NULL));
 
     //Pivot root
-    if(chdir(tmpRoot) < 0) abort_perror("Couldn't chdir into tmp root");
-    if(syscall(SYS_pivot_root, ".", ".") < 0) abort_perror("Couldn't pivot root");
-    if(umount2(".", MNT_DETACH) < 0) abort_perror("Couldn't unmount old rootfs");
-    if(chdir("/") < 0) abort_perror("Couldn't chdir into new root");
+    cant_fail(chdir(tmpRoot));
+    cant_fail(syscall(SYS_pivot_root, ".", "."));
+    cant_fail(umount2(".", MNT_DETACH));
+    cant_fail(chdir("/"));
 }
 
 static void setup_seccomp(int *notif_fd) {
     //Initialize filter
     scmp_filter_ctx scmp_ctx = seccomp_init(SCMP_ACT_KILL_PROCESS);
-    if(scmp_ctx == NULL) abort_perror("Couldn't initialize the SECCOMP context");
+    if(!scmp_ctx) abort_perror("Couldn't initialize the SECCOMP context");
 
     //Add rules
-    if(
-        (seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_exit, 0) < 0) ||
-        (seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_exit_group, 0) < 0) ||
-        (seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_rt_sigreturn, 0) < 0) ||
-        (seccomp_rule_add(scmp_ctx, SCMP_ACT_NOTIFY, SYS_open, 0) < 0) ||
-        (seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_close, 0) < 0) ||
-        (seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_read, 0) < 0) ||
-        (seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_write, 0) < 0) ||
-        (seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_sendmsg, 0) < 0) ||
-        (seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_recvmsg, 0) < 0) ||
-        (seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_brk, 0) < 0) ||
-        (seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_mmap, 1, SCMP_A3_32(SCMP_CMP_MASKED_EQ, MAP_PRIVATE | MAP_ANONYMOUS, MAP_PRIVATE | MAP_ANONYMOUS)) < 0) ||
-        (seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_munmap, 0) < 0)
-    ) abort_perror("Couldn't add SECCOMP rules");
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_exit, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_exit_group, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_rt_sigreturn, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_NOTIFY, SYS_open, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_close, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_read, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_write, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_sendmsg, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_recvmsg, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_brk, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_mmap, 1, SCMP_A3_32(SCMP_CMP_MASKED_EQ, MAP_PRIVATE | MAP_ANONYMOUS, MAP_PRIVATE | MAP_ANONYMOUS)));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_munmap, 0));
 
     //Load policy
-    if(seccomp_load(scmp_ctx) < 0) abort_perror("Couldn't load SECCOMP policy");
-    *notif_fd = seccomp_notify_fd(scmp_ctx);
-    if(*notif_fd < 0) abort_perror("Couldn't get SECCOMP notification FD");
+    cant_fail(seccomp_load(scmp_ctx));
+    cant_fail(*notif_fd = seccomp_notify_fd(scmp_ctx));
 
     seccomp_release(scmp_ctx);
 }
@@ -126,17 +122,17 @@ void activate_sandbox(int *seccomp_notif_fd) {
     closefrom(3);
 
     //Unshare all namspaces
-    if(unshare(CLONE_FS | CLONE_FILES | CLONE_SYSVSEM | CLONE_NEWCGROUP | CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWUTS) < 0) abort_perror("Couldn't unshare namspaces");
+    cant_fail(unshare(CLONE_FS | CLONE_FILES | CLONE_SYSVSEM | CLONE_NEWCGROUP | CLONE_NEWIPC | CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWUTS));
 
     //Unmount root filesystem
     unmount_root();
 
     //Drop all capabilities
     cap_t cap = cap_init();
-    if(cap == NULL) abort_perror("Couldn't allocate capabilities");
-    if(cap_clear(cap) < 0) abort_perror("Couldn't clear capabilities");
-    if(cap_set_proc(cap) < 0) abort_perror("Couldn't set capabilities");
-    if(cap_free(cap) < 0) abort_perror("Couldn't free capabilities");
+    if(!cap) abort_perror("Couldn't allocate capabilities");
+    cant_fail(cap_clear(cap));
+    cant_fail(cap_set_proc(cap));
+    cant_fail(cap_free(cap));
 
     //Restrict all syscalls using SECCOMP, only keep the ones required to communicate with the module
     setup_seccomp(seccomp_notif_fd);
