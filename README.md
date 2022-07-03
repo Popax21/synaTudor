@@ -21,4 +21,4 @@ the functionality:
 - [libfprint-host](libfprint-host/README.md): Contains the host application for
   libtudor, used by the libfprint module. [BROKEN, WIP]
 - [libfprint-tod](libfprint-tod/README.md): Contains the libfprint module, to be
-  loaded by a the libfprint TOD fork. [BROKEN, WIP]
+  loaded by the libfprint TOD fork. [BROKEN, WIP]
