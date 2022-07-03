@@ -19,6 +19,6 @@ the functionality:
   relinking and interfacing with the driver.
 - [cli](cli/README.md): Contains a simple CLI wrapper for the relinked driver.
 - [libfprint-host](libfprint-host/README.md): Contains the host application for
-  libtudor, used by the libfprint module.
+  libtudor, used by the libfprint module. [BROKEN, WIP]
 - [libfprint-tod](libfprint-tod/README.md): Contains the libfprint module, to be
-  loaded by a the libfprint TOD fork.
+  loaded by a the libfprint TOD fork. [BROKEN, WIP]
