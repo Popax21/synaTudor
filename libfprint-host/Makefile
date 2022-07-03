@@ -5,8 +5,8 @@ CFLAGS = -Wall -Wno-stringop-truncation -D_GNU_SOURCE -I $(OUT)/inc $(shell pkg-
 LFLAGS = -Wall -D_GNU_SOURCE -Wl,--copy-dt-needed-entries -Wl,-rpath='$$ORIGIN' -L $(OUT) -ltudor -lpthread -lcap -lseccomp $(shell pkg-config --libs libusb-1.0)
 
 ifdef DEBUG
-	CFLAGS := $(CFLAGS) -O0 -g3
-	LFLAGS := $(LFLAGS) -O0 -g3
+	CFLAGS := $(CFLAGS) -O0 -g3 -fstack-protector -fsanitize=address
+	LFLAGS := $(LFLAGS) -O0 -g3 -fstack-protector -fsanitize=address
 else
 	CFLAGS := $(CFLAGS) -O2
 	LFLAGS := $(LFLAGS) -O2
