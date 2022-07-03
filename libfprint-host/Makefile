@@ -2,7 +2,7 @@ OUT ?= ../out
 LIBFPRINT_HOST = $(OUT)/libfprint_host
 
 CFLAGS = -Wall -Wno-stringop-truncation -D_GNU_SOURCE -I inc -I $(OUT)/inc $(shell pkg-config --cflags libusb-1.0)
-LFLAGS = -Wall -D_GNU_SOURCE -Wl,--copy-dt-needed-entries -Wl,-rpath='$$ORIGIN' -L $(OUT) -ltudor -lpthread -lcap -lseccomp $(shell pkg-config --libs libusb-1.0)
+LFLAGS = -Wall -D_GNU_SOURCE -Wl,--copy-dt-needed-entries -Wl,-z,noexecstack -Wl,-rpath='$$ORIGIN' -L $(OUT) -ltudor -lpthread -lcap -lseccomp $(shell pkg-config --libs libusb-1.0)
 
 ifdef DEBUG
 	CFLAGS := $(CFLAGS) -O0 -g3 -fstack-protector
@@ -24,7 +24,8 @@ $(LIBFPRINT_HOST): $(OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) -o $@ $^ $(LFLAGS)
 
-	cp -rf inc/* $(OUT)/inc
+	@mkdir -p $(OUT)/inc
+	cp -rf inc/. $(OUT)/inc/
 
 bin/src/%.o: src/%.c
 	@mkdir -p $(dir $@)

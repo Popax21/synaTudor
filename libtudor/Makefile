@@ -2,7 +2,7 @@ OUT ?= ../out
 LIBTUDOR = $(OUT)/libtudor.so
 
 CFLAGS = -shared -fPIC -Wall -Wno-strict-aliasing -D_GNU_SOURCE -I inc -lpthread -lcrypto $(shell pkg-config --cflags libusb-1.0)
-LFLAGS = -shared -fPIC -Wall -D_GNU_SOURCE -Wl,--copy-dt-needed-entries -lpthread -lcrypto $(shell pkg-config --libs libusb-1.0)
+LFLAGS = -shared -fPIC -Wall -D_GNU_SOURCE -Wl,-z,noexecstack -Wl,--copy-dt-needed-entries -lpthread -lcrypto $(shell pkg-config --libs libusb-1.0)
 
 ifdef DEBUG
 	CFLAGS := $(CFLAGS) -O0 -g3 -fstack-protector
@@ -35,7 +35,8 @@ $(LIBTUDOR): $(OBJS) $(addprefix bin/windrv/,$(DRVDLLS:.dll=.o))
 
 	$(CC) -o $@ $^ $(LFLAGS)
 
-	cp -rf inc/* $(OUT)/inc
+	@mkdir -p $(OUT)/inc
+	cp -rf inc/. $(OUT)/inc/
 
 bin/src/%.o: src/%.c
 	@mkdir -p $(dir $@)
