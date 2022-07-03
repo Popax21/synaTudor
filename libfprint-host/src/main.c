@@ -11,26 +11,15 @@
 #include "usb.h"
 #include "ipc.h"
 
-static char sensor_name[IPC_SENSOR_NAME_SIZE+1] = {0};
-static size_t pair_data_size;
-static uint8_t pair_data_buf[IPC_MAX_PAIR_DATA_SIZE];
-
 static void recv_init_msg(int sock, struct usb_dev_params *usb_params) {
-    struct ipc_msg_init *init_msg = (struct ipc_msg_init*) malloc(sizeof(struct ipc_msg_init) + IPC_MAX_PAIR_DATA_SIZE);
-    if(!init_msg) abort_perror("Couldn't allocate memory for init message");
+    struct ipc_msg_init init_msg;
+    ipc_recv_msg(sock, &init_msg, IPC_MSG_INIT, sizeof(init_msg), sizeof(init_msg));
 
-    pair_data_size = ipc_recv_msg(sock, init_msg, IPC_MSG_INIT, sizeof(struct ipc_msg_init), sizeof(struct ipc_msg_init) + IPC_MAX_PAIR_DATA_SIZE) - sizeof(struct ipc_msg_init);
-
-    LOG_LEVEL = (enum log_level) init_msg->log_level;
+    LOG_LEVEL = init_msg.log_level;
     *usb_params = (struct usb_dev_params) {
-        .bus = init_msg->usb_bus,
-        .addr = init_msg->usb_addr
+        .bus = init_msg.usb_bus,
+        .addr = init_msg.usb_addr
     };
-
-    strncpy(sensor_name, init_msg->sensor_name, IPC_SENSOR_NAME_SIZE);
-    memcpy(pair_data_buf, init_msg->pair_data, pair_data_size);
-
-    free(init_msg);
 }
 
 static void transfer_sandbox_notif_fd(int sock, int notif_fd) {
@@ -60,18 +49,6 @@ static void transfer_sandbox_notif_fd(int sock, int notif_fd) {
     };
 
     cant_fail(sendmsg(sock, &msg_hdr, 0));
-}
-
-static void send_ready_msg(int sock) {
-    struct ipc_msg_ready *ready_msg = (struct ipc_msg_ready*) malloc(sizeof(struct ipc_msg_ready) + pair_data_size);
-    if(!ready_msg) abort_perror("Couldn't allocate memory for ready message");
-
-    ready_msg->type = IPC_MSG_READY;
-    strncpy(ready_msg->sensor_name, sensor_name, IPC_SENSOR_NAME_SIZE);
-    memcpy(ready_msg->pair_data, pair_data_buf, pair_data_size);
-
-    ipc_send_msg(sock, ready_msg, sizeof(struct ipc_msg_ready) + pair_data_size);
-    free(ready_msg);
 }
 
 int main() {
@@ -123,15 +100,6 @@ int main() {
     }
     log_info("Initialized tudor driver");
 
-    //Register init pairing data
-    struct tudor_pair_data *init_pair_data = NULL;
-    if(pair_data_size > 0) {
-        tudor_add_pair_data(sensor_name, pair_data_buf, pair_data_size);
-        cant_fail(pthread_mutex_lock(&tudor_pair_data_lock));
-        init_pair_data = tudor_pair_data_head;
-        cant_fail(pthread_mutex_unlock(&tudor_pair_data_lock));
-    }
-
     //Open USB device
     libusb_device_handle *usb_dev = open_usb_dev(&usb_params);
     if(!usb_dev) {
@@ -149,24 +117,9 @@ int main() {
     }
     log_info("Opend tudor device");
 
-    //Get pairing data for sensor
-    cant_fail(pthread_mutex_lock(&tudor_pair_data_lock));
-
-    struct tudor_pair_data *pair_data = tudor_pair_data_head;
-    if(pair_data && pair_data->next && pair_data == init_pair_data) pair_data = pair_data->next;
-
-    if(!pair_data){
-        log_error("No pairing data found for sensor!");
-        return EXIT_FAILURE;
-    }
-
-    strncpy(sensor_name, pair_data->name, IPC_SENSOR_NAME_SIZE);
-    memcpy(pair_data_buf, pair_data->data, pair_data_size = pair_data->data_size);
-
-    cant_fail(pthread_mutex_unlock(&tudor_pair_data_lock));
-
     //Send ready message
-    send_ready_msg(sock);
+    enum ipc_msg_type ready_type = IPC_MSG_READY;
+    ipc_send_msg(sock, &ready_type, sizeof(ready_type));
     log_info("Sent ready message");
 
     //Enter IPC handling loop
