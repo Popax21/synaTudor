@@ -2,16 +2,6 @@
 This folder contains a simple CLI wrapper for the functionality of the relinked
 driver. It can be used to enroll, verify and identify captured samples of fingerprints.
 
-## Building
-First make sure `libtudor` is compiled and up to date (see
-[here](../libtudor/README.md)). Then compile the program by running `make`. 
-
-Currently, the following build flags are defined:
-
-Flag | Description
------ | ---------------------------
-`DEBUG=1` | Enable debug build options, like `-O0` and `-g3`
-
 ## Usage
 Start the wrapper using `sudo ../out/tudor_cli <path to data store file> <flags>`. The
 data store file is a file where the drivers will store data like pairing data

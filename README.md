@@ -22,3 +22,14 @@ the functionality:
   libtudor, used by the libfprint module. [BROKEN, WIP]
 - [libfprint-tod](libfprint-tod/README.md): Contains the libfprint module, to be
   loaded by the libfprint TOD fork. [BROKEN, WIP]
+
+## Building
+The same build system used by libfprint, meson, is used to for this project.
+To build and install all contained parts, execute:
+```sh
+meson build
+cd build
+ninja
+sudo ninja install
+```
+For documentation about build flags etc., see the individual parts.

@@ -1,32 +1,22 @@
-project('tudor-libfprint-tod', ['c'],
-    version: '1.0.0',
-    meson_version: '>= 0.46.0'
-)
+tudor_tod_src = [
+    'src/device.c',
+    'src/data.c',
+    'src/ipc.c',
+    'src/open.c'
+]
 
-libfprint_tod = dependency('libfprint-2-tod-1')
-udev = dependency('udev')
+libfprint_tod_dep = dependency('libfprint-2-tod-1')
+udev_dep = dependency('udev')
 
-tudor_inc = include_directories('../out/inc')
-
-shared_module('tudor-tod',
-    sources: [
-        'device.c',
-        'data.c',
-        'ipc.c',
-        'open.c'
-    ],
+tudor_tod = shared_module('tudor_tod',
+    sources: tudor_tod_src,
     c_args: '-Wno-missing-braces',
-    dependencies: libfprint_tod,
-    include_directories: tudor_inc,
+    dependencies: libfprint_tod_dep,
+    include_directories: [libtudor_inc, tudor_host_inc],
     install: true,
-    install_dir: libfprint_tod.get_pkgconfig_variable('tod_driversdir')
+    install_dir: libfprint_tod_dep.get_variable(pkgconfig: 'tod_driversdir')
 )
 
 install_data('60-tudor-libfprint-tod.rules',
-    install_dir: udev.get_pkgconfig_variable('udevdir'),
-)
-
-install_data([ '../out/libfprint_host', '../out/libtudor.so'],
-    rename: ['libfprint_host', 'libtudor.so'],
-    install_dir: '/sbin/tudor'
+    install_dir: udev_dep.get_variable(pkgconfig: 'udevdir'),
 )

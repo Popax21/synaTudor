@@ -1,7 +1,7 @@
 #include "internal.h"
 
-extern uint8_t _binary_windrv_synaFpAdapter104_dll_start, _binary_windrv_synaFpAdapter104_dll_end;
-extern uint8_t _binary_windrv_synaWudfBioUsb104_dll_start, _binary_windrv_synaWudfBioUsb104_dll_end;
+extern uint8_t _binary_libtudor_synaFpAdapter104_dll_start, _binary_libtudor_synaFpAdapter104_dll_end;
+extern uint8_t _binary_libtudor_synaWudfBioUsb104_dll_start, _binary_libtudor_synaWudfBioUsb104_dll_end;
 
 #define NUM_WINDRV_DLLS 2
 struct windrv_dll tudor_windrv_dlls[] = {
@@ -11,7 +11,7 @@ struct windrv_dll tudor_windrv_dlls[] = {
             .cmdline = "synaFpAdapter104.dll",
             .environ = (const char*[]) { NULL }
         },
-        .pe_image = &_binary_windrv_synaFpAdapter104_dll_start, .pe_image_end = &_binary_windrv_synaFpAdapter104_dll_end,
+        .pe_image = &_binary_libtudor_synaFpAdapter104_dll_start, .pe_image_end = &_binary_libtudor_synaFpAdapter104_dll_end,
         .is_adapter = true, .is_driver = false
     },
     {
@@ -20,7 +20,7 @@ struct windrv_dll tudor_windrv_dlls[] = {
             .cmdline = "synaWudfBioUsb104.dll",
             .environ = (const char*[]) { NULL }
         },
-        .pe_image = &_binary_windrv_synaWudfBioUsb104_dll_start, .pe_image_end = &_binary_windrv_synaWudfBioUsb104_dll_end,
+        .pe_image = &_binary_libtudor_synaWudfBioUsb104_dll_start, .pe_image_end = &_binary_libtudor_synaWudfBioUsb104_dll_end,
         .is_adapter = false, .is_driver = true
     }
 };

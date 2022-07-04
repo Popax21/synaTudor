@@ -1,0 +1,2 @@
+option('DBGIMPORT', type: 'boolean', value: false, description: 'Enable Windows API import debugging')
+option('DBGWDF', type: 'boolean', value: false, description: 'Enable WDF debugging')
