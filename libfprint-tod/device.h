@@ -1,6 +1,7 @@
 #ifndef LIBFPRINT_TOD_DEVICE_H
 #define LIBFPRINT_TOD_DEVICE_H
 
+#include <stdbool.h>
 #include "drivers_api.h"
 
 typedef struct _IPCMessageBuf IPCMessageBuf;

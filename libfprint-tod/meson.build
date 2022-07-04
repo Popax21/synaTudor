@@ -12,7 +12,8 @@ shared_module('tudor-tod',
     sources: [
         'device.c',
         'record.c',
-        'ipc.c'
+        'ipc.c',
+        'open.c'
     ],
     c_args: '-Wno-missing-braces',
     dependencies: libfprint_tod,
