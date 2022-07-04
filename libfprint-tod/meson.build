@@ -12,7 +12,7 @@ tudor_tod = shared_module('tudor_tod',
     sources: tudor_tod_src,
     c_args: '-Wno-missing-braces',
     dependencies: libfprint_tod_dep,
-    include_directories: [libtudor_inc, tudor_host_inc],
+    include_directories: [libtudor_inc, tudor_host_inc, tudor_host_launcher_inc],
     install: true,
     install_dir: libfprint_tod_dep.get_variable(pkgconfig: 'tod_driversdir')
 )

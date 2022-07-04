@@ -20,6 +20,10 @@ the functionality:
 - [cli](cli/README.md): Contains a simple CLI wrapper for the relinked driver.
 - [libfprint-host](libfprint-host/README.md): Contains the host application for
   libtudor, used by the libfprint module. [BROKEN, WIP]
+- [libfprint-host-launcher](libfprint-host-launcher/README.md): Contains the
+  systemd service which launches the libfprint host. This extra step is needed
+  to bypass the strict fprintd sandboxing, which messes with the host's even
+  stricter sandboxing. [BROKEN, WIP]
 - [libfprint-tod](libfprint-tod/README.md): Contains the libfprint module, to be
   loaded by the libfprint TOD fork. [BROKEN, WIP]
 
@@ -33,3 +37,7 @@ ninja
 sudo ninja install
 ```
 For documentation about build flags etc., see the individual parts.
+
+**NOTE:** After the installation has completed, you'll probably want to enable
+and start `tudor-host-launcher.service`. For the reasoning behind why a seperate
+systemd service is needed, see [here](libfprint-host-launcher/README.md).
