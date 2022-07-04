@@ -16,6 +16,10 @@ enum ipc_msg_type {
     IPC_MSG_ACK,
     IPC_MSG_CANCEL,
 
+    IPC_MSG_LOAD_PDATA,
+    IPC_MSG_RESP_LOAD_PDATA,
+    IPC_MSG_STORE_PDATA,
+
     IPC_MSG_ADD_RECORD,
     IPC_MSG_DEL_RECORD,
 
@@ -27,6 +31,9 @@ enum ipc_msg_type {
     IPC_MSG_RESP_IDENTIFY
 };
 
+#define IPC_SENSOR_NAME_SIZE 64
+#define IPC_MAX_PDATA_SIZE 4096
+
 #define IPC_MAX_RECORD_SIZE 4096
 #define IPC_MAX_MESSAGE_SIZE 8096
 
@@ -35,6 +42,26 @@ struct ipc_msg_init {
 
     enum log_level log_level;
     uint8_t usb_bus, usb_addr;
+};
+
+struct ipc_msg_load_pdata {
+    enum ipc_msg_type type;
+
+    char sensor_name[IPC_SENSOR_NAME_SIZE];
+};
+
+struct ipc_msg_resp_load_pdata {
+    enum ipc_msg_type type;
+
+    bool has_pdata;
+    uint8_t pdata[];
+};
+
+struct ipc_msg_store_pdata {
+    enum ipc_msg_type type;
+
+    char sensor_name[IPC_SENSOR_NAME_SIZE];
+    uint8_t pdata[];
 };
 
 struct ipc_msg_add_record {
