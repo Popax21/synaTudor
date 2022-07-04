@@ -25,7 +25,7 @@ static void record_free(struct record *rec) {
 
 static void fpi_device_tudor_init(FpiDeviceTudor *tdev) {
     //Allocate data
-    tdev->send_msg = g_new(IPCMessageBuf, 1);
+    tdev->send_msg = ipc_msg_buf_new();
     tdev->db_records = g_ptr_array_new_with_free_func((GDestroyNotify) record_free);
 }
 
@@ -40,7 +40,7 @@ static void fpi_device_tudor_dispose(GObject *obj) {
     g_clear_object(&tdev->socket);
 
     //Free data
-    g_free(tdev->send_msg);
+    ipc_msg_buf_free(tdev->send_msg);
     g_ptr_array_unref(tdev->db_records);
 }
 

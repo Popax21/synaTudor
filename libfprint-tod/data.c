@@ -63,7 +63,7 @@ static void delete_acked_cb(GObject *src_obj, GAsyncResult *res, gpointer user_d
         g_slice_free(struct delete_params, params);
         return;
     }
-    g_free(msg);
+    ipc_msg_buf_free(msg);
 
     //Remove the record if it is in the DB
     for(int i = 0; i < tdev->db_records->len; i++) {
@@ -123,7 +123,7 @@ static void clear_storage_acked_cb(GObject *src_obj, GAsyncResult *res, gpointer
         fpi_device_clear_storage_complete(dev, error);
         return;
     }
-    g_free(msg);
+    ipc_msg_buf_free(msg);
 
     //Clear DB records array
     g_ptr_array_set_size(tdev->db_records, 0);

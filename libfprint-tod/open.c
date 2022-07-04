@@ -38,7 +38,7 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
         default: fpi_device_open_complete(dev, fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Unexpected message in init sequence: 0x%x", msg->type));
     }
 
-    g_free(msg);
+    ipc_msg_buf_free(msg);
 }
 
 void fpi_device_tudor_open(FpDevice *dev) {

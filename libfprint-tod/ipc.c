@@ -1,5 +1,24 @@
+#include <gio/gunixfdmessage.h>
 #include "drivers_api.h"
 #include "ipc.h"
+
+IPCMessageBuf *ipc_msg_buf_new() {
+    IPCMessageBuf *msg = g_new(IPCMessageBuf, 1);
+    msg->transfer_fd = -1;
+    return msg;
+}
+
+void ipc_msg_buf_free(gpointer ptr) {
+    IPCMessageBuf *msg = (IPCMessageBuf*) ptr;
+    if(msg->transfer_fd >= 0) close(msg->transfer_fd);
+    g_free(msg);
+}
+
+int ipc_msg_buf_steal_fd(IPCMessageBuf *msg) {
+    int fd = msg->transfer_fd;
+    msg->transfer_fd = -1;
+    return fd;
+}
 
 GSubprocess *start_host_process(int sock, GError **error) {
     //Create the launcher
@@ -22,31 +41,58 @@ static gboolean sock_ready(GSocket *sock, GIOCondition cond, gpointer user_data)
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(g_task_get_source_object(task));
 
     //Allocate the message buffer
-    IPCMessageBuf *msg_buf = g_new(IPCMessageBuf, 1);
+    IPCMessageBuf *msg = ipc_msg_buf_new();
 
     //Receive the message
-    GInputVector iv = { .buffer = msg_buf->data, .size = IPC_MAX_MESSAGE_SIZE };
+    GInputVector iv = { .buffer = msg->data, .size = IPC_MAX_MESSAGE_SIZE };
+
+    GSocketControlMessage **cmsgs;
+    int num_cmsgs = 0;
+
     gint flags = 0;
     GError *error = NULL;
-    ssize_t msg_size = g_socket_receive_message(sock, NULL, &iv, 1, NULL, 0, &flags, tdev->ipc_cancel, &error);
+    ssize_t msg_size = g_socket_receive_message(sock, NULL, &iv, 1, &cmsgs, &num_cmsgs, &flags, tdev->ipc_cancel, &error);
     if(msg_size < 0) {
         check_host_proc_dead(tdev, &error);
-        g_free(msg_buf);
+        ipc_msg_buf_free(msg);
         g_task_return_error(task, error);
         g_object_unref(task);
         return G_SOURCE_REMOVE;
     }
 
+    //Get the transfer FD
+    if(num_cmsgs > 0) {
+        for(int i = 0; i < num_cmsgs; i++) {
+            GSocketControlMessage *cmsg = cmsgs[i];
+            if(G_IS_UNIX_FD_MESSAGE(cmsg)) {
+                GUnixFDMessage *fdmsg = G_UNIX_FD_MESSAGE(cmsg);
+
+                //Steal FDs
+                int num_fds = 0;
+                gint *fds = g_unix_fd_message_steal_fds(fdmsg, &num_fds);
+
+                //Get the FD
+                for(int j = 0; j < num_fds; j++) {
+                    if(msg->transfer_fd >= 0) close(msg->transfer_fd);
+                    msg->transfer_fd = fds[j];
+                }
+                g_free(fds);
+            }
+            g_object_unref(cmsg);
+        }
+    }
+    g_free(cmsgs);
+
     //Check message size
     if(msg_size < sizeof(enum ipc_msg_type)) {
-        g_free(msg_buf);
+        ipc_msg_buf_free(msg);
         g_task_return_error(task, fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Received message smaller than minimum size"));
         g_object_unref(task);
         return G_SOURCE_REMOVE;
     }
 
-    msg_buf->size = msg_size;
-    g_task_return_pointer(task, msg_buf, g_free);
+    msg->size = msg_size;
+    g_task_return_pointer(task, msg, ipc_msg_buf_free);
     g_object_unref(task);
     return G_SOURCE_REMOVE;
 }
@@ -107,11 +153,11 @@ static void ack_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data)
     if(msg->type != IPC_MSG_ACK) {
         g_task_return_error(task, fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Expected ACK IPC message, but received message type 0x%x", msg->type));
         g_object_unref(task);
-        g_free(msg);
+        ipc_msg_buf_free(msg);
         return;
     }
 
-    g_task_return_pointer(task, msg, g_free);
+    g_task_return_pointer(task, msg, ipc_msg_buf_free);
     g_object_unref(task);
 }
 
