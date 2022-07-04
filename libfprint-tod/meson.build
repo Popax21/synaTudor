@@ -25,7 +25,7 @@ install_data('60-tudor-libfprint-tod.rules',
     install_dir: udev.get_pkgconfig_variable('udevdir'),
 )
 
-install_data('../out/libfprint_host',
-    rename: 'tudor_libfprint_host',
-    install_dir: libfprint_tod.get_pkgconfig_variable('tod_driversdir')
+install_data([ '../out/libfprint_host', '../out/libtudor.so'],
+    rename: ['libfprint_host', 'libtudor.so'],
+    install_dir: '/sbin/tudor'
 )
