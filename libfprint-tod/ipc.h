@@ -23,7 +23,9 @@ typedef struct _IPCMessageBuf {
 
 GSubprocess *start_host_process(int sock, GError **error);
 bool check_host_proc_dead(FpiDeviceTudor *tdev, GError **error);
+
 void recv_ipc_msg(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer user_data);
 bool send_ipc_msg(FpiDeviceTudor *tdev, IPCMessageBuf *msg, GError **error);
+void send_acked_ipc_msg(FpiDeviceTudor *tdev, IPCMessageBuf *msg, GAsyncReadyCallback callback, gpointer user_data);
 
 #endif

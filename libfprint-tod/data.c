@@ -44,6 +44,42 @@ bool get_print_guid_finger(FpiDeviceTudor *dev, FpPrint *print, RECGUID *guid, e
     return data_valid;
 }
 
+struct delete_params {
+    RECGUID guid;
+    enum tudor_finger finger;
+};
+
+static void delete_acked_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
+    GTask *task = G_TASK(res);
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
+    FpDevice *dev = FP_DEVICE(tdev);
+    struct delete_params *params = (struct delete_params*) user_data;
+
+    //Check for error
+    GError *error = NULL;
+    IPCMessageBuf *msg = g_task_propagate_pointer(task, &error);
+    if(!msg) {
+        fpi_device_clear_storage_complete(dev, error);
+        g_slice_free(struct delete_params, params);
+        return;
+    }
+    g_free(msg);
+
+    //Remove the record if it is in the DB
+    for(int i = 0; i < tdev->db_records->len; i++) {
+        struct record *rec = (struct record*) tdev->db_records->pdata[i];
+        if(memcmp(&rec->guid, &params->guid, sizeof(RECGUID)) == 0 && rec->finger == params->finger) {
+            g_ptr_array_remove_index_fast(tdev->db_records, i);
+            break;
+        }
+    }
+
+    //Notify libfprint of completion
+    fpi_device_delete_complete(dev, NULL);
+
+    g_slice_free(struct delete_params, params);
+}
+
 void fpi_device_tudor_delete(FpDevice *dev) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
 
@@ -58,36 +94,42 @@ void fpi_device_tudor_delete(FpDevice *dev) {
     FpPrint *print;
     fpi_device_get_delete_data(dev, &print);
 
-    RECGUID guid;
-    enum tudor_finger finger;
-    if(!get_print_guid_finger(tdev, print, &guid, &finger)) {
+    struct delete_params *params = g_slice_new(struct delete_params);
+    if(!get_print_guid_finger(tdev, print, &params->guid, &params->finger)) {
         fpi_device_delete_complete(dev, fpi_device_error_new(FP_DEVICE_ERROR_DATA_INVALID));
+        g_slice_free(struct delete_params, params);
         return;
     }
 
-    //Send the driver host an IPC message
+    //Tell the driver host
     tdev->send_msg->size = sizeof(struct ipc_msg_del_record);
     tdev->send_msg->del_record = (struct ipc_msg_del_record) {
         .type = IPC_MSG_DEL_RECORD,
-        .guid = guid,
-        .finger = finger
+        .guid = params->guid,
+        .finger = params->finger
     };
-    if(!send_acked_ipc_msg(tdev, tdev->send_msg, &error)) {
-        fpi_device_delete_complete(dev, error);
+    send_acked_ipc_msg(tdev, tdev->send_msg, delete_acked_cb, params);
+}
+
+static void clear_storage_acked_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
+    GTask *task = G_TASK(res);
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
+    FpDevice *dev = FP_DEVICE(tdev);
+
+    //Check for error
+    GError *error = NULL;
+    IPCMessageBuf *msg = g_task_propagate_pointer(task, &error);
+    if(!msg) {
+        fpi_device_clear_storage_complete(dev, error);
         return;
     }
+    g_free(msg);
 
-    //Remove the record if it is in the DB
-    for(int i = 0; i < tdev->db_records->len; i++) {
-        struct record *rec = (struct record*) tdev->db_records->pdata[i];
-        if(memcmp(&guid, &rec->guid, sizeof(RECGUID)) == 0 && finger == rec->finger) {
-            g_ptr_array_remove_index_fast(tdev->db_records, i);
-            break;
-        }
-    }
+    //Clear DB records array
+    g_ptr_array_set_size(tdev->db_records, 0);
 
     //Notify libfprint of completion
-    fpi_device_delete_complete(dev, NULL);
+    fpi_device_clear_storage_complete(dev, NULL);
 }
 
 void fpi_device_clear_storage(FpDevice *dev) {
@@ -100,17 +142,8 @@ void fpi_device_clear_storage(FpDevice *dev) {
         return;
     }
 
-    //Send the driver host an IPC message
+    //Tell the driver host
     tdev->send_msg->size = sizeof(enum ipc_msg_type);
     tdev->send_msg->type = IPC_MSG_CLEAR_RECORDS;
-    if(!send_acked_ipc_msg(tdev, tdev->send_msg, &error)) {
-        fpi_device_clear_storage_complete(dev, error);
-        return;
-    }
-
-    //Clear DB records array
-    g_ptr_array_set_size(tdev->db_records, 0);
-
-    //Notify libfprint of completion
-    fpi_device_clear_storage_complete(dev, NULL);
+    send_acked_ipc_msg(tdev, tdev->send_msg, clear_storage_acked_cb, NULL);
 }

@@ -25,7 +25,7 @@ static void record_free(struct record *rec) {
 
 static void fpi_device_tudor_init(FpiDeviceTudor *tdev) {
     //Allocate data
-    tdev->send_msg = (IPCMessageBuf*) g_malloc(sizeof(IPCMessageBuf));
+    tdev->send_msg = g_new(IPCMessageBuf, 1);
     tdev->db_records = g_ptr_array_new_with_free_func((GDestroyNotify) record_free);
 }
 
