@@ -23,7 +23,7 @@ the functionality:
 - [libfprint-host-launcher](libfprint-host-launcher/README.md): Contains the
   systemd service which launches the libfprint host. This extra step is needed
   to bypass the strict fprintd sandboxing, which messes with the host's even
-  stricter sandboxing. [BROKEN, WIP]
+  stricter sandboxing.
 - [libfprint-tod](libfprint-tod/README.md): Contains the libfprint module, to be
   loaded by the libfprint TOD fork. [BROKEN, WIP]
 
