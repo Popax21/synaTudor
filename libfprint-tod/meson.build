@@ -11,7 +11,7 @@ tudor_inc = include_directories('../out/inc')
 shared_module('tudor-tod',
     sources: [
         'device.c',
-        'record.c',
+        'data.c',
         'ipc.c',
         'open.c'
     ],
