@@ -16,7 +16,7 @@ struct _FpiDeviceTudor {
     IPCMessageBuf *send_msg;
     GSocket *socket;
 
-    GPtrArray *records;
+    GPtrArray *db_records;
 };
 
 #define FPI_TYPE_DEVICE_TUDOR (fpi_device_tudor_get_type())

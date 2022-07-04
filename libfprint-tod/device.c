@@ -50,7 +50,7 @@ static void record_free(struct record *rec) {
 static void fpi_device_tudor_init(FpiDeviceTudor *tdev) {
     //Allocate data
     tdev->send_msg = (IPCMessageBuf*) g_malloc(sizeof(IPCMessageBuf));
-    tdev->records = g_ptr_array_new_with_free_func((GDestroyNotify) record_free);
+    tdev->db_records = g_ptr_array_new_with_free_func((GDestroyNotify) record_free);
 }
 
 static void fpi_device_tudor_dispose(GObject *obj) {
@@ -65,7 +65,7 @@ static void fpi_device_tudor_dispose(GObject *obj) {
 
     //Free data
     g_free(tdev->send_msg);
-    g_ptr_array_unref(tdev->records);
+    g_ptr_array_unref(tdev->db_records);
 }
 
 static void fpi_device_tudor_enroll(FpDevice *dev) {
@@ -113,30 +113,6 @@ static void fpi_device_tudor_identify(FpDevice *dev) {
     fpi_device_get_identify_data(dev, &prints);
 }
 
-static void fpi_device_tudor_list(FpDevice *dev) {
-    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
-
-    //Check if host process is dead
-    GError *error = NULL;
-    if(check_host_proc_dead(tdev, &error)) {
-        fpi_device_list_complete(dev, NULL, error);
-        return;
-    }
-
-    //Create prints array
-    GPtrArray *prints = g_ptr_array_new_with_free_func(g_object_unref);
-    g_ptr_array_set_size(prints, tdev->records->len);
-
-    //Fill with print references
-    for(int i = 0; i < tdev->records->len; i++) {
-        struct record *rec = (struct record*) tdev->records->pdata[i];
-        prints->pdata[i] = g_object_ref(rec->print);
-    }
-
-    //Notify libfprint of completion
-    fpi_device_list_complete(dev, prints, NULL);
-}
-
 static void fpi_device_tudor_delete(FpDevice *dev) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
 
@@ -158,20 +134,6 @@ static void fpi_device_tudor_delete(FpDevice *dev) {
         return;
     }
 
-    //Try to find the record's index
-    int rec_idx = -1;
-    for(int i = 0; i < tdev->records->len; i++) {
-        struct record *rec = (struct record*) tdev->records->pdata[i];
-        if(memcmp(&guid, &rec->guid, sizeof(RECGUID)) == 0 && finger == rec->finger) {
-            rec_idx = i;
-            break;
-        }
-    }
-    if(rec_idx < 0) {
-        fpi_device_delete_complete(dev, fpi_device_error_new(FP_DEVICE_ERROR_DATA_NOT_FOUND));
-        return;
-    }
-
     //Send the driver host an IPC message
     tdev->send_msg->size = sizeof(struct ipc_msg_del_record);
     tdev->send_msg->del_record = (struct ipc_msg_del_record) {
@@ -179,16 +141,47 @@ static void fpi_device_tudor_delete(FpDevice *dev) {
         .guid = guid,
         .finger = finger
     };
-    if(!send_ipc_msg(tdev, tdev->send_msg, &error)) {
+    if(!send_acked_ipc_msg(tdev, tdev->send_msg, &error)) {
         fpi_device_delete_complete(dev, error);
         return;
     }
 
-    //Remove the record
-    g_ptr_array_remove_index_fast(tdev->records, rec_idx);
+    //Remove the record if it is in the DB
+    for(int i = 0; i < tdev->db_records->len; i++) {
+        struct record *rec = (struct record*) tdev->db_records->pdata[i];
+        if(memcmp(&guid, &rec->guid, sizeof(RECGUID)) == 0 && finger == rec->finger) {
+            g_ptr_array_remove_index_fast(tdev->db_records, i);
+            break;
+        }
+    }
 
     //Notify libfprint of completion
     fpi_device_delete_complete(dev, NULL);
+}
+
+static void fpi_device_clear_storage(FpDevice *dev) {
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
+
+    //Check if host process is dead
+    GError *error = NULL;
+    if(check_host_proc_dead(tdev, &error)) {
+        fpi_device_clear_storage_complete(dev, error);
+        return;
+    }
+
+    //Send the driver host an IPC message
+    tdev->send_msg->size = sizeof(enum ipc_msg_type);
+    tdev->send_msg->type = IPC_MSG_CLEAR_RECORDS;
+    if(!send_acked_ipc_msg(tdev, tdev->send_msg, &error)) {
+        fpi_device_clear_storage_complete(dev, error);
+        return;
+    }
+
+    //Clear DB records array
+    g_ptr_array_set_size(tdev->db_records, 0);
+
+    //Notify libfprint of completion
+    fpi_device_clear_storage_complete(dev, NULL);
 }
 
 static void fpi_device_tudor_class_init(FpiDeviceTudorClass *class) {
@@ -209,8 +202,8 @@ static void fpi_device_tudor_class_init(FpiDeviceTudorClass *class) {
     // dev_class->enroll = fpi_device_tudor_enroll;
     // dev_class->verify = fpi_device_tudor_verify;
     // dev_class->identify = fpi_device_tudor_identify;
-    dev_class->list = fpi_device_tudor_list;
     dev_class->delete = fpi_device_tudor_delete;
+    dev_class->clear_storage = fpi_device_clear_storage;
 
     fpi_device_class_auto_initialize_features(dev_class);
 }

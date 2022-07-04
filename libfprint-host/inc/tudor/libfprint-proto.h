@@ -22,6 +22,7 @@ enum ipc_msg_type {
 
     IPC_MSG_ADD_RECORD,
     IPC_MSG_DEL_RECORD,
+    IPC_MSG_CLEAR_RECORDS,
 
     IPC_MSG_ENROLL,
     IPC_MSG_RESP_ENROLL,
