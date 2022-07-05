@@ -135,7 +135,7 @@ static void launch_host_call(GDBusMethodInvocation *invoc, GVariant *params) {
     g_child_watch_add(pid, host_watch_cb, GUINT_TO_POINTER(host_id));
 
     //Pass results back to caller
-    g_dbus_method_invocation_return_value_with_unix_fd_list(invoc, g_variant_new("(uh)", host_id, 0), g_unix_fd_list_new_from_array(&mod_sock, 1));
+    g_dbus_method_invocation_return_value_with_unix_fd_list(invoc, g_variant_new("(uh)", host_id, g_variant_new_handle(0)), g_unix_fd_list_new_from_array(&mod_sock, 1));
 }
 
 //<<<<< KillHost method >>>>>
