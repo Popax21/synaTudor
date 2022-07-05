@@ -29,6 +29,8 @@ the functionality:
 
 ## Building
 The same build system used by libfprint, meson, is used to for this project.
+During the first build, the Windows driver is automatically downloaded and
+extracted. `innoextract` has to be installed for this.
 To build and install all contained parts, execute:
 ```sh
 meson build
