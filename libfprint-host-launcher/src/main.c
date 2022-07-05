@@ -53,19 +53,17 @@ static void host_watch_cb(GPid pid, gint status, gpointer user_data) {
             g_assert_cmpint(pid, ==, entry->pid);
 
             if(entry->alive) {
-                const char *sig_name = strsignal(-status);
-                if(!sig_name) sig_name = "?????";
-                g_info("Host process %u died: status %d (%s)", host_id, status, sig_name);
+                g_info("Host process %u died: status %d", host_id, status);
 
                 //Emit signal
                 GError *error = NULL;
-                g_dbus_connection_emit_signal(dbus_con, TUDOR_HOST_LAUNCHER_SERVICE, TUDOR_HOST_LAUNCHER_OBJ, TUDOR_HOST_LAUNCHER_INTERF, TUDOR_HOST_LAUNCHER_HOST_DIED_SIGNAL, g_variant_new("(ui)", host_id, status), &error);
+                g_dbus_connection_emit_signal(dbus_con, NULL, TUDOR_HOST_LAUNCHER_OBJ, TUDOR_HOST_LAUNCHER_INTERF, TUDOR_HOST_LAUNCHER_HOST_DIED_SIGNAL, g_variant_new("(ui)", host_id, status), &error);
                 g_assert_no_error(error);
             }
 
             entry->alive = false;
             return;
-        }
+        } else g_assert_cmpint(pid, !=, entry->pid);
     }
 }
 
