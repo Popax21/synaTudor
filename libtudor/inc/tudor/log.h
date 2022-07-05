@@ -13,7 +13,7 @@ enum log_level {
 extern pthread_mutex_t LOG_LOCK;
 extern enum log_level LOG_LEVEL;
 
-#define cant_fail(fnc) { int __err = (fnc); if(__err < 0) { log_error("'%s' failed: %d [%s]", #fnc, __err, strerror(__err)); abort(); } }
+#define cant_fail(fnc) { if((fnc) < 0) { int __err =  errno; log_error("'%s' failed: %d [%s]", #fnc, __err, strerror(__err)); abort(); } }
 #define abort_perror(msg) { perror(msg); abort(); }
 
 #define log_verbose(frmt, ...) { if(LOG_LEVEL <= LOG_VERBOSE)   { pthread_mutex_lock(&LOG_LOCK); fprintf(stdout, "[VRB] " frmt "\n", ##__VA_ARGS__); pthread_mutex_unlock(&LOG_LOCK); } }
