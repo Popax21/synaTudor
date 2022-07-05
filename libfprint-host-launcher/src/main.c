@@ -55,7 +55,7 @@ static void host_watch_cb(GPid pid, gint status, gpointer user_data) {
             if(entry->alive) {
                 const char *sig_name = strsignal(-status);
                 if(!sig_name) sig_name = "?????";
-                g_log_info("Host process %u died: status %d (%s)", host_id, status, sig_name);
+                g_info("Host process %u died: status %d (%s)", host_id, status, sig_name);
 
                 //Emit signal
                 GError *error = NULL;
@@ -101,14 +101,16 @@ static void launch_host_call(GDBusMethodInvocation *invoc, GVariant *params) {
     int mod_sock = fds[0], host_sock = fds[1];
 
     //Start the tudor_host process
-    char *argv[] = { "/sbin/tudor/tudor_host", NULL };
+    char *argv[] = { "tudor_host", NULL };
     char *envp[] = { NULL };
     GPid pid;
 
     int fd_out = dup(STDOUT_FILENO), fd_err = dup(STDERR_FILENO);
 
     GError *error = NULL;
-    if(!g_spawn_async_with_fds("/sbin/tudor", argv, envp, G_SPAWN_DO_NOT_REAP_CHILD, host_setup, NULL, &pid, host_sock, fd_out, fd_err, &error)) {
+    gchar *cwd = g_get_current_dir();
+    if(!g_spawn_async_with_fds(cwd, argv, envp, G_SPAWN_DO_NOT_REAP_CHILD, host_setup, NULL, &pid, host_sock, fd_out, fd_err, &error)) {
+        g_free(cwd);
         close(fd_out);
         close(fd_err);
         close(mod_sock);
@@ -119,6 +121,7 @@ static void launch_host_call(GDBusMethodInvocation *invoc, GVariant *params) {
         return;
 
     }
+    g_free(cwd);
     close(fd_out);
     close(fd_err);
     close(host_sock);

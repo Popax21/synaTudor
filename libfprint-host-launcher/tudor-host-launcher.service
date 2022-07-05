@@ -5,6 +5,7 @@ Description=The tudor_host launcher DBus service
 Type=dbus
 BusName=net.reactivated.TudorHostLauncher
 ExecStart=/sbin/tudor/tudor_host_launcher
+WorkingDirectory=/sbin/tudor/
 
 ProtectSystem=strict
 ProtectKernelTunables=true
