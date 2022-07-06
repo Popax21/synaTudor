@@ -1,5 +1,5 @@
 [Unit]
-Description=The tudor_host launcher DBus service
+Description=Tudor host launcher DBus service
 
 [Service]
 Type=dbus
