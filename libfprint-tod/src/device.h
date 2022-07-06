@@ -13,6 +13,7 @@ struct _FpiDeviceTudor {
 
     guint host_id;
     bool host_dead;
+    int host_seccomp_fd;
 
     GSocket *ipc_socket;
     GCancellable *ipc_cancel;

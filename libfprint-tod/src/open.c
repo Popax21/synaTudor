@@ -28,6 +28,12 @@ static void host_exit_cb(FpiDeviceTudor *tdev, guint host_id, gint status) {
     g_clear_object(&tdev->ipc_cancel);
     g_clear_object(&tdev->ipc_socket);
     g_clear_object(&tdev->dbus_con);
+
+    //Close the SECCOMP notify FD
+    if(tdev->host_seccomp_fd >= 0) {
+        g_assert_no_errno(close(tdev->host_seccomp_fd));
+        tdev->host_seccomp_fd = -1;
+    }
 }
 
 static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
@@ -45,6 +51,23 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
 
     //Handle message
     switch(msg->type) {
+        case IPC_MSG_SANDBOX: {
+            if(tdev->host_seccomp_fd >= 0) {
+                fpi_device_open_complete(dev, fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Recevied multiple SANDBOX IPC messages"));
+                break;
+            }
+
+            //Steal the SECCOMP notify FD
+            int notify_fd = ipc_msg_buf_steal_fd(msg);
+            if(notify_fd < 0) {
+                fpi_device_open_complete(dev, fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Received SANDBOX IPC message without attached FD"));
+                break;
+            }
+            tdev->host_seccomp_fd = notify_fd;
+
+            //TODO Monitor FD
+
+        } break;
         case IPC_MSG_READY: {
             //Complete the open procedure
             g_info("Received ready message from Tudor host process ID %d", tdev->host_id);
@@ -69,6 +92,7 @@ void fpi_device_tudor_open(FpDevice *dev) {
 
     //Register host process monitor
     tdev->host_dead = true;
+    tdev->host_seccomp_fd = -1;
     register_host_process_monitor(tdev, host_exit_cb);
 
     //Start the host process
@@ -83,7 +107,7 @@ void fpi_device_tudor_open(FpDevice *dev) {
     //Create the IPC socket
     tdev->ipc_socket = g_socket_new_from_fd(sock_fd, &error);
     if(!tdev->ipc_socket) {
-        close(sock_fd);
+        g_assert_no_errno(close(sock_fd));
         g_clear_object(&tdev->dbus_con);
         fpi_device_open_complete(dev, error);
         return;
