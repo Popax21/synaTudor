@@ -12,7 +12,7 @@ struct _FpiDeviceTudor {
     GDBusConnection *dbus_con;
 
     guint host_id;
-    bool host_dead;
+    bool host_has_id, host_dead;
     int host_seccomp_fd;
 
     GSocket *ipc_socket;

@@ -58,7 +58,7 @@ void register_host_process_monitor(FpiDeviceTudor *tdev, HostProcessDiedFunc fnc
 }
 
 bool start_host_process(FpiDeviceTudor *tdev, int *sock_fd, GError **error) {
-    g_assert_true(tdev->host_dead);
+    g_assert_false(tdev->host_has_id);
 
     //Request the host launcher service to launch a host process
     GUnixFDList *fds;
@@ -86,11 +86,14 @@ bool start_host_process(FpiDeviceTudor *tdev, int *sock_fd, GError **error) {
     g_object_unref(fds);
     if(*sock_fd < 0) return false;
 
+    tdev->host_has_id = true;
     tdev->host_dead = false;
     return true;
 }
 
 bool kill_host_process(FpiDeviceTudor *tdev, GError **error) {
+    g_assert_true(tdev->host_has_id);
+
     //Request the host launcher service to kill the host process
     GVariant *rets = g_dbus_connection_call_sync(tdev->dbus_con,
         TUDOR_HOST_LAUNCHER_SERVICE, TUDOR_HOST_LAUNCHER_OBJ, TUDOR_HOST_LAUNCHER_INTERF,
@@ -100,12 +103,12 @@ bool kill_host_process(FpiDeviceTudor *tdev, GError **error) {
     if(!rets) return false;
     g_variant_unref(rets);
 
-    tdev->host_dead = true;
+    tdev->host_has_id = false;
     return true;
 }
 
 bool check_host_proc_dead(FpiDeviceTudor *tdev, GError **error) {
-    if(!tdev->host_dead) return false;
+    if(tdev->host_has_id && !tdev->host_dead) return false;
     g_clear_error(error);
     *error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Tudor host process died");
     return true;

@@ -2,27 +2,13 @@
 #include "open.h"
 #include "ipc.h"
 
-static void host_exit_cb(FpiDeviceTudor *tdev, guint host_id, gint status) {
-    //Check host ID
-    if(tdev->host_dead || tdev->host_id != host_id) return;
-    tdev->host_dead = true;
-
-    //Log status
-    if(status != EXIT_SUCCESS) g_warning("Tudor host process died! Exit Code %d", status);
-
-    //Cancel IPC cancellable
-    if(tdev->ipc_cancel) {
-        g_cancellable_cancel(tdev->ipc_cancel);
-        g_debug("Cancelled Tudor host process ID %u IPC", tdev->host_id);
-    }
-
-    //Kill the host process (even though the process died, we still need to tell the launcher to free the associated resources)
+static void dispose_dev(FpiDeviceTudor *tdev) {
+    //Kill the host process (even though the process might have died already, we still need to tell the launcher to free the associated resources)
     GError *error = NULL;
     if(!kill_host_process(tdev, &error)) {
         g_warning("Error cleaning up Tudor host process: %s (%s code %d)", error->message, g_quark_to_string(error->domain), error->code);
         g_clear_error(&error);
     }
-    g_debug("Cleaned up Tudor host process ID %u", tdev->host_id);
 
     //Free object references
     g_clear_object(&tdev->ipc_cancel);
@@ -34,6 +20,33 @@ static void host_exit_cb(FpiDeviceTudor *tdev, guint host_id, gint status) {
         g_assert_no_errno(close(tdev->host_seccomp_fd));
         tdev->host_seccomp_fd = -1;
     }
+
+    g_debug("Disposed tudor device resources");
+}
+
+static void host_exit_cb(FpiDeviceTudor *tdev, guint host_id, gint status) {
+    FpDevice *dev = FP_DEVICE(tdev);
+
+    //Check host ID
+    if(tdev->host_dead || tdev->host_id != host_id) return;
+
+    //Mark host as dead
+    tdev->host_dead = true;
+
+    //Log status
+    if(status != EXIT_SUCCESS) g_warning("Tudor host process died! Exit Code %d", status);
+
+    //Cancel IPC
+    if(tdev->ipc_cancel) {
+        g_cancellable_cancel(tdev->ipc_cancel);
+        g_debug("Cancelled tudor host process ID %u IPC", tdev->host_id);
+    }
+
+    //If we're in a close action, we have to dispose the device and complete the action here
+    if(fpi_device_get_current_action(dev) == FPI_DEVICE_ACTION_CLOSE) {
+        dispose_dev(tdev);
+        fpi_device_close_complete(dev, NULL);
+    }
 }
 
 static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
@@ -44,39 +57,46 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
     //Get the message buffer
     GError *error = NULL;
     IPCMessageBuf *msg = (IPCMessageBuf*) g_task_propagate_pointer(task, &error);
-    if(!msg) {
-        fpi_device_open_complete(dev, error);
-        return;
-    }
+    if(!msg) goto error;
 
     //Handle message
     switch(msg->type) {
         case IPC_MSG_SANDBOX: {
             if(tdev->host_seccomp_fd >= 0) {
-                fpi_device_open_complete(dev, fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Recevied multiple SANDBOX IPC messages"));
-                break;
+                error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Recevied multiple SANDBOX IPC messages");
+                goto error;
             }
 
             //Steal the SECCOMP notify FD
             int notify_fd = ipc_msg_buf_steal_fd(msg);
             if(notify_fd < 0) {
-                fpi_device_open_complete(dev, fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Received SANDBOX IPC message without attached FD"));
-                break;
+                error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Received SANDBOX IPC message without attached FD");
+                goto error;
             }
             tdev->host_seccomp_fd = notify_fd;
+            g_debug("Acquired Tudor host ID %u SECCOMP notifcation FD %d", tdev->host_id, notify_fd);
 
             //TODO Monitor FD
 
+            //Receive further messages
+            recv_ipc_msg(tdev, open_recv_cb, NULL);
         } break;
         case IPC_MSG_READY: {
             //Complete the open procedure
-            g_info("Received ready message from Tudor host process ID %d", tdev->host_id);
+            g_info("Tudor host process ID %d sent READY message", tdev->host_id);
             fpi_device_open_complete(dev, NULL);
         } break;
-        default: fpi_device_open_complete(dev, fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Unexpected message in init sequence: 0x%x", msg->type));
+        default: error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Unexpected message in init sequence: 0x%x", msg->type); goto error;
     }
 
     ipc_msg_buf_free(msg);
+    return;
+
+    error:;
+    if(msg) ipc_msg_buf_free(msg);
+    dispose_dev(tdev);
+    fpi_device_open_complete(dev, error);
+    return;
 }
 
 void fpi_device_tudor_open(FpDevice *dev) {
@@ -90,9 +110,11 @@ void fpi_device_tudor_open(FpDevice *dev) {
         return;
     }
 
-    //Register host process monitor
-    tdev->host_dead = true;
+    //Initialize host fields
+    tdev->host_has_id = false;
     tdev->host_seccomp_fd = -1;
+
+    //Register host process monitor
     register_host_process_monitor(tdev, host_exit_cb);
 
     //Start the host process
@@ -102,7 +124,7 @@ void fpi_device_tudor_open(FpDevice *dev) {
         fpi_device_open_complete(dev, error);
         return;
     }
-    g_info("Started Tudor host process ID %d", tdev->host_id);
+    g_info("Started tudor host process ID %u", tdev->host_id);
 
     //Create the IPC socket
     tdev->ipc_socket = g_socket_new_from_fd(sock_fd, &error);
@@ -136,9 +158,9 @@ void fpi_device_tudor_open(FpDevice *dev) {
         fpi_device_open_complete(dev, error);
         return;
     }
-    g_debug("Initialized Tudor host process ID %d", tdev->host_id);
+    g_debug("Initialized tudor host process ID %d", tdev->host_id);
 
-    //Receive the ready message
+    //Receive IPC messages
     recv_ipc_msg(tdev, open_recv_cb, NULL);
 }
 
@@ -146,7 +168,8 @@ void fpi_device_tudor_close(FpDevice *dev) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
 
     if(tdev->host_dead) {
-        //Nothing has to be done
+        //Dispose the device directly
+        dispose_dev(tdev);
         fpi_device_close_complete(dev, NULL);
         return;
     }
@@ -160,6 +183,4 @@ void fpi_device_tudor_close(FpDevice *dev) {
         fpi_device_close_complete(dev, error);
         return;
     }
-    //Wait for host process
-    //FIXME g_subprocess_wait_async(tdev->host_proc, NULL, host_proc_wait_cb, tdev);
 }
