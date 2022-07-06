@@ -42,6 +42,8 @@ static GDBusSignalInfo launch_host_died_signal = {
 
 
 static void host_watch_cb(GPid pid, gint status, gpointer user_data) {
+    status = WEXITSTATUS(status);
+
     //Close PID
     g_spawn_close_pid(pid);
 
