@@ -32,13 +32,6 @@ static void fpi_device_tudor_init(FpiDeviceTudor *tdev) {
 static void fpi_device_tudor_dispose(GObject *obj) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(obj);
 
-    //Cleanup potential residue from close
-    if(tdev->ipc_cancel) g_cancellable_cancel(tdev->ipc_cancel);
-    g_clear_object(&tdev->ipc_cancel);
-    if(tdev->host_proc) g_subprocess_force_exit(tdev->host_proc);
-    g_clear_object(&tdev->host_proc);
-    g_clear_object(&tdev->socket);
-
     //Free data
     ipc_msg_buf_free(tdev->send_msg);
     g_ptr_array_unref(tdev->db_records);

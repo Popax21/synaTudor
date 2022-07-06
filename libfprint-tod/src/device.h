@@ -9,12 +9,14 @@ typedef struct _IPCMessageBuf IPCMessageBuf;
 struct _FpiDeviceTudor {
     FpDevice parent;
 
-    GCancellable *ipc_cancel;
-    GSubprocess *host_proc;
-    bool host_proc_dead;
+    GDBusConnection *dbus_con;
 
+    guint host_id;
+    bool host_dead;
+
+    GSocket *ipc_socket;
+    GCancellable *ipc_cancel;
     IPCMessageBuf *send_msg;
-    GSocket *socket;
 
     GPtrArray *db_records;
 };

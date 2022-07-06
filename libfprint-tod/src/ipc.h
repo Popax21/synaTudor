@@ -25,7 +25,11 @@ IPCMessageBuf *ipc_msg_buf_new();
 void ipc_msg_buf_free(gpointer msg);
 int ipc_msg_buf_steal_fd(IPCMessageBuf *msg);
 
-GSubprocess *start_host_process(int sock, GError **error);
+typedef void (*HostProcessDiedFunc)(FpiDeviceTudor *tdev, guint host_id, gint status);
+
+void register_host_process_monitor(FpiDeviceTudor *tdev, HostProcessDiedFunc fnc);
+bool start_host_process(FpiDeviceTudor *tdev, int *sock_fd, GError **error);
+bool kill_host_process(FpiDeviceTudor *tdev, GError **error);
 bool check_host_proc_dead(FpiDeviceTudor *tdev, GError **error);
 
 void recv_ipc_msg(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer user_data);
