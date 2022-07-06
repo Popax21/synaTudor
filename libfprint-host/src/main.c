@@ -33,9 +33,9 @@ static void transfer_sandbox_notif_fd(int sock, int notif_fd) {
         struct cmsghdr hdr;
         int fd;
     } cmsg = {
-        .hdr.cmsg_len = SOL_SOCKET,
+        .hdr.cmsg_level = SOL_SOCKET,
         .hdr.cmsg_type = SCM_RIGHTS,
-        .hdr.cmsg_len = sizeof(int),
+        .hdr.cmsg_len = CMSG_LEN(sizeof(int)),
         .fd = notif_fd
     };
 
