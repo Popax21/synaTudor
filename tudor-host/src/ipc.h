@@ -1,5 +1,5 @@
-#ifndef LIBFPRINT_HOST_IPC_H
-#define LIBFPRINT_HOST_IPC_H
+#ifndef TUDOR_HOST_IPC_H
+#define TUDOR_HOST_IPC_H
 
 #include <tudor/libfprint-proto.h>
 

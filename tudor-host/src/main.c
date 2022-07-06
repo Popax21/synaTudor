@@ -74,16 +74,6 @@ int main() {
     recv_init_msg(sock, &usb_params);
     log_info("Received and handled init message");
 
-    //Start the USB thread
-    start_usb_thread();
-    log_info("Started USB thread");
-
-    //Activate sandbox
-    int seccomp_notif_fd;
-    activate_sandbox(&seccomp_notif_fd);
-    transfer_sandbox_notif_fd(sock, seccomp_notif_fd);
-    log_info("Activated sandbox");
-
     //Initialize libcrypto
     ERR_load_crypto_strings();
     OpenSSL_add_all_algorithms();
@@ -92,6 +82,12 @@ int main() {
     //Initialize libusb
     init_libusb();
     log_info("Initialized libusb");
+
+    //Activate sandbox
+    int seccomp_notif_fd;
+    activate_sandbox(&seccomp_notif_fd);
+    transfer_sandbox_notif_fd(sock, seccomp_notif_fd);
+    log_info("Activated sandbox");
 
     //Initialize driver
     if(!tudor_init()) {

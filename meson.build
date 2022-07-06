@@ -7,6 +7,6 @@ INSTALL_DIR = '/sbin/tudor'
 
 subdir('libtudor')
 subdir('cli')
-subdir('libfprint-host')
-subdir('libfprint-host-launcher')
+subdir('tudor-host')
+subdir('tudor-host-launcher')
 subdir('libfprint-tod')

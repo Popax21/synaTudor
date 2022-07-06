@@ -18,16 +18,16 @@ the functionality:
 - [libtudor](libtudor/README.md): Contains the common library code handling
   relinking and interfacing with the driver.
 - [cli](cli/README.md): Contains a simple CLI wrapper for the relinked driver.
-- [libfprint-host](libfprint-host/README.md): Contains the host application for
+- [tudor-host](tudor-host/README.md): Contains the host application for
   libtudor, used by the libfprint module. [BROKEN, WIP]
-- [libfprint-host-launcher](libfprint-host-launcher/README.md): Contains the
-  systemd service which launches the libfprint host. This extra step is needed
-  to bypass the strict fprintd sandboxing, which messes with the host's even
+- [tudor-host-launcher](tudor-host-launcher/README.md): Contains the systemd
+  service which launches the tudor host processes. This extra step is needed to
+  bypass the strict fprintd sandboxing, which messes with the host's even
   stricter sandboxing.
 - [libfprint-tod](libfprint-tod/README.md): Contains the libfprint module, to be
   loaded by the libfprint TOD fork. [BROKEN, WIP]
 
-## Building
+## Building / Installation
 The same build system used by libfprint, meson, is used to for this project.
 During the first build, the Windows driver is automatically downloaded and
 extracted. `innoextract` has to be installed for this.
@@ -38,8 +38,14 @@ cd build
 ninja
 sudo ninja install
 ```
-For documentation about build flags etc., see the individual parts.
+
+For documentation about build options etc., see the individual parts.
+
+For the libfprint module to be picked up and work work, you'll need to have a
+`libfprint-tod` fork version installed. Most common Linux distributions have a
+seperate package which you can install instead of the regular libfprint one
+(e.g. Arch Linux: AUR `libfprint-tod-git`)
 
 **NOTE:** After the installation has completed, you'll probably want to enable
 and start `tudor-host-launcher.service`. For the reasoning behind why a seperate
-systemd service is needed, see [here](libfprint-host-launcher/README.md).
+systemd service is needed, see [here](tudor-host-launcher/README.md).

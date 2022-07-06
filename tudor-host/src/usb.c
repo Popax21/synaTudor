@@ -24,15 +24,6 @@ static void *usb_thread_func(void *arg) {
     return NULL;
 }
 
-void start_usb_thread() {
-    cant_fail(pthread_mutex_lock(&usb_thread_lock));
-    cant_fail(pthread_create(&usb_thread, NULL, usb_thread_func, NULL));
-}
-
-void notify_usb_shutdown() {
-    usb_thread_exit = true;
-}
-
 void init_libusb() {
     int usb_err = libusb_init(&usb_ctx);
     if(usb_err != 0) {
@@ -40,11 +31,19 @@ void init_libusb() {
         abort();
     }
     cant_fail(pthread_mutex_unlock(&usb_thread_lock));
+
+    //Start the USB thread
+    cant_fail(pthread_mutex_lock(&usb_thread_lock));
+    cant_fail(pthread_create(&usb_thread, NULL, usb_thread_func, NULL));
 }
 
 void exit_libusb() {
     cant_fail(pthread_join(usb_thread, NULL));
     libusb_exit(usb_ctx);
+}
+
+void notify_usb_shutdown() {
+    usb_thread_exit = true;
 }
 
 libusb_device_handle *open_usb_dev(struct usb_dev_params *params) {
