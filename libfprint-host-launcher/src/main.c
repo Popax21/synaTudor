@@ -105,26 +105,28 @@ static void launch_host_call(GDBusMethodInvocation *invoc, GVariant *params) {
     char *envp[] = { NULL };
     GPid pid;
 
-    int fd_out = dup(STDOUT_FILENO), fd_err = dup(STDERR_FILENO);
+    int fd_out, fd_err;
+    g_assert_no_errno(fd_out = dup(STDOUT_FILENO));
+    g_assert_no_errno(fd_err = dup(STDERR_FILENO));
 
     GError *error = NULL;
     gchar *cwd = g_get_current_dir();
     if(!g_spawn_async_with_fds(cwd, argv, envp, G_SPAWN_DO_NOT_REAP_CHILD, host_setup, NULL, &pid, host_sock, fd_out, fd_err, &error)) {
+        g_assert_no_errno(close(fd_out));
+        g_assert_no_errno(close(fd_err));
+        g_assert_no_errno(close(mod_sock));
+        g_assert_no_errno(close(host_sock));
         g_free(cwd);
-        close(fd_out);
-        close(fd_err);
-        close(mod_sock);
-        close(host_sock);
 
         g_dbus_method_invocation_return_gerror(invoc, error);
         g_clear_error(&error);
         return;
 
     }
+    g_assert_no_errno(close(fd_out));
+    g_assert_no_errno(close(fd_err));
+    g_assert_no_errno(close(host_sock));
     g_free(cwd);
-    close(fd_out);
-    close(fd_err);
-    close(host_sock);
 
     //Add to hosts array
     guint host_id = next_host_id++;
