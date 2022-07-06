@@ -42,7 +42,14 @@ static GDBusSignalInfo launch_host_died_signal = {
 
 
 static void host_watch_cb(GPid pid, gint status, gpointer user_data) {
-    status = WEXITSTATUS(status);
+    //Get the process status
+    if(WIFEXITED(status)) {
+        status = WEXITSTATUS(status);
+    } else if(WIFSIGNALED(status)) {
+        status = -WTERMSIG(status);
+    } else if(WIFSTOPPED(status)) {
+        status = -WSTOPSIG(status);
+    }
 
     //Close PID
     g_spawn_close_pid(pid);
