@@ -133,6 +133,19 @@ int main(int argc, char **argv) {
     sensor_vid &= 0xffff;
     sensor_pid &= 0xffff;
 
+    //Ask if one wants to really use this
+    puts(">>>>> WARNING <<<<<");
+    puts("Even though the CLI employs sandboxing, its security is in no way comparable to the one found in the libfprint integration.");
+    puts("A malicious driver could take over your local user account!");
+    puts("This CLI is only intended to be used for debugging and/or small scale tests.");
+    printf("Press 'y' to continue, any key to exit: ");
+    char chr = 0;
+    scanf("%c", &chr);
+    if(chr != 'y') { 
+        puts("Exiting....");
+        return EXIT_FAILURE;
+    }
+
     //Initialize libcrypto
     log_info("Initializing libcrypto...");
     ERR_load_crypto_strings();
