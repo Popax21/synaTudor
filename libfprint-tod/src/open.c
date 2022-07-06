@@ -120,6 +120,8 @@ void fpi_device_tudor_open(FpDevice *dev) {
     //Start the host process
     int sock_fd;
     if(!start_host_process(tdev, &sock_fd, &error)) {
+        g_warning("Failed to start Tudor host process - is tudor-host-launcher.service running? Error: '%s' (%s code %d)", error->message, g_quark_to_string(error->domain), error->code);
+
         g_clear_object(&tdev->dbus_con);
         fpi_device_open_complete(dev, error);
         return;
