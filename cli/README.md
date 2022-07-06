@@ -2,10 +2,10 @@
 This folder contains a simple CLI wrapper for the functionality of the relinked
 driver. It can be used to enroll, verify and identify captured samples of fingerprints.
 
-**WARNING:**
-Even though the CLI employs sandboxing, its security is in no way comparable to the one found in the libfprint integration.
-A malicious driver could take over your local user account!
-This CLI is only intended to be used for debugging and/or small scale tests.
+**WARNING:** Even though the CLI employs sandboxing, its security is in no way
+comparable to the one found in the libfprint integration. A malicious driver
+could take over your local user account! This CLI is only intended to be used
+for debugging and/or small scale tests.
 
 ## Usage
 Start the wrapper using `sudo ../out/tudor_cli <path to data store file> <flags>`. The
