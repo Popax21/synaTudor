@@ -97,15 +97,22 @@ static void setup_seccomp(int *notif_fd) {
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_exit, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_exit_group, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_rt_sigreturn, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_getpid, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_gettid, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_NOTIFY, SYS_open, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_NOTIFY, SYS_openat, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_NOTIFY, SYS_openat2, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_close, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_read, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_write, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_fstat, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_newfstatat, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_sendmsg, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_recvmsg, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_brk, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_mmap, 1, SCMP_A3_32(SCMP_CMP_MASKED_EQ, MAP_PRIVATE | MAP_ANONYMOUS, MAP_PRIVATE | MAP_ANONYMOUS)));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_munmap, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_mprotect, 0));
 
     //Load policy
     cant_fail(seccomp_load(scmp_ctx));
