@@ -136,6 +136,7 @@ void fpi_device_tudor_open(FpDevice *dev) {
         fpi_device_open_complete(dev, error);
         return;
     }
+    g_socket_set_timeout(tdev->ipc_socket, IPC_TIMEOUT_SECS);
     tdev->ipc_cancel = g_cancellable_new();
 
     //Send the init message
