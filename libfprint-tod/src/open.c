@@ -143,7 +143,7 @@ void fpi_device_tudor_open(FpDevice *dev) {
     tdev->send_msg->size = sizeof(struct ipc_msg_init); 
     tdev->send_msg->init = (struct ipc_msg_init) {
         .type = IPC_MSG_INIT,
-        .log_level = LOG_INFO,
+        .log_level = LOG_DEBUG,
         .usb_bus = g_usb_device_get_bus(usb_dev),
         .usb_addr = g_usb_device_get_address(usb_dev)
     };
