@@ -10,11 +10,12 @@
 
 enum ipc_msg_type {
     IPC_MSG_INIT,
-    IPC_MSG_SANDBOX,
     IPC_MSG_READY,
     IPC_MSG_SHUTDOWN,
     IPC_MSG_ACK,
     IPC_MSG_CANCEL,
+
+    IPC_MSG_SBOX_OPEN,
 
     IPC_MSG_LOAD_PDATA,
     IPC_MSG_RESP_LOAD_PDATA,
@@ -32,6 +33,7 @@ enum ipc_msg_type {
     IPC_MSG_RESP_IDENTIFY
 };
 
+#define IPC_SBOX_FILE_NAME_SIZE 1024
 #define IPC_SENSOR_NAME_SIZE 64
 #define IPC_MAX_PDATA_SIZE 4096
 
@@ -43,6 +45,13 @@ struct ipc_msg_init {
 
     enum log_level log_level;
     uint8_t usb_bus, usb_addr;
+};
+
+struct ipc_msg_sbox_open {
+    enum ipc_msg_type type;
+
+    char file_path[IPC_SBOX_FILE_NAME_SIZE];
+    int flags;
 };
 
 struct ipc_msg_load_pdata {

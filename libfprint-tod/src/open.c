@@ -1,6 +1,7 @@
 #include <sys/socket.h>
 #include "open.h"
 #include "ipc.h"
+#include "seccomp.h"
 
 static void dispose_dev(FpiDeviceTudor *tdev) {
     //Kill the host process (even though the process might have died already, we still need to tell the launcher to free the associated resources)
@@ -14,12 +15,6 @@ static void dispose_dev(FpiDeviceTudor *tdev) {
     g_clear_object(&tdev->ipc_cancel);
     g_clear_object(&tdev->ipc_socket);
     g_clear_object(&tdev->dbus_con);
-
-    //Close the SECCOMP notify FD
-    if(tdev->host_seccomp_fd >= 0) {
-        g_assert_no_errno(close(tdev->host_seccomp_fd));
-        tdev->host_seccomp_fd = -1;
-    }
 
     g_debug("Disposed tudor device resources");
 }
@@ -61,25 +56,10 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
 
     //Handle message
     switch(msg->type) {
-        case IPC_MSG_SANDBOX: {
-            if(tdev->host_seccomp_fd >= 0) {
-                error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Recevied multiple SANDBOX IPC messages");
-                goto error;
-            }
-
-            //Steal the SECCOMP notify FD
-            int notify_fd = ipc_msg_buf_steal_fd(msg);
-            if(notify_fd < 0) {
-                error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Received SANDBOX IPC message without attached FD");
-                goto error;
-            }
-            tdev->host_seccomp_fd = notify_fd;
-            g_debug("Acquired Tudor host ID %u SECCOMP notifcation FD %d", tdev->host_id, notify_fd);
-
-            //TODO Monitor FD
-
-            //Receive further messages
-            recv_ipc_msg(tdev, open_recv_cb, NULL);
+        case IPC_MSG_SBOX_OPEN: {
+            g_warning("Tudor host process ID %d tried to open file '%s' flags %d", tdev->host_id, msg->sbox_open.file_path, msg->sbox_open.flags);
+            error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Attempted open of prohibited file '%s'", msg->sbox_open.file_path);
+            goto error;
         } break;
         case IPC_MSG_READY: {
             //Complete the open procedure
@@ -110,9 +90,8 @@ void fpi_device_tudor_open(FpDevice *dev) {
         return;
     }
 
-    //Initialize host fields
+    //Initialize fields
     tdev->host_has_id = false;
-    tdev->host_seccomp_fd = -1;
 
     //Register host process monitor
     register_host_process_monitor(tdev, host_exit_cb);

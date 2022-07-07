@@ -7,11 +7,12 @@ tudor_tod_src = [
 
 libfprint_tod_dep = dependency('libfprint-2-tod-1')
 udev_dep = dependency('udev')
+libseccomp_dep = dependency('libseccomp')
 
 tudor_tod = shared_module('tudor_tod',
     sources: tudor_tod_src,
     c_args: '-Wno-missing-braces',
-    dependencies: libfprint_tod_dep,
+    dependencies: [libfprint_tod_dep, libseccomp_dep],
     include_directories: [libtudor_inc, tudor_host_inc, tudor_host_launcher_inc],
     install: true,
     install_dir: libfprint_tod_dep.get_variable(pkgconfig: 'tod_driversdir')
