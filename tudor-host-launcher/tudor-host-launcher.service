@@ -18,4 +18,3 @@ PrivateTmp=true
 PrivateDevices=true
 
 RestrictRealtime=true
-RestrictAddressFamilies=AF_UNIX
