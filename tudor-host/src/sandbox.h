@@ -4,6 +4,8 @@
 #define SANDBOX_UID 3333
 #define SANDBOX_GID 3333
 
-void activate_sandbox(int *seccomp_notif_fd);
+extern int sandbox_ipc_sock;
+
+void activate_sandbox();
 
 #endif

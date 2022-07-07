@@ -12,9 +12,31 @@
 #include <seccomp.h>
 #include <tudor/log.h>
 #include "sandbox.h"
+#include "ipc.h"
 
 #define strfy(x) _strfy(x)
 #define _strfy(x) #x
+
+int sandbox_ipc_sock;
+
+int open(const char *path, int flags) {
+    log_debug("Hooked open call for file '%s'", path);
+
+    //Send the host module a message
+    struct ipc_msg_sbox_open open_msg = {
+        .type = IPC_MSG_SBOX_OPEN,
+        .flags = flags
+    };
+    strncpy(open_msg.file_path, path, IPC_SBOX_FILE_NAME_SIZE);
+    ipc_send_msg(sandbox_ipc_sock, &open_msg, sizeof(open_msg));
+
+    //Receive the response
+    enum ipc_msg_type type;
+    int open_fd;
+    ipc_recv_msg(sandbox_ipc_sock, &type, IPC_MSG_ACK, sizeof(type), sizeof(type), &open_fd);
+
+    return open_fd;
+}
 
 static void write_to(const char *fname, const char *cnts) {
     int len = strlen(cnts);
@@ -88,7 +110,7 @@ static void unmount_root() {
     cant_fail(chdir("/"));
 }
 
-static void setup_seccomp(int *notif_fd) {
+static void setup_seccomp() {
     //Initialize filter
     scmp_filter_ctx scmp_ctx = seccomp_init(SCMP_ACT_KILL_PROCESS);
     if(!scmp_ctx) abort_perror("Couldn't initialize the SECCOMP context");
@@ -116,12 +138,10 @@ static void setup_seccomp(int *notif_fd) {
 
     //Load policy
     cant_fail(seccomp_load(scmp_ctx));
-    cant_fail(*notif_fd = seccomp_notify_fd(scmp_ctx));
-
     seccomp_release(scmp_ctx);
 }
 
-void activate_sandbox(int *seccomp_notif_fd) {
+void activate_sandbox() {
     //Setup UID / GID
     setup_uid_gid();
 
@@ -142,5 +162,5 @@ void activate_sandbox(int *seccomp_notif_fd) {
     cant_fail(cap_free(cap));
 
     //Restrict all syscalls using SECCOMP, only keep the ones required to communicate with the module
-    setup_seccomp(seccomp_notif_fd);
+    setup_seccomp();
 }

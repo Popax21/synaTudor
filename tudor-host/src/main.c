@@ -13,7 +13,7 @@
 
 static void recv_init_msg(int sock, struct usb_dev_params *usb_params) {
     struct ipc_msg_init init_msg;
-    ipc_recv_msg(sock, &init_msg, IPC_MSG_INIT, sizeof(init_msg), sizeof(init_msg));
+    ipc_recv_msg(sock, &init_msg, IPC_MSG_INIT, sizeof(init_msg), sizeof(init_msg), NULL);
 
     LOG_LEVEL = init_msg.log_level;
     *usb_params = (struct usb_dev_params) {
@@ -31,35 +31,6 @@ static void recv_init_msg(int sock, struct usb_dev_params *usb_params) {
         case LOG_WARN: libusb_set_option(NULL, LIBUSB_OPTION_LOG_LEVEL, LIBUSB_LOG_LEVEL_WARNING); break;
         case LOG_ERROR: libusb_set_option(NULL, LIBUSB_OPTION_LOG_LEVEL, LIBUSB_LOG_LEVEL_ERROR); break;
     }
-}
-
-static void transfer_sandbox_notif_fd(int sock, int notif_fd) {
-    enum ipc_msg_type msg_payload = IPC_MSG_SANDBOX;
-    struct iovec iov = {
-        .iov_base = &msg_payload,
-        .iov_len = sizeof(msg_payload)
-    };
-
-    struct {
-        struct cmsghdr hdr;
-        int fd;
-    } cmsg = {
-        .hdr.cmsg_level = SOL_SOCKET,
-        .hdr.cmsg_type = SCM_RIGHTS,
-        .hdr.cmsg_len = CMSG_LEN(sizeof(int)),
-        .fd = notif_fd
-    };
-
-    struct msghdr msg_hdr = {
-        .msg_name = NULL,
-        .msg_namelen = 0,
-        .msg_iov = &iov,
-        .msg_iovlen = 1,
-        .msg_control = &cmsg,
-        .msg_controllen = sizeof(cmsg)
-    };
-
-    cant_fail(sendmsg(sock, &msg_hdr, 0));
 }
 
 int main() {
@@ -99,9 +70,8 @@ int main() {
     log_info("Initialized libusb");
 
     //Activate sandbox
-    int seccomp_notif_fd;
-    activate_sandbox(&seccomp_notif_fd);
-    transfer_sandbox_notif_fd(sock, seccomp_notif_fd);
+    sandbox_ipc_sock = sock;
+    activate_sandbox();
     log_info("Activated sandbox");
 
     //Initialize driver
