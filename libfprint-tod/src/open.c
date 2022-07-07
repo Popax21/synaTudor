@@ -1,7 +1,7 @@
 #include <sys/socket.h>
 #include "open.h"
 #include "ipc.h"
-#include "seccomp.h"
+#include "sandbox.h"
 
 static void dispose_dev(FpiDeviceTudor *tdev) {
     //Kill the host process (even though the process might have died already, we still need to tell the launcher to free the associated resources)
@@ -57,9 +57,18 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
     //Handle message
     switch(msg->type) {
         case IPC_MSG_SBOX_OPEN: {
-            g_warning("Tudor host process ID %d tried to open file '%s' flags %d", tdev->host_id, msg->sbox_open.file_path, msg->sbox_open.flags);
-            error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Attempted open of prohibited file '%s'", msg->sbox_open.file_path);
-            goto error;
+            g_debug("Tudor host process ID %d tried to open file '%s' flags %d", tdev->host_id, msg->sbox_open.file_path, msg->sbox_open.flags);
+
+            //Open the file for the sandboxed process
+            int fd = sandbox_open_file(tdev, msg->sbox_open.file_path, msg->sbox_open.flags, &error);
+            if(fd < 0) goto error;
+
+            //Respond with FD
+            tdev->send_msg->transfer_fd = fd;
+            tdev->send_msg->size = sizeof(enum ipc_msg_type);
+            tdev->send_msg->type = IPC_MSG_ACK;
+            if(!send_ipc_msg(tdev, tdev->send_msg, &error)) goto error;
+            g_assert_no_errno(close(fd));
         } break;
         case IPC_MSG_READY: {
             //Complete the open procedure

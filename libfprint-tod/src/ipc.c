@@ -206,7 +206,23 @@ bool send_ipc_msg(FpiDeviceTudor *tdev, IPCMessageBuf *msg, GError **error) {
         .size = msg->size
     };
 
-    ssize_t num_written = g_socket_send_message(tdev->ipc_socket, NULL, &iv, 1, NULL, 0, 0, tdev->ipc_cancel, error);
+    GSocketControlMessage *cmsgs[1];
+    int num_cmsgs = 0;
+    if(msg->transfer_fd >= 0) {
+        GUnixFDMessage *fdmsg = G_UNIX_FD_MESSAGE(g_unix_fd_message_new());
+        if(!g_unix_fd_message_append_fd(fdmsg, msg->transfer_fd, error)) {
+            g_object_unref(fdmsg);
+            return false;
+        }
+
+        cmsgs[0] = G_SOCKET_CONTROL_MESSAGE(fdmsg);
+        num_cmsgs = 1;
+    }
+
+    ssize_t num_written = g_socket_send_message(tdev->ipc_socket, NULL, &iv, 1, cmsgs, num_cmsgs, 0, tdev->ipc_cancel, error);
+
+    for(int i = 0; i < num_cmsgs; i++) g_object_unref(cmsgs[i]);
+
     if(num_written < 0) {
         check_host_proc_dead(tdev, error);
         return false;
