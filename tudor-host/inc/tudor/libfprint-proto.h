@@ -16,6 +16,7 @@ enum ipc_msg_type {
     IPC_MSG_CANCEL,
 
     IPC_MSG_SBOX_OPEN,
+    IPC_MSG_RESP_SBOX_OPEN,
 
     IPC_MSG_LOAD_PDATA,
     IPC_MSG_RESP_LOAD_PDATA,
@@ -52,6 +53,12 @@ struct ipc_msg_sbox_open {
 
     char file_path[IPC_SBOX_FILE_NAME_SIZE];
     int flags;
+};
+
+struct ipc_msg_resp_sbox_open {
+    enum ipc_msg_type type;
+
+    int error;
 };
 
 struct ipc_msg_load_pdata {

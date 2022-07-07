@@ -57,18 +57,23 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
     //Handle message
     switch(msg->type) {
         case IPC_MSG_SBOX_OPEN: {
-            g_debug("Tudor host process ID %d tried to open file '%s' flags %d", tdev->host_id, msg->sbox_open.file_path, msg->sbox_open.flags);
-
             //Open the file for the sandboxed process
+            error = NULL;
             int fd = sandbox_open_file(tdev, msg->sbox_open.file_path, msg->sbox_open.flags, &error);
-            if(fd < 0) goto error;
+            if(fd < 0 && error) goto error;
 
             //Respond with FD
             tdev->send_msg->transfer_fd = fd;
-            tdev->send_msg->size = sizeof(enum ipc_msg_type);
-            tdev->send_msg->type = IPC_MSG_ACK;
+            tdev->send_msg->size = sizeof(struct ipc_msg_resp_sbox_open);
+            tdev->send_msg->resp_sbox_open = (struct ipc_msg_resp_sbox_open) {
+                .type = IPC_MSG_RESP_SBOX_OPEN,
+                .error = (fd < 0) ? -fd : 0
+            };
             if(!send_ipc_msg(tdev, tdev->send_msg, &error)) goto error;
-            g_assert_no_errno(close(fd));
+            if(fd >= 0) g_assert_no_errno(close(fd));
+
+            //Receive further IPC messages
+            recv_ipc_msg(tdev, open_recv_cb, NULL);
         } break;
         case IPC_MSG_READY: {
             //Complete the open procedure
@@ -149,7 +154,7 @@ void fpi_device_tudor_open(FpDevice *dev) {
         fpi_device_open_complete(dev, error);
         return;
     }
-    g_debug("Initialized tudor host process ID %d", tdev->host_id);
+    g_debug("Initialized tudor host process ID %d with USB bus 0x%02x addr 0x%02x", tdev->host_id, tdev->send_msg->init.usb_bus, tdev->send_msg->init.usb_addr);
 
     //Receive IPC messages
     recv_ipc_msg(tdev, open_recv_cb, NULL);

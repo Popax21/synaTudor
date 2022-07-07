@@ -31,10 +31,11 @@ int open(const char *path, int flags) {
     ipc_send_msg(sandbox_ipc_sock, &open_msg, sizeof(open_msg));
 
     //Receive the response
-    enum ipc_msg_type type;
+    struct ipc_msg_resp_sbox_open resp_msg;
     int open_fd;
-    ipc_recv_msg(sandbox_ipc_sock, &type, IPC_MSG_ACK, sizeof(type), sizeof(type), &open_fd);
+    ipc_recv_msg(sandbox_ipc_sock, &resp_msg, IPC_MSG_RESP_SBOX_OPEN, sizeof(resp_msg), sizeof(resp_msg), &open_fd);
 
+    errno = resp_msg.error;
     return open_fd;
 }
 

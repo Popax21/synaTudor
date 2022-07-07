@@ -14,6 +14,7 @@ typedef struct _IPCMessageBuf {
         enum ipc_msg_type type;
         struct ipc_msg_init init;
         struct ipc_msg_sbox_open sbox_open;
+        struct ipc_msg_resp_sbox_open resp_sbox_open;
         struct ipc_msg_add_record add_record;
         struct ipc_msg_del_record del_record;
         struct ipc_msg_enroll enroll;
