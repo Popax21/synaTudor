@@ -20,6 +20,17 @@ static void recv_init_msg(int sock, struct usb_dev_params *usb_params) {
         .bus = init_msg.usb_bus,
         .addr = init_msg.usb_addr
     };
+
+    switch(LOG_LEVEL) {
+        case LOG_VERBOSE:
+        case LOG_DEBUG:
+            setenv("LIBUSB_DEBUG", "1", 1);
+            libusb_set_option(NULL, LIBUSB_OPTION_LOG_LEVEL, LIBUSB_LOG_LEVEL_DEBUG);
+        break;
+        case LOG_INFO: libusb_set_option(NULL, LIBUSB_OPTION_LOG_LEVEL, LIBUSB_LOG_LEVEL_INFO); break;
+        case LOG_WARN: libusb_set_option(NULL, LIBUSB_OPTION_LOG_LEVEL, LIBUSB_LOG_LEVEL_WARNING); break;
+        case LOG_ERROR: libusb_set_option(NULL, LIBUSB_OPTION_LOG_LEVEL, LIBUSB_LOG_LEVEL_ERROR); break;
+    }
 }
 
 static void transfer_sandbox_notif_fd(int sock, int notif_fd) {
@@ -52,6 +63,10 @@ static void transfer_sandbox_notif_fd(int sock, int notif_fd) {
 }
 
 int main() {
+    //Configure stdout/stderr buffering
+    cant_fail(setvbuf(stdout, NULL, _IOLBF, 1024));
+    cant_fail(setvbuf(stderr, NULL, _IOLBF, 1024));
+
     //Check if stdin is a UNIX socket
     struct stat stdin_stat;
     cant_fail(fstat(STDIN_FILENO, &stdin_stat));
