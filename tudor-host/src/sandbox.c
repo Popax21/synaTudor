@@ -6,6 +6,7 @@
 #include <sched.h>
 #include <sys/wait.h>
 #include <sys/syscall.h>
+#include <sys/resource.h>
 #include <sys/capability.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
@@ -17,27 +18,7 @@
 #define strfy(x) _strfy(x)
 #define _strfy(x) #x
 
-static int ipc_sock;
-
-int open(const char *path, int flags) {
-    log_debug("Hooked open call for file '%s'", path);
-
-    //Send the host module a message
-    struct ipc_msg_sbox_open open_msg = {
-        .type = IPC_MSG_SBOX_OPEN,
-        .flags = flags
-    };
-    strncpy(open_msg.file_path, path, IPC_SBOX_FILE_NAME_SIZE);
-    ipc_send_msg(ipc_sock, &open_msg, sizeof(open_msg));
-
-    //Receive the response
-    struct ipc_msg_resp_sbox_open resp_msg;
-    int open_fd;
-    ipc_recv_msg(ipc_sock, &resp_msg, IPC_MSG_RESP_SBOX_OPEN, sizeof(resp_msg), sizeof(resp_msg), &open_fd);
-
-    errno = resp_msg.error;
-    return open_fd;
-}
+int sbox_ipc_sock;
 
 static void write_to(const char *fname, const char *cnts) {
     int len = strlen(cnts);
@@ -98,14 +79,10 @@ static void setup_uid_gid() {
 }
 
 static void unmount_root() {
-    //Create a temporary directory and remount it as a bind mount point
-    char tmpRoot[] = "/tmp/tudorRootXXXXXX";
-    if(!mkdtemp(tmpRoot)) abort_perror("Couldn't create temporary root directory");
-    cant_fail(mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL));
-    cant_fail(mount(tmpRoot, tmpRoot, NULL, MS_BIND | MS_NOSUID | MS_RDONLY, NULL));
-
     //Pivot root
-    cant_fail(chdir(tmpRoot));
+    cant_fail(mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL));
+    cant_fail(mount("/sbin/tudor", "/sbin/tudor", NULL, MS_BIND | MS_NOSUID | MS_RDONLY, NULL));
+    cant_fail(chdir("/sbin/tudor"));
     cant_fail(syscall(SYS_pivot_root, ".", "."));
     cant_fail(umount2(".", MNT_DETACH));
     cant_fail(chdir("/"));
@@ -117,25 +94,39 @@ static void setup_seccomp() {
     if(!scmp_ctx) abort_perror("Couldn't initialize the SECCOMP context");
 
     //Add rules
+    pid_t pid = getpid();
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_exit, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_exit_group, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_kill, 1, SCMP_A0_32(SCMP_CMP_EQ, pid)));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_tkill, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_tgkill, 1, SCMP_A0_32(SCMP_CMP_EQ, pid)));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_rt_sigprocmask, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_rt_sigreturn, 0));
+
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_getpid, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_gettid, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_NOTIFY, SYS_open, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_NOTIFY, SYS_openat, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_NOTIFY, SYS_openat2, 0));
+
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_brk, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_mmap, 1, SCMP_A3_32(SCMP_CMP_MASKED_EQ, MAP_PRIVATE | MAP_ANONYMOUS, MAP_PRIVATE | MAP_ANONYMOUS)));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_munmap, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_mprotect, 0));
+
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_futex, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_futex_waitv, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_eventfd, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_eventfd2, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_timerfd_create, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_timerfd_gettime, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_timerfd_settime, 0));
+
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_close, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_read, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_write, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_fstat, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_newfstatat, 0));
+
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_sendmsg, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_recvmsg, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_brk, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_mmap, 1, SCMP_A3_32(SCMP_CMP_MASKED_EQ, MAP_PRIVATE | MAP_ANONYMOUS, MAP_PRIVATE | MAP_ANONYMOUS)));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_munmap, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_mprotect, 0));
 
     //Load policy
     cant_fail(seccomp_load(scmp_ctx));
@@ -143,8 +134,11 @@ static void setup_seccomp() {
 }
 
 void activate_sandbox(int sock) {
-    ipc_sock = sock;
+    sbox_ipc_sock = sock;
 
+    //Query the system uname
+    cant_fail(syscall(SYS_uname, &sbox_utsname));
+    strncpy(sbox_utsname.nodename, "tudor-host", sizeof(sbox_utsname.nodename)); //Don't leak the node name
 
     //Setup resource limits
     cant_fail(setrlimit(RLIMIT_DATA, &(struct rlimit) { .rlim_cur = SANDBOX_DATA_LIMIT, .rlim_max = SANDBOX_DATA_LIMIT }));
