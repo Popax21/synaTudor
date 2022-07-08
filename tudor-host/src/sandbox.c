@@ -145,6 +145,13 @@ static void setup_seccomp() {
 void activate_sandbox(int sock) {
     ipc_sock = sock;
 
+
+    //Setup resource limits
+    cant_fail(setrlimit(RLIMIT_DATA, &(struct rlimit) { .rlim_cur = SANDBOX_DATA_LIMIT, .rlim_max = SANDBOX_DATA_LIMIT }));
+    cant_fail(setrlimit(RLIMIT_STACK, &(struct rlimit) { .rlim_cur = SANDBOX_STACK_LIMIT, .rlim_max = SANDBOX_STACK_LIMIT }));
+    cant_fail(setrlimit(RLIMIT_NOFILE, &(struct rlimit) { .rlim_cur = SANDBOX_MAX_FDS, .rlim_max = SANDBOX_MAX_FDS }));
+    cant_fail(setrlimit(RLIMIT_FSIZE, &(struct rlimit) { .rlim_cur = 0, .rlim_max = 0 }));
+
     //Setup UID / GID
     setup_uid_gid();
 
