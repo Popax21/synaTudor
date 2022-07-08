@@ -53,9 +53,13 @@ int main() {
         log_error("The given socket isn't a UNIX socket!");
         return EXIT_FAILURE;
     }
+    int sock = STDIN_FILENO;
+
+    //Activate sandbox
+    activate_sandbox(sock);
+    log_info("Activated sandbox");
 
     //Receive the init message
-    int sock = STDIN_FILENO;
     struct usb_dev_params usb_params;
     recv_init_msg(sock, &usb_params);
     log_info("Received and handled init message");
@@ -68,11 +72,6 @@ int main() {
     //Initialize libusb
     init_libusb();
     log_info("Initialized libusb");
-
-    //Activate sandbox
-    sandbox_ipc_sock = sock;
-    activate_sandbox();
-    log_info("Activated sandbox");
 
     //Initialize driver
     if(!tudor_init()) {

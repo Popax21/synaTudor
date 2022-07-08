@@ -17,7 +17,7 @@
 #define strfy(x) _strfy(x)
 #define _strfy(x) #x
 
-int sandbox_ipc_sock;
+static int ipc_sock;
 
 int open(const char *path, int flags) {
     log_debug("Hooked open call for file '%s'", path);
@@ -28,12 +28,12 @@ int open(const char *path, int flags) {
         .flags = flags
     };
     strncpy(open_msg.file_path, path, IPC_SBOX_FILE_NAME_SIZE);
-    ipc_send_msg(sandbox_ipc_sock, &open_msg, sizeof(open_msg));
+    ipc_send_msg(ipc_sock, &open_msg, sizeof(open_msg));
 
     //Receive the response
     struct ipc_msg_resp_sbox_open resp_msg;
     int open_fd;
-    ipc_recv_msg(sandbox_ipc_sock, &resp_msg, IPC_MSG_RESP_SBOX_OPEN, sizeof(resp_msg), sizeof(resp_msg), &open_fd);
+    ipc_recv_msg(ipc_sock, &resp_msg, IPC_MSG_RESP_SBOX_OPEN, sizeof(resp_msg), sizeof(resp_msg), &open_fd);
 
     errno = resp_msg.error;
     return open_fd;
@@ -142,7 +142,9 @@ static void setup_seccomp() {
     seccomp_release(scmp_ctx);
 }
 
-void activate_sandbox() {
+void activate_sandbox(int sock) {
+    ipc_sock = sock;
+
     //Setup UID / GID
     setup_uid_gid();
 
