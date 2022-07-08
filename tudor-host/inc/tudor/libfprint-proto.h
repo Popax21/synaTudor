@@ -17,6 +17,8 @@ enum ipc_msg_type {
 
     IPC_MSG_SBOX_OPEN,
     IPC_MSG_RESP_SBOX_OPEN,
+    IPC_MSG_SBOX_LSDIR,
+    IPC_MSG_RESP_SBOX_LSDIR,
 
     IPC_MSG_LOAD_PDATA,
     IPC_MSG_RESP_LOAD_PDATA,
@@ -34,7 +36,9 @@ enum ipc_msg_type {
     IPC_MSG_RESP_IDENTIFY
 };
 
-#define IPC_SBOX_FILE_NAME_SIZE 1024
+#define IPC_SBOX_PATH_SIZE 128
+#define IPC_SBOX_MAX_DIR_ENTRIES 32
+
 #define IPC_SENSOR_NAME_SIZE 64
 #define IPC_MAX_PDATA_SIZE 4096
 
@@ -51,7 +55,7 @@ struct ipc_msg_init {
 struct ipc_msg_sbox_open {
     enum ipc_msg_type type;
 
-    char file_path[IPC_SBOX_FILE_NAME_SIZE];
+    char file_path[IPC_SBOX_PATH_SIZE];
     int flags;
 };
 
@@ -59,6 +63,24 @@ struct ipc_msg_resp_sbox_open {
     enum ipc_msg_type type;
 
     int error;
+};
+
+struct ipc_msg_sbox_lsdir {
+    enum ipc_msg_type type;
+
+    char dir_path[IPC_SBOX_PATH_SIZE];
+};
+
+struct ipc_msg_resp_sbox_lsdir {
+    enum ipc_msg_type type;
+
+    int error;
+
+    struct {
+        char name[IPC_SBOX_PATH_SIZE];
+        char type;
+    } entries[IPC_SBOX_MAX_DIR_ENTRIES];
+    int num_entries;
 };
 
 struct ipc_msg_load_pdata {

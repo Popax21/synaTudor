@@ -10,7 +10,7 @@ int open(const char *path, int flags) {
         .type = IPC_MSG_SBOX_OPEN,
         .flags = flags
     };
-    strncpy(open_msg.file_path, path, IPC_SBOX_FILE_NAME_SIZE);
+    strncpy(open_msg.file_path, path, IPC_SBOX_PATH_SIZE);
     ipc_send_msg(sbox_ipc_sock, &open_msg, sizeof(open_msg));
 
     //Receive the response
