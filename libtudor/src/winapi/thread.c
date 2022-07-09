@@ -26,6 +26,7 @@ struct win_thread {
 static void thread_destr(struct win_thread *thread) {
     //Free memory
     cant_fail_ret(pthread_mutex_lock(&thread->lock));
+    cant_fail_ret(pthread_mutex_unlock(&thread->lock));
     cant_fail_ret(pthread_mutex_destroy(&thread->lock));
     cant_fail_ret(pthread_cond_destroy(&thread->suspend_cond));
     free(thread);
