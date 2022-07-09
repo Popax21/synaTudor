@@ -11,6 +11,7 @@
 #include <sys/syscall.h>
 #include <sys/resource.h>
 #include <sys/capability.h>
+#include <sys/utsname.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
 #include <linux/netlink.h>
@@ -22,7 +23,13 @@
 #define strfy(x) _strfy(x)
 #define _strfy(x) #x
 
-int sbox_ipc_sock;
+static int ipc_sock;
+static struct utsname sbox_utsname;
+
+int uname(struct utsname *oname) {
+    *oname = sbox_utsname;
+    return 0;
+}
 
 static void write_to(const char *fname, const char *cnts) {
     int len = strlen(cnts);
@@ -133,14 +140,17 @@ static void setup_seccomp() {
 
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SYS_access, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SYS_stat, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_fstat, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SYS_statx, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_fstat, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_newfstatat, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SYS_statfs, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SYS_fstatfs, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SYS_name_to_handle_at, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SYS_open_by_handle_at, 0));
 
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(EPERM), SYS_open, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(EPERM), SYS_openat, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(EPERM), SYS_openat2, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_fcntl, 1, SCMP_A1_32(SCMP_CMP_EQ, F_GETFD)));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_fcntl, 1, SCMP_A1_32(SCMP_CMP_EQ, F_SETFD)));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_fcntl, 1, SCMP_A1_32(SCMP_CMP_EQ, F_GETFL)));
@@ -152,7 +162,7 @@ static void setup_seccomp() {
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_writev, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_close, 0));
 
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_socket, 2, SCMP_A0_32(SCMP_CMP_EQ, AF_NETLINK), SCMP_A2_32(SCMP_CMP_EQ, NETLINK_KOBJECT_UEVENT))); //Required for udev
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_socket, 2, SCMP_A0_32(SCMP_CMP_EQ, AF_NETLINK), SCMP_A2_32(SCMP_CMP_EQ, NETLINK_KOBJECT_UEVENT))); //Required for udev to properly initialize
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_getsockname, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(0), SYS_getsockopt, 2, SCMP_A1_32(SCMP_CMP_EQ, SOL_SOCKET), SCMP_A2_32(SCMP_CMP_EQ, SO_PASSCRED)));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(0), SYS_getsockopt, 2, SCMP_A1_32(SCMP_CMP_EQ, SOL_SOCKET), SCMP_A2_32(SCMP_CMP_EQ, SO_ATTACH_FILTER)));
@@ -168,7 +178,7 @@ static void setup_seccomp() {
 }
 
 void activate_sandbox(int sock) {
-    sbox_ipc_sock = sock;
+    ipc_sock = sock;
 
     //Query the system uname
     cant_fail(syscall(SYS_uname, &sbox_utsname));

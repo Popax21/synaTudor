@@ -2,10 +2,7 @@ tudor_host_src = [
     'src/main.c',
     'src/sandbox.c',
     'src/usb.c',
-    'src/ipc.c',
-    'src/sbox/uname.c',
-    'src/sbox/open.c',
-    'src/sbox/dir.c'
+    'src/ipc.c'
 ]
 
 thread_dep = dependency('threads')
