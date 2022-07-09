@@ -111,6 +111,7 @@ static void setup_uid_gid() {
 }
 
 static void unmount_root() {
+#ifdef UNMOUNTFS
     //Pivot root
     cant_fail(mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL));
     cant_fail(mount("/sbin/tudor", "/sbin/tudor", NULL, MS_BIND | MS_NOSUID | MS_RDONLY, NULL));
@@ -118,6 +119,7 @@ static void unmount_root() {
     cant_fail(syscall(SYS_pivot_root, ".", "."));
     cant_fail(umount2(".", MNT_DETACH));
     cant_fail(chdir("/"));
+#endif
 }
 
 static void setup_seccomp() {

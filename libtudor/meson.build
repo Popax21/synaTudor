@@ -80,14 +80,14 @@ driver_dll_blobs = generator(find_program('ld'),
     arguments: ['-r', '-b', 'binary', '-o', '@OUTPUT@', '@INPUT@']
 ).process([driver_dlls])
 
-libtudor_dbg_flags = []
+libtudor_flags = []
 
 if get_option('DBGIMPORT')
-    libtudor_dbg_flags += ['-DDBGIMPORT']
+    libtudor_flags += ['-DDBGIMPORT']
 endif
 
 if get_option('DBGWDF')
-    libtudor_dbg_flags += ['-DDBGWDF']
+    libtudor_flags += ['-DDBGWDF']
 endif
 
 thread_dep = dependency('threads')
@@ -98,8 +98,8 @@ libtudor_inc = include_directories('inc')
 
 libtudor = shared_library('tudor', [libtudor_src, driver_dll_blobs],
     dependencies: [thread_dep, libcrypto_dep, libusb_dep],
-    c_args: ['-D_GNU_SOURCE'] + libtudor_dbg_flags,
-    link_args: ['-Wl,-z,noexecstack', '-Wl,--copy-dt-needed-entries'] + libtudor_dbg_flags,
+    c_args: ['-D_GNU_SOURCE'] + libtudor_flags,
+    link_args: ['-Wl,-z,noexecstack', '-Wl,--copy-dt-needed-entries'],
     include_directories: ['src', libtudor_inc],
     install: true,
     install_dir: INSTALL_DIR
