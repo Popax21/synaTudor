@@ -150,11 +150,11 @@ static void setup_seccomp() {
 
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_socket, 2, SCMP_A0_32(SCMP_CMP_EQ, AF_NETLINK), SCMP_A2_32(SCMP_CMP_EQ, NETLINK_KOBJECT_UEVENT))); //Required for udev
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_getsockname, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_getsockopt, 2, SCMP_A1_32(SCMP_CMP_EQ, SOL_SOCKET), SCMP_A2_32(SCMP_CMP_EQ, SO_PASSCRED)));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_getsockopt, 2, SCMP_A1_32(SCMP_CMP_EQ, SOL_SOCKET), SCMP_A2_32(SCMP_CMP_EQ, SO_ATTACH_FILTER)));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_setsockopt, 2, SCMP_A1_32(SCMP_CMP_EQ, SOL_SOCKET), SCMP_A2_32(SCMP_CMP_EQ, SO_PASSCRED)));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_setsockopt, 2, SCMP_A1_32(SCMP_CMP_EQ, SOL_SOCKET), SCMP_A2_32(SCMP_CMP_EQ, SO_ATTACH_FILTER)));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_bind, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(0), SYS_getsockopt, 2, SCMP_A1_32(SCMP_CMP_EQ, SOL_SOCKET), SCMP_A2_32(SCMP_CMP_EQ, SO_PASSCRED)));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(0), SYS_getsockopt, 2, SCMP_A1_32(SCMP_CMP_EQ, SOL_SOCKET), SCMP_A2_32(SCMP_CMP_EQ, SO_ATTACH_FILTER)));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(0), SYS_setsockopt, 2, SCMP_A1_32(SCMP_CMP_EQ, SOL_SOCKET), SCMP_A2_32(SCMP_CMP_EQ, SO_PASSCRED)));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(0), SYS_setsockopt, 2, SCMP_A1_32(SCMP_CMP_EQ, SOL_SOCKET), SCMP_A2_32(SCMP_CMP_EQ, SO_ATTACH_FILTER)));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(0), SYS_bind, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_sendmsg, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_recvmsg, 0));
 
