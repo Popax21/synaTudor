@@ -9,6 +9,7 @@
 #define SANDBOX_DATA_LIMIT (32 * 1024 * 1024)
 #define SANDBOX_STACK_LIMIT (64 * 1024)
 #define SANDBOX_MAX_FDS 16
+#define SANDBOX_MAX_THREADS 4
 
 extern int sbox_ipc_sock;
 extern struct utsname sbox_utsname;
