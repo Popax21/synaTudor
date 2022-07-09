@@ -2,11 +2,6 @@
 #include "open.h"
 #include "ipc.h"
 
-static int get_usb_dev_fd(GUsbDevice *dev) {
-    //Please don't look at this...
-    return ((int**) dev->priv)[3][10 + 2 + 4 + 2 + 1 + 1];
-}
-
 static void dispose_dev(FpiDeviceTudor *tdev) {
     //Kill the host process (even though the process might have died already, we still need to tell the launcher to free the associated resources)
     GError *error = NULL;
@@ -85,7 +80,7 @@ void fpi_device_tudor_open(FpDevice *dev) {
     //Get a USB device FD, and close the device, as it conflicts with the host's device usage
     int usb_fd;
     GUsbDevice *usb_dev = fpi_device_get_usb_device(dev);
-    g_assert_no_errno(usb_fd = dup(get_usb_dev_fd(usb_dev)));
+    g_assert_no_errno(usb_fd = dup(((int**) usb_dev->priv)[3][10 + 2 + 4 + 2 + 1 + 1])); //Cursed offset magic
     g_usb_device_close(usb_dev, NULL);
 
     //Open a DBus connection
@@ -148,6 +143,17 @@ void fpi_device_tudor_open(FpDevice *dev) {
     recv_ipc_msg(tdev, open_recv_cb, NULL);
 }
 
+static void close_timeout_cb(FpDevice *dev, gpointer user_data) {
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
+
+    if(fpi_device_get_current_action(dev) == FPI_DEVICE_ACTION_CLOSE) {
+        g_warning("Tudor host process hit shut down timeout!");
+        dispose_dev(tdev);
+        g_usb_device_open(fpi_device_get_usb_device(dev), NULL);
+        fpi_device_close_complete(dev, NULL);
+    }
+}
+
 void fpi_device_tudor_close(FpDevice *dev) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
 
@@ -170,4 +176,7 @@ void fpi_device_tudor_close(FpDevice *dev) {
         fpi_device_close_complete(dev, error);
         return;
     }
+
+    //Add timeout
+    fpi_device_add_timeout(dev, IPC_TIMEOUT_SECS * 1000, close_timeout_cb, NULL, NULL);
 }
