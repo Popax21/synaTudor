@@ -11,12 +11,18 @@ typedef struct _IPCMessageBuf {
     size_t size;
     union {
         guint8 data[IPC_MAX_MESSAGE_SIZE];
+
         enum ipc_msg_type type;
         struct ipc_msg_init init;
+
         struct ipc_msg_sbox_open sbox_open;
         struct ipc_msg_resp_sbox_open resp_sbox_open;
+        struct ipc_msg_sbox_lsdir sbox_lsdir;
+        struct ipc_msg_resp_sbox_lsdir resp_sbox_lsdir;
+
         struct ipc_msg_add_record add_record;
         struct ipc_msg_del_record del_record;
+
         struct ipc_msg_enroll enroll;
         struct ipc_msg_resp_enroll resp_enroll;
         struct ipc_msg_verify verify;

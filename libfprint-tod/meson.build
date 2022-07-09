@@ -12,7 +12,7 @@ libseccomp_dep = dependency('libseccomp')
 
 tudor_tod = shared_module('tudor_tod',
     sources: tudor_tod_src,
-    c_args: '-Wno-missing-braces',
+    c_args: ['-D_GNU_SOURCE', '-Wno-missing-braces'],
     dependencies: [libfprint_tod_dep, libseccomp_dep],
     include_directories: [libtudor_inc, tudor_host_inc, tudor_host_launcher_inc],
     install: true,

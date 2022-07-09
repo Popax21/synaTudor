@@ -57,10 +57,10 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
     //Handle message
     switch(msg->type) {
         case IPC_MSG_SBOX_OPEN: {
-            //Open the file for the sandboxed process
+            //Handle the file open request
             error = NULL;
             int fd = sandbox_open_file(tdev, msg->sbox_open.file_path, msg->sbox_open.flags, &error);
-            if(fd < 0 && error) goto error;
+            if(error) goto error;
 
             //Respond with FD
             tdev->send_msg->transfer_fd = fd;
@@ -69,8 +69,31 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
                 .type = IPC_MSG_RESP_SBOX_OPEN,
                 .error = (fd < 0) ? -fd : 0
             };
-            if(!send_ipc_msg(tdev, tdev->send_msg, &error)) goto error;
+
+            bool suc = send_ipc_msg(tdev, tdev->send_msg, &error);
             if(fd >= 0) g_assert_no_errno(close(fd));
+            if(!suc) goto error;
+
+            //Receive further IPC messages
+            recv_ipc_msg(tdev, open_recv_cb, NULL);
+        } break;
+        case IPC_MSG_SBOX_LSDIR: {
+            //Handle the directory list request
+            error = NULL;
+            struct ipc_sbox_dir_ent *entries = NULL;
+            int num_ents = sandbox_ls_dir(tdev, msg->sbox_lsdir.dir_path, &entries, &error);
+            if(error) goto error;
+
+            //Respond with directory entries
+            tdev->send_msg->size = sizeof(struct ipc_msg_resp_sbox_lsdir);
+            tdev->send_msg->resp_sbox_lsdir = (struct ipc_msg_resp_sbox_lsdir) {
+                .type = IPC_MSG_RESP_SBOX_LSDIR,
+                .error = (num_ents < 0) ? -num_ents : 0,
+                .num_entries = (num_ents >= 0) ? num_ents : 0
+            };
+            if(entries) memcpy(tdev->send_msg->resp_sbox_lsdir.entries, entries, num_ents * sizeof(struct ipc_sbox_dir_ent));
+            g_free(entries);
+            if(!send_ipc_msg(tdev, tdev->send_msg, &error)) goto error;
 
             //Receive further IPC messages
             recv_ipc_msg(tdev, open_recv_cb, NULL);
