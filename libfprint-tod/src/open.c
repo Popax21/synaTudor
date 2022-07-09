@@ -70,6 +70,7 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
 
     error:;
     if(msg) ipc_msg_buf_free(msg);
+    g_usb_device_open(fpi_device_get_usb_device(dev), NULL);
     dispose_dev(tdev);
     fpi_device_open_complete(dev, error);
     return;
@@ -78,17 +79,10 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
 void fpi_device_tudor_open(FpDevice *dev) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
 
-    //Get a USB device FD, and close the device, as it conflicts with the host's device usage
-    int usb_fd;
-    GUsbDevice *usb_dev = fpi_device_get_usb_device(dev);
-    g_assert_no_errno(usb_fd = dup(((int**) usb_dev->priv)[3][10 + 2 + 4 + 2 + 1 + 1])); //Cursed offset magic
-    g_usb_device_close(usb_dev, NULL);
-
     //Open a DBus connection
     GError *error = NULL;
     tdev->dbus_con = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);
     if(!tdev->dbus_con) {
-        g_assert_no_errno(close(usb_fd));
         dispose_dev(tdev);
         fpi_device_open_complete(dev, error);
         return;
@@ -104,7 +98,6 @@ void fpi_device_tudor_open(FpDevice *dev) {
     int sock_fd;
     if(!start_host_process(tdev, &sock_fd, &error)) {
         g_warning("Failed to start Tudor host process - is tudor-host-launcher.service running? Error: '%s' (%s code %d)", error->message, g_quark_to_string(error->domain), error->code);
-        g_assert_no_errno(close(usb_fd));
         dispose_dev(tdev);
         fpi_device_open_complete(dev, error);
         return;
@@ -114,13 +107,18 @@ void fpi_device_tudor_open(FpDevice *dev) {
     //Create the IPC socket
     tdev->ipc_socket = g_socket_new_from_fd(sock_fd, &error);
     if(!tdev->ipc_socket) {
-        g_assert_no_errno(close(usb_fd));
         dispose_dev(tdev);
         fpi_device_open_complete(dev, error);
         return;
     }
     g_socket_set_timeout(tdev->ipc_socket, IPC_TIMEOUT_SECS);
     tdev->ipc_cancel = g_cancellable_new();
+
+    //Get a USB device FD, and close the device, as it conflicts with the host's device usage
+    int usb_fd;
+    GUsbDevice *usb_dev = fpi_device_get_usb_device(dev);
+    g_assert_no_errno(usb_fd = dup(((int**) usb_dev->priv)[3][10 + 2 + 4 + 2 + 1 + 1])); //Cursed offset magic
+    g_usb_device_close(usb_dev, NULL);
 
     //Send the init message
     tdev->send_msg->transfer_fd = usb_fd;
@@ -134,6 +132,7 @@ void fpi_device_tudor_open(FpDevice *dev) {
     if(!send_ipc_msg(tdev, tdev->send_msg, &error)) {
         g_assert_no_errno(close(usb_fd));
         dispose_dev(tdev);
+        g_usb_device_open(fpi_device_get_usb_device(dev), NULL);
         fpi_device_open_complete(dev, error);
         return;
     }
