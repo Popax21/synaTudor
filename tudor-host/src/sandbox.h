@@ -4,10 +4,10 @@
 #define SANDBOX_UID 3333
 #define SANDBOX_GID 3333
 
-#define SANDBOX_DATA_LIMIT (32 * 1024 * 1024)
+#define SANDBOX_DATA_LIMIT (128 * 1024 * 1024)
 #define SANDBOX_STACK_LIMIT (64 * 1024)
 #define SANDBOX_MAX_FDS 16
-#define SANDBOX_MAX_THREADS 4
+#define SANDBOX_MAX_THREADS 8
 
 void activate_sandbox();
 void setup_usb_sbox(int usb_fd, uint8_t usb_bus, uint8_t usb_addr);
