@@ -31,6 +31,8 @@ static void recv_init_msg(int sock, int *usb_dev_fd, uint8_t *usb_bus, uint8_t *
     ipc_recv_msg(sock, &init_msg, IPC_MSG_INIT, sizeof(init_msg), sizeof(init_msg), usb_dev_fd);
 
     LOG_LEVEL = init_msg.log_level;
+    *usb_bus = init_msg.usb_bus;
+    *usb_addr = init_msg.usb_addr;
 
     switch(LOG_LEVEL) {
         case LOG_VERBOSE:
