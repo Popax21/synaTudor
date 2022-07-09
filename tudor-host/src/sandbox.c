@@ -122,8 +122,11 @@ static void setup_seccomp() {
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_close, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_read, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_write, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_readv, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_writev, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_fstat, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_newfstatat, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_fstatfs, 0));
 
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_sendmsg, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_recvmsg, 0));

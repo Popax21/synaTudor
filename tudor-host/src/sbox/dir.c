@@ -1,11 +1,9 @@
-//Sketchy include BS to avoid assembly renaming
-#include <sys/cdefs.h>
-#undef __REDIRECT
-#include <dirent.h>
-#undef readdir
-
 #include "sandbox.h"
 #include "ipc.h"
+
+#include "noredirect.h"
+#include <dirent.h>
+#undef readdir
 
 struct __dirstream {
     int cur_entry, num_entries;
