@@ -210,7 +210,9 @@ bool send_ipc_msg(FpiDeviceTudor *tdev, IPCMessageBuf *msg, GError **error) {
     int num_cmsgs = 0;
     if(msg->transfer_fd >= 0) {
         GUnixFDMessage *fdmsg = G_UNIX_FD_MESSAGE(g_unix_fd_message_new());
-        if(!g_unix_fd_message_append_fd(fdmsg, msg->transfer_fd, error)) {
+        int fd = msg->transfer_fd;
+        msg->transfer_fd = -1;
+        if(!g_unix_fd_message_append_fd(fdmsg, fd, error)) {
             g_object_unref(fdmsg);
             return false;
         }

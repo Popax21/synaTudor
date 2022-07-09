@@ -44,6 +44,7 @@ static void host_exit_cb(FpiDeviceTudor *tdev, guint host_id, gint status) {
     //If we're in a close action, we have to dispose the device and complete the action here
     if(fpi_device_get_current_action(dev) == FPI_DEVICE_ACTION_CLOSE) {
         dispose_dev(tdev);
+        g_usb_device_open(fpi_device_get_usb_device(dev), NULL);
         fpi_device_close_complete(dev, NULL);
     }
 }
@@ -81,10 +82,17 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
 void fpi_device_tudor_open(FpDevice *dev) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
 
+    //Get a USB device FD, and close the device, as it conflicts with the host's device usage
+    int usb_fd;
+    GUsbDevice *usb_dev = fpi_device_get_usb_device(dev);
+    g_assert_no_errno(usb_fd = dup(get_usb_dev_fd(usb_dev)));
+    g_usb_device_close(usb_dev, NULL);
+
     //Open a DBus connection
     GError *error = NULL;
     tdev->dbus_con = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);
     if(!tdev->dbus_con) {
+        g_assert_no_errno(close(usb_fd));
         dispose_dev(tdev);
         fpi_device_open_complete(dev, error);
         return;
@@ -100,6 +108,7 @@ void fpi_device_tudor_open(FpDevice *dev) {
     int sock_fd;
     if(!start_host_process(tdev, &sock_fd, &error)) {
         g_warning("Failed to start Tudor host process - is tudor-host-launcher.service running? Error: '%s' (%s code %d)", error->message, g_quark_to_string(error->domain), error->code);
+        g_assert_no_errno(close(usb_fd));
         dispose_dev(tdev);
         fpi_device_open_complete(dev, error);
         return;
@@ -109,6 +118,7 @@ void fpi_device_tudor_open(FpDevice *dev) {
     //Create the IPC socket
     tdev->ipc_socket = g_socket_new_from_fd(sock_fd, &error);
     if(!tdev->ipc_socket) {
+        g_assert_no_errno(close(usb_fd));
         dispose_dev(tdev);
         fpi_device_open_complete(dev, error);
         return;
@@ -117,8 +127,7 @@ void fpi_device_tudor_open(FpDevice *dev) {
     tdev->ipc_cancel = g_cancellable_new();
 
     //Send the init message
-    GUsbDevice *usb_dev = fpi_device_get_usb_device(dev);
-    tdev->send_msg->transfer_fd = get_usb_dev_fd(usb_dev);
+    tdev->send_msg->transfer_fd = usb_fd;
     tdev->send_msg->size = sizeof(struct ipc_msg_init); 
     tdev->send_msg->init = (struct ipc_msg_init) {
         .type = IPC_MSG_INIT,
@@ -127,10 +136,12 @@ void fpi_device_tudor_open(FpDevice *dev) {
         .usb_addr = g_usb_device_get_address(usb_dev)
     };
     if(!send_ipc_msg(tdev, tdev->send_msg, &error)) {
+        g_assert_no_errno(close(usb_fd));
         dispose_dev(tdev);
         fpi_device_open_complete(dev, error);
         return;
     }
+    g_assert_no_errno(close(usb_fd));
     g_debug("Initialized tudor host process ID %d with USB bus 0x%02x addr 0x%02x", tdev->host_id, tdev->send_msg->init.usb_bus, tdev->send_msg->init.usb_addr);
 
     //Receive IPC messages
@@ -143,6 +154,7 @@ void fpi_device_tudor_close(FpDevice *dev) {
     if(tdev->host_dead) {
         //Dispose the device directly
         dispose_dev(tdev);
+        g_usb_device_open(fpi_device_get_usb_device(dev), NULL);
         fpi_device_close_complete(dev, NULL);
         return;
     }
@@ -153,6 +165,8 @@ void fpi_device_tudor_close(FpDevice *dev) {
 
     GError *error = NULL;
     if(!send_ipc_msg(tdev, tdev->send_msg, &error)) {
+        dispose_dev(tdev);
+        g_usb_device_open(fpi_device_get_usb_device(dev), NULL);
         fpi_device_close_complete(dev, error);
         return;
     }
