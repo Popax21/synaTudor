@@ -47,39 +47,6 @@ struct ipc_msg_init {
     uint8_t usb_bus, usb_addr;
 };
 
-struct ipc_msg_sbox_open {
-    enum ipc_msg_type type;
-
-    char file_path[IPC_SBOX_PATH_SIZE];
-    int flags;
-};
-
-struct ipc_msg_resp_sbox_open {
-    enum ipc_msg_type type;
-
-    int error;
-};
-
-struct ipc_msg_sbox_lsdir {
-    enum ipc_msg_type type;
-
-    char dir_path[IPC_SBOX_PATH_SIZE];
-};
-
-struct ipc_sbox_dir_ent {
-    char name[IPC_SBOX_PATH_SIZE];
-    char type;
-};
-
-struct ipc_msg_resp_sbox_lsdir {
-    enum ipc_msg_type type;
-
-    int error;
-
-    struct ipc_sbox_dir_ent entries[IPC_SBOX_MAX_DIR_ENTRIES];
-    int num_entries;
-};
-
 struct ipc_msg_load_pdata {
     enum ipc_msg_type type;
 

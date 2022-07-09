@@ -93,6 +93,7 @@ bool start_host_process(FpiDeviceTudor *tdev, int *sock_fd, GError **error) {
 
 bool kill_host_process(FpiDeviceTudor *tdev, GError **error) {
     g_assert_true(tdev->host_has_id);
+    tdev->host_has_id = false;
 
     //Request the host launcher service to kill the host process
     GVariant *rets = g_dbus_connection_call_sync(tdev->dbus_con,
@@ -103,7 +104,6 @@ bool kill_host_process(FpiDeviceTudor *tdev, GError **error) {
     if(!rets) return false;
     g_variant_unref(rets);
 
-    tdev->host_has_id = false;
     return true;
 }
 

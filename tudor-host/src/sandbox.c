@@ -23,12 +23,32 @@
 #define strfy(x) _strfy(x)
 #define _strfy(x) #x
 
-static int ipc_sock;
 static struct utsname sbox_utsname;
 
 int uname(struct utsname *oname) {
     *oname = sbox_utsname;
     return 0;
+}
+
+static int sbox_usb_fd;
+static uint8_t sbox_usb_bus, sbox_usb_addr;
+
+ssize_t readlink(const char *path, char *buf, size_t size) {
+    //Check if path is /proc/self/fd/<FD>
+    int fd;
+    if(sscanf(path, "/proc/self/fd/%d", &fd) != 1) {
+        log_error("Tried to readlink prohibited path '%s'!", path);
+        abort();
+    }
+
+    //Check for the USB FD
+    if(fd != sbox_usb_fd) {
+        log_error("Tried to get path of prohibited FD %d!", fd);
+        abort();
+    }
+
+    //Return a string immetating a device with the specific bus / address
+    return snprintf(buf, size, "/dev/bus/usb/%hhu/%hhu", sbox_usb_fd, sbox_usb_addr);
 }
 
 static void write_to(const char *fname, const char *cnts) {
@@ -148,6 +168,7 @@ static void setup_seccomp() {
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SYS_name_to_handle_at, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SYS_open_by_handle_at, 0));
 
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_poll, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(EPERM), SYS_open, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(EPERM), SYS_openat, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(EPERM), SYS_openat2, 0));
@@ -155,20 +176,14 @@ static void setup_seccomp() {
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_fcntl, 1, SCMP_A1_32(SCMP_CMP_EQ, F_SETFD)));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_fcntl, 1, SCMP_A1_32(SCMP_CMP_EQ, F_GETFL)));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_fcntl, 1, SCMP_A1_32(SCMP_CMP_EQ, F_SETFL)));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_poll, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_ioctl, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_lseek, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_read, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_write, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_readv, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_writev, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_close, 0));
 
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_socket, 2, SCMP_A0_32(SCMP_CMP_EQ, AF_NETLINK), SCMP_A2_32(SCMP_CMP_EQ, NETLINK_KOBJECT_UEVENT))); //Required for udev to properly initialize
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_getsockname, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(0), SYS_getsockopt, 2, SCMP_A1_32(SCMP_CMP_EQ, SOL_SOCKET), SCMP_A2_32(SCMP_CMP_EQ, SO_PASSCRED)));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(0), SYS_getsockopt, 2, SCMP_A1_32(SCMP_CMP_EQ, SOL_SOCKET), SCMP_A2_32(SCMP_CMP_EQ, SO_ATTACH_FILTER)));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(0), SYS_setsockopt, 2, SCMP_A1_32(SCMP_CMP_EQ, SOL_SOCKET), SCMP_A2_32(SCMP_CMP_EQ, SO_PASSCRED)));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(0), SYS_setsockopt, 2, SCMP_A1_32(SCMP_CMP_EQ, SOL_SOCKET), SCMP_A2_32(SCMP_CMP_EQ, SO_ATTACH_FILTER)));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(0), SYS_bind, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_sendmsg, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_recvmsg, 0));
 
@@ -177,12 +192,10 @@ static void setup_seccomp() {
     seccomp_release(scmp_ctx);
 }
 
-void activate_sandbox(int sock) {
-    ipc_sock = sock;
-
+void activate_sandbox() {
     //Query the system uname
     cant_fail(syscall(SYS_uname, &sbox_utsname));
-    strncpy(sbox_utsname.nodename, "tudor-host", sizeof(sbox_utsname.nodename)); //Don't leak the node name
+    strncpy(sbox_utsname.nodename, "tudor-host", sizeof(sbox_utsname.nodename)); //Don't leak host name
 
     //Setup resource limits
     cant_fail(setrlimit(RLIMIT_DATA, &(struct rlimit) { .rlim_cur = SANDBOX_DATA_LIMIT, .rlim_max = SANDBOX_DATA_LIMIT }));
@@ -212,4 +225,10 @@ void activate_sandbox(int sock) {
 
     //Restrict all syscalls using SECCOMP, only keep the ones required to communicate with the module
     setup_seccomp();
+}
+
+void setup_usb_sbox(int usb_fd, uint8_t usb_bus, uint8_t usb_addr) {
+    sbox_usb_fd = usb_fd;
+    sbox_usb_bus = usb_bus;
+    sbox_usb_addr = usb_addr;
 }

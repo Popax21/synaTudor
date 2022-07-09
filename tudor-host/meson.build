@@ -1,7 +1,6 @@
 tudor_host_src = [
     'src/main.c',
     'src/sandbox.c',
-    'src/usb.c',
     'src/ipc.c'
 ]
 

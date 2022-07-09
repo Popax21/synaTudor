@@ -9,6 +9,7 @@
 #define SANDBOX_MAX_FDS 16
 #define SANDBOX_MAX_THREADS 4
 
-void activate_sandbox(int sock);
+void activate_sandbox();
+void setup_usb_sbox(int usb_fd, uint8_t usb_bus, uint8_t usb_addr);
 
 #endif
