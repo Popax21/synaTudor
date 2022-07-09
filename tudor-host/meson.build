@@ -8,8 +8,7 @@ tudor_host_src = [
     'src/sbox/stat.c',
     'src/sbox/open.c',
     'src/sbox/dir.c',
-    'src/sbox/statfs.c',
-    'src/sbox/handle.c'
+    'src/sbox/statfs.c'
 ]
 
 thread_dep = dependency('threads')

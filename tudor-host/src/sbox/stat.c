@@ -20,10 +20,3 @@ int stat64(const char *path, struct stat64 *buf) {
     errno = -EACCES;
     return -1;
 }
-
-int statx(int dir_fd, const char *path, int flags, unsigned int mask, struct statx *buf) {
-    //FIXME
-    log_debug("Hooking statx for path '%s'", path);
-    errno = -EACCES;
-    return -1;
-}
