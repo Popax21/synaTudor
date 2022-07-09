@@ -37,7 +37,7 @@ static GDBusArgInfo has_pdata_arg = {
 
 GDBusMethodInfo launcher_load_pdata_method = {
     .ref_count = -1,
-    .name = TUDOR_HOST_LAUNCHER_LOAD_PAIRING_DATA,
+    .name = TUDOR_HOST_LAUNCHER_LOAD_PAIRING_DATA_METHOD,
     .in_args = (GDBusArgInfo*[]) { &sensor_name_arg, NULL },
     .out_args = (GDBusArgInfo*[]) { &has_pdata_arg, &pdata_arg, NULL },
     .annotations = (GDBusAnnotationInfo*[]) { NULL }
@@ -112,7 +112,7 @@ void load_pdata_call(GDBusMethodInvocation *invoc, GVariant *params) {
 
 GDBusMethodInfo launcher_store_pdata_method = {
     .ref_count = -1,
-    .name = TUDOR_HOST_LAUNCHER_STORE_PAIRING_DATA,
+    .name = TUDOR_HOST_LAUNCHER_STORE_PAIRING_DATA_METHOD,
     .in_args = (GDBusArgInfo*[]) { &sensor_name_arg, &pdata_arg, NULL },
     .out_args = (GDBusArgInfo*[]) { NULL },
     .annotations = (GDBusAnnotationInfo*[]) { NULL }
