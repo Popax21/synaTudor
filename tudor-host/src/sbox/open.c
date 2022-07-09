@@ -7,7 +7,13 @@
 #undef open
 
 int open(const char *path, int flags, ...) {
-    log_debug("Hooked open call for file '%s'", path);
+    //We don't support O_PATH
+    if(flags & O_PATH) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    log_debug("Hooked open call for file '%s' flags %d", path, flags);
 
     //Send the host module a message
     struct ipc_msg_sbox_open open_msg = {
