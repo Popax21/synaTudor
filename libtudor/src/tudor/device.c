@@ -88,6 +88,10 @@ bool tudor_open(struct tudor_device *device, libusb_device_handle *usb_dev, stru
     WINBIO_CALL_PIPELINE(tudor_engine_adapter->PipelineInit, device->pipeline);
     WINBIO_CALL_PIPELINE(tudor_storage_adapter->PipelineInit, device->pipeline);
 
+    //Reset the sensor
+    log_debug("Resetting sensor...");
+    WINBIO_CALL_PIPELINE(tudor_sensor_adapter->Reset, device->pipeline);
+
     //Activate the pipeline
     log_debug("Activating pipeline...");
     WINBIO_CALL_PIPELINE(tudor_sensor_adapter->Activate, device->pipeline);
