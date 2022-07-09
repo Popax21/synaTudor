@@ -161,6 +161,9 @@ static void setup_seccomp() {
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_timerfd_create, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_timerfd_gettime, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_timerfd_settime, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_clock_getres, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_clock_gettime, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_clock_nanosleep, 0));
 
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SYS_access, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SYS_stat, 0));
