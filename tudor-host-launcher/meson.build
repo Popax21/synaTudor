@@ -1,5 +1,7 @@
 tudor_host_launcher_src = [
-    'src/main.c'
+    'src/main.c',
+    'src/launch.c',
+    'src/pdata.c'
 ]
 
 gio_dep = dependency('gio-2.0')

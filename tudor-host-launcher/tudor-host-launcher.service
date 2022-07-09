@@ -6,6 +6,8 @@ Type=dbus
 BusName=net.reactivated.TudorHostLauncher
 ExecStart=/sbin/tudor/tudor_host_launcher
 WorkingDirectory=/sbin/tudor/
+StateDirectory=tudor
+StateDirectoryMode=0700
 
 ProtectSystem=strict
 ProtectKernelTunables=true
@@ -13,8 +15,6 @@ ProtectKernelLogs=true
 ProtectControlGroups=true
 ProtectHome=true
 ProtectKernelModules=true
-
 PrivateTmp=true
 PrivateDevices=true
-
 RestrictRealtime=true
