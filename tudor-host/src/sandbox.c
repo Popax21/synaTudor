@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <sched.h>
 #include <fcntl.h>
+#include <asm/prctl.h>
 #include <sys/wait.h>
 #include <sys/socket.h>
 #include <sys/prctl.h>
@@ -150,6 +151,7 @@ static void setup_seccomp() {
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_get_robust_list, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_set_robust_list, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_prctl, 1, SCMP_A0_32(SCMP_CMP_EQ, PR_SET_NAME)))
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_arch_prctl, 1, SCMP_A0_32(SCMP_CMP_EQ, ARCH_SET_GS)))
 
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_getrandom, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_eventfd, 0));
