@@ -4,7 +4,7 @@
 #include <tudor/libfprint-proto.h>
 #include "device.h"
 
-#define IPC_TIMEOUT_SECS 5
+#define IPC_TIMEOUT_SECS 20
 
 typedef struct _IPCMessageBuf {
     int transfer_fd;
