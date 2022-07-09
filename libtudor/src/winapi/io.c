@@ -87,7 +87,7 @@ __winfnc BOOL ReadFile(HANDLE handle, void *buf, DWORD buf_size, DWORD *num_read
         ctx->buf_size = buf_size;
 
         pthread_t thread;
-        cant_fail(pthread_create(&thread, NULL, (void*(*)(void*)) read_file_thread, ctx));
+        cant_fail_ret(pthread_create(&thread, NULL, (void*(*)(void*)) read_file_thread, ctx));
 
         winerr_set_code(ERROR_IO_PENDING);
         return FALSE;
@@ -142,7 +142,7 @@ __winfnc BOOL WriteFile(HANDLE handle, const void *buf, DWORD buf_size, DWORD *n
         ctx->buf_size = buf_size;
 
         pthread_t thread;
-        cant_fail(pthread_create(&thread, NULL, (void*(*)(void*)) write_file_thread, ctx));
+        cant_fail_ret(pthread_create(&thread, NULL, (void*(*)(void*)) write_file_thread, ctx));
 
         winerr_set_code(ERROR_IO_PENDING);
         return FALSE;
@@ -202,7 +202,7 @@ __winfnc BOOL DeviceIoControl(HANDLE handle, DWORD code, const void *in_buf, DWO
         ctx->out_size = out_size;
 
         pthread_t thread;
-        cant_fail(pthread_create(&thread, NULL, (void*(*)(void*)) devctrl_thread, ctx));
+        cant_fail_ret(pthread_create(&thread, NULL, (void*(*)(void*)) devctrl_thread, ctx));
 
         winerr_set_code(ERROR_IO_PENDING);
         return FALSE;

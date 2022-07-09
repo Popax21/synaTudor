@@ -99,7 +99,7 @@ int main() {
     log_info("Initialized libusb");
 
     //Start the USB thread
-    cant_fail(pthread_create(&usb_thread, NULL, usb_thread_func, usb_ctx));
+    cant_fail_ret(pthread_create(&usb_thread, NULL, usb_thread_func, usb_ctx));
     log_debug("Started USB polling thread");
 
     //Initialize driver
@@ -154,7 +154,7 @@ int main() {
     cant_fail(close(usb_dev_fd));
 
     //Shutdown libusb
-    cant_fail(pthread_join(usb_thread, NULL));
+    cant_fail_ret(pthread_join(usb_thread, NULL));
     libusb_exit(usb_ctx);
     log_info("Shutdown libusb");
 

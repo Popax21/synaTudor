@@ -141,7 +141,7 @@ void cli_main_loop(struct tudor_device *device) {
                 if(abort_cmd_loop) goto cmdend;
 
                 //Print records
-                cant_fail(pthread_mutex_lock(&device->records_lock));
+                cant_fail_ret(pthread_mutex_lock(&device->records_lock));
 
                 int num_matched = 0;
                 for(struct tudor_record *rec = device->records_head; rec; rec = rec->next) {
@@ -151,7 +151,7 @@ void cli_main_loop(struct tudor_device *device) {
                 }
                 printf("Total: %d record(s)\n", num_matched);
 
-                cant_fail(pthread_mutex_unlock(&device->records_lock));
+                cant_fail_ret(pthread_mutex_unlock(&device->records_lock));
             } goto cmdend;
             case 'w': {
                 //Read identity GUID

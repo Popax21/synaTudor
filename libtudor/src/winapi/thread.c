@@ -25,15 +25,15 @@ struct win_thread {
 
 static void thread_destr(struct win_thread *thread) {
     //Free memory
-    cant_fail(pthread_mutex_lock(&thread->lock));
-    cant_fail(pthread_mutex_destroy(&thread->lock));
-    cant_fail(pthread_cond_destroy(&thread->suspend_cond));
+    cant_fail_ret(pthread_mutex_lock(&thread->lock));
+    cant_fail_ret(pthread_mutex_destroy(&thread->lock));
+    cant_fail_ret(pthread_cond_destroy(&thread->suspend_cond));
     free(thread);
 }
 
 static DWORD thread_wait(struct win_thread *thread, DWORD timeout) {
     if(timeout == INFINITE) {
-        cant_fail(pthread_join(thread->thread, NULL));
+        cant_fail_ret(pthread_join(thread->thread, NULL));
     } else {
         struct timespec time;
         time.tv_nsec = timeout * 10000000L;
@@ -46,15 +46,15 @@ static DWORD thread_wait(struct win_thread *thread, DWORD timeout) {
 }
 
 static void thread_wait_resume(struct win_thread *thread) {
-    cant_fail(pthread_mutex_lock(&thread->lock));
-    while(thread->suspend_cntr > 0) cant_fail(pthread_cond_wait(&thread->suspend_cond, &thread->lock));
-    cant_fail(pthread_mutex_unlock(&thread->lock));
+    cant_fail_ret(pthread_mutex_lock(&thread->lock));
+    while(thread->suspend_cntr > 0) cant_fail_ret(pthread_cond_wait(&thread->suspend_cond, &thread->lock));
+    cant_fail_ret(pthread_mutex_unlock(&thread->lock));
 }
 
 static void *thread_entry(void *arg) {
     struct win_thread *thread = (struct win_thread*) arg;
 
-    cant_fail(pthread_mutex_lock(&thread->lock));
+    cant_fail_ret(pthread_mutex_lock(&thread->lock));
 
     //Initialize state
     winmodule_set_cur(thread->start_module);
@@ -62,8 +62,8 @@ static void *thread_entry(void *arg) {
     win_init_tib();
 
     //Signal start thread that we've started
-    cant_fail(pthread_cond_signal(&thread->start_cond));
-    cant_fail(pthread_mutex_unlock(&thread->lock));
+    cant_fail_ret(pthread_cond_signal(&thread->start_cond));
+    cant_fail_ret(pthread_mutex_unlock(&thread->lock));
 
     //Call the thread start routine
     thread_wait_resume(thread);
@@ -78,11 +78,11 @@ __winfnc HANDLE CreateThread(void *security_attrs, SIZE_T stack_size, THREAD_STA
     if(!thread) { winerr_set_errno(); return NULL; }
     thread->sync_obj.wait_fnc = (win_sync_obj_wait_fnc*) thread_wait;
 
-    cant_fail(pthread_mutex_init(&thread->lock, NULL));
+    cant_fail_ret(pthread_mutex_init(&thread->lock, NULL));
     thread->suspend_cntr = ((flags & CREATE_SUSPENDED) != 0) ? 1 : 0;
-    cant_fail(pthread_cond_init(&thread->suspend_cond, NULL));
+    cant_fail_ret(pthread_cond_init(&thread->suspend_cond, NULL));
 
-    cant_fail(pthread_cond_init(&thread->start_cond, NULL));
+    cant_fail_ret(pthread_cond_init(&thread->start_cond, NULL));
     thread->start_module = winmodule_get_cur();
     thread->start_proc = start_proc;
     thread->start_param = param;
@@ -90,11 +90,11 @@ __winfnc HANDLE CreateThread(void *security_attrs, SIZE_T stack_size, THREAD_STA
     thread->handle = winhandle_create(thread, (winhandle_destr_fnc*) thread_destr);
 
     //Create the actual thread
-    cant_fail(pthread_mutex_lock(&thread->lock));
-    cant_fail(pthread_create(&thread->thread, NULL, thread_entry, thread));
-    cant_fail(pthread_cond_wait(&thread->start_cond, &thread->lock));
-    cant_fail(pthread_cond_destroy(&thread->start_cond));
-    cant_fail(pthread_mutex_unlock(&thread->lock));
+    cant_fail_ret(pthread_mutex_lock(&thread->lock));
+    cant_fail_ret(pthread_create(&thread->thread, NULL, thread_entry, thread));
+    cant_fail_ret(pthread_cond_wait(&thread->start_cond, &thread->lock));
+    cant_fail_ret(pthread_cond_destroy(&thread->start_cond));
+    cant_fail_ret(pthread_mutex_unlock(&thread->lock));
 
     if(id) *id = thread->thread_id;
 
@@ -112,11 +112,11 @@ __winfnc DWORD ResumeThread(HANDLE handle) {
     struct win_thread *thread = (struct win_thread*) handle->data;
 
     //Decrement the suspend counter
-    cant_fail(pthread_mutex_lock(&thread->lock));
+    cant_fail_ret(pthread_mutex_lock(&thread->lock));
     DWORD suspend_ctr = thread->suspend_cntr;
     if(thread->suspend_cntr > 0) thread->suspend_cntr--;
-    cant_fail(pthread_cond_signal(&thread->suspend_cond));
-    cant_fail(pthread_mutex_unlock(&thread->lock));
+    cant_fail_ret(pthread_cond_signal(&thread->suspend_cond));
+    cant_fail_ret(pthread_mutex_unlock(&thread->lock));
 
     return suspend_ctr;
 }

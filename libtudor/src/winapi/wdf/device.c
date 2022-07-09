@@ -145,15 +145,15 @@ static void device_destr(struct winwdf_device *dev) {
     }
 
     //Destroy queues
-    cant_fail(pthread_mutex_lock(&dev->queues_lock));
+    cant_fail_ret(pthread_mutex_lock(&dev->queues_lock));
     while(dev->queues_head) {
         struct dev_queue_node *q = dev->queues_head;
         dev->queues_head = q->next;
         winwdf_destroy_object((WDFOBJECT) q->queue);
         free(q);
     }
-    cant_fail(pthread_mutex_unlock(&dev->queues_lock));
-    cant_fail(pthread_mutex_destroy(&dev->queues_lock));
+    cant_fail_ret(pthread_mutex_unlock(&dev->queues_lock));
+    cant_fail_ret(pthread_mutex_destroy(&dev->queues_lock));
 
     //Call callbacks II
     if(dev->pnp_callbacks) {
@@ -202,17 +202,17 @@ void wdf_add_device_queue(struct winwdf_device *dev, struct winwdf_queue* queue)
     struct dev_queue_node *q = (struct dev_queue_node*) malloc(sizeof(struct dev_queue_node));
     q->queue = queue;
 
-    cant_fail(pthread_mutex_lock(&dev->queues_lock));
+    cant_fail_ret(pthread_mutex_lock(&dev->queues_lock));
     q->prev = NULL;
     q->next = dev->queues_head;
     if(dev->queues_head) dev->queues_head->prev = q;
     dev->queues_head = q;
-    cant_fail(pthread_mutex_unlock(&dev->queues_lock));
+    cant_fail_ret(pthread_mutex_unlock(&dev->queues_lock));
 }
 
 void wdf_remove_device_queue(struct winwdf_device *dev, struct winwdf_queue* queue) {
     //Find the queue node
-    if(!dev->is_dying) cant_fail(pthread_mutex_lock(&dev->queues_lock));
+    if(!dev->is_dying) cant_fail_ret(pthread_mutex_lock(&dev->queues_lock));
     for(struct dev_queue_node *q = dev->queues_head; q; q = q->next) {
         if(q->queue != queue) continue;
 
@@ -222,12 +222,12 @@ void wdf_remove_device_queue(struct winwdf_device *dev, struct winwdf_queue* que
         if(q->next) q->next->prev = q->prev;
         free(q);
     }
-    if(!dev->is_dying) cant_fail(pthread_mutex_unlock(&dev->queues_lock));
+    if(!dev->is_dying) cant_fail_ret(pthread_mutex_unlock(&dev->queues_lock));
 }
 
 struct winwdf_queue *wdf_get_dispatch_queue(struct winwdf_device *dev, enum wdf_queue_req_type req_type) {
     struct winwdf_queue *q = NULL;
-    cant_fail(pthread_mutex_lock(&dev->queues_lock));
+    cant_fail_ret(pthread_mutex_lock(&dev->queues_lock));
     switch(req_type) {
         case WDF_QUEUE_REQ_CREATE: q = dev->create_queue; break;
         case WDF_QUEUE_REQ_READ: q = dev->read_queue; break;
@@ -235,12 +235,12 @@ struct winwdf_queue *wdf_get_dispatch_queue(struct winwdf_device *dev, enum wdf_
         case WDF_QUEUE_REQ_DEVCTRL: q = dev->devctrl_queue; break;
         case WDF_QUEUE_REQ_DEVCTRL_INT: q = dev->devctrl_int_queue; break;
     }
-    cant_fail(pthread_mutex_unlock(&dev->queues_lock));
+    cant_fail_ret(pthread_mutex_unlock(&dev->queues_lock));
     return q;
 }
 
 void wdf_configure_device_dispatch(struct winwdf_device *dev, struct winwdf_queue* queue, enum wdf_queue_req_type req_type) {
-    cant_fail(pthread_mutex_lock(&dev->queues_lock));
+    cant_fail_ret(pthread_mutex_lock(&dev->queues_lock));
     switch(req_type) {
         case WDF_QUEUE_REQ_CREATE: dev->create_queue = queue; break;
         case WDF_QUEUE_REQ_READ: dev->read_queue = queue; break;
@@ -248,7 +248,7 @@ void wdf_configure_device_dispatch(struct winwdf_device *dev, struct winwdf_queu
         case WDF_QUEUE_REQ_DEVCTRL: dev->devctrl_queue = queue; break;
         case WDF_QUEUE_REQ_DEVCTRL_INT: dev->devctrl_int_queue = queue; break;
     }
-    cant_fail(pthread_mutex_unlock(&dev->queues_lock));
+    cant_fail_ret(pthread_mutex_unlock(&dev->queues_lock));
 }
 
 libusb_device_handle *wdf_get_libusb_device(struct winwdf_device *dev) { return dev->libusb_dev; }
@@ -310,7 +310,7 @@ __winfnc NTSTATUS WdfDeviceCreate(WDF_DRIVER_GLOBALS *globals, struct wdf_device
     dev->fs_cfg = (*dev_init)->fs_cfg;
     dev->fs_obj_attrs = (*dev_init)->fs_obj_attrs;
 
-    cant_fail(pthread_mutex_init(&dev->queues_lock, NULL));
+    cant_fail_ret(pthread_mutex_init(&dev->queues_lock, NULL));
     dev->queues_head = NULL;
     dev->create_queue = dev->read_queue = dev->write_queue = dev->devctrl_queue = dev->devctrl_int_queue = NULL;
 

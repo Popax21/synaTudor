@@ -51,7 +51,7 @@ bool load_datastore_pair_data(FILE *file) {
 }
 
 bool save_datastore_pair_data(FILE *file) {
-    cant_fail(pthread_mutex_lock(&tudor_pair_data_lock));
+    cant_fail_ret(pthread_mutex_lock(&tudor_pair_data_lock));
     for(struct tudor_pair_data *pdata = tudor_pair_data_head; pdata; pdata = pdata->next) {
         //Write name
         int name_len = strlen(pdata->name);
@@ -72,7 +72,7 @@ bool save_datastore_pair_data(FILE *file) {
             return false;
         }
     }
-    cant_fail(pthread_mutex_unlock(&tudor_pair_data_lock));
+    cant_fail_ret(pthread_mutex_unlock(&tudor_pair_data_lock));
 
     if(fputc(0, file) == EOF) {
         perror("Error writing pairing data end terminator");
@@ -132,7 +132,7 @@ bool load_datastore_records(FILE *file, struct tudor_device *device) {
 }
 
 bool save_datastore_records(FILE *file, struct tudor_device *device) {
-    cant_fail(pthread_mutex_lock(&device->records_lock));
+    cant_fail_ret(pthread_mutex_lock(&device->records_lock));
     for(struct tudor_record *rec = device->records_head; rec; rec = rec->next) {
         //Write non-end indicator
         if(fputc(1, file) == EOF) {
@@ -161,7 +161,7 @@ bool save_datastore_records(FILE *file, struct tudor_device *device) {
             return false;
         }
     }
-    cant_fail(pthread_mutex_unlock(&device->records_lock));
+    cant_fail_ret(pthread_mutex_unlock(&device->records_lock));
 
     if(fputc(0, file)) {
         perror("Error writing record end terminator");

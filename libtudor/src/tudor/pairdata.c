@@ -6,7 +6,7 @@ struct tudor_pair_data *tudor_pair_data_head = NULL;
 void tudor_add_pair_data(const char *name, const void *data, size_t data_size) {
     log_debug("Adding pairing data for sensor '%s'...", name);
 
-    cant_fail(pthread_mutex_lock(&tudor_pair_data_lock));
+    cant_fail_ret(pthread_mutex_lock(&tudor_pair_data_lock));
 
     //Allocate pairing data
     struct tudor_pair_data *pair_data = (struct tudor_pair_data*) malloc(sizeof(struct tudor_pair_data));
@@ -22,5 +22,5 @@ void tudor_add_pair_data(const char *name, const void *data, size_t data_size) {
     pair_data->next = tudor_pair_data_head;
     tudor_pair_data_head = pair_data;
 
-    cant_fail(pthread_mutex_unlock(&tudor_pair_data_lock));
+    cant_fail_ret(pthread_mutex_unlock(&tudor_pair_data_lock));
 }

@@ -14,7 +14,7 @@ static struct wdf_evtqueue_action *queue_head = NULL;
 void winwdf_event_queue_flush() {
     WIN_CLOBBER_NONVOL_REGS
 
-    cant_fail(pthread_mutex_lock(&queue_mutex));
+    cant_fail_ret(pthread_mutex_lock(&queue_mutex));
     flushing_queue = true;
 
     //Flush the queue
@@ -32,7 +32,7 @@ void winwdf_event_queue_flush() {
     }
 
     flushing_queue = false;
-    cant_fail(pthread_mutex_unlock(&queue_mutex));
+    cant_fail_ret(pthread_mutex_unlock(&queue_mutex));
 }
 
 void wdf_evtqueue_enqueue(struct wdf_object *obj, wdf_evtqueue_action_fnc *action) {
@@ -45,23 +45,23 @@ void wdf_evtqueue_enqueue(struct wdf_object *obj, wdf_evtqueue_action_fnc *actio
     act->action = action;
 
     //Enqueue action
-    if(!flushing_queue) cant_fail(pthread_mutex_lock(&queue_mutex));
+    if(!flushing_queue) cant_fail_ret(pthread_mutex_lock(&queue_mutex));
     act->next = queue_head;
     queue_head = act;
-    if(!flushing_queue) cant_fail(pthread_mutex_unlock(&queue_mutex));
+    if(!flushing_queue) cant_fail_ret(pthread_mutex_unlock(&queue_mutex));
 
-    cant_fail(pthread_mutex_lock(&obj->evtqueue_lock));
+    cant_fail_ret(pthread_mutex_lock(&obj->evtqueue_lock));
     act->obj_next = obj->evtqueue_acts_head;
     obj->evtqueue_acts_head = act;
-    cant_fail(pthread_mutex_unlock(&obj->evtqueue_lock));
+    cant_fail_ret(pthread_mutex_unlock(&obj->evtqueue_lock));
 }
 
 void wdf_evtqueue_clear_obj(struct wdf_object *obj) {
-    cant_fail(pthread_mutex_lock(&obj->evtqueue_lock));
+    cant_fail_ret(pthread_mutex_lock(&obj->evtqueue_lock));
 
     //Orphan queued actions
     for(struct wdf_evtqueue_action *act = obj->evtqueue_acts_head; act; act = act->obj_next) act->object = NULL;
     obj->evtqueue_acts_head = NULL;
 
-    cant_fail(pthread_mutex_unlock(&obj->evtqueue_lock));
+    cant_fail_ret(pthread_mutex_unlock(&obj->evtqueue_lock));
 }

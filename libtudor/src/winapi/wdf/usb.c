@@ -85,10 +85,10 @@ static void usb_dev_destr(struct wdf_usb_device *usb_dev) {
 
     //Destroy interfaces
     usb_dev->is_dying = true;
-    cant_fail(pthread_mutex_lock(&usb_dev->ifs_lock));
+    cant_fail_ret(pthread_mutex_lock(&usb_dev->ifs_lock));
     while(usb_dev->ifs_head != NULL) winwdf_destroy_object((WDFOBJECT) usb_dev->ifs_head);
-    cant_fail(pthread_mutex_unlock(&usb_dev->ifs_lock));
-    cant_fail(pthread_mutex_destroy(&usb_dev->ifs_lock));
+    cant_fail_ret(pthread_mutex_unlock(&usb_dev->ifs_lock));
+    cant_fail_ret(pthread_mutex_destroy(&usb_dev->ifs_lock));
 
     //Free memory
     wdf_cleanup_obj(&usb_dev->object);
@@ -120,13 +120,13 @@ struct wdf_usb_pipe {
 static void usb_if_destr(struct wdf_usb_interface *usb_if) {
     if(usb_if->libusb_if) {
         //Unlink from USB device
-        if(!usb_if->usb_device->is_dying) cant_fail(pthread_mutex_lock(&usb_if->usb_device->ifs_lock));
+        if(!usb_if->usb_device->is_dying) cant_fail_ret(pthread_mutex_lock(&usb_if->usb_device->ifs_lock));
 
         if(usb_if->prev) usb_if->prev->next = usb_if->next;
         else usb_if->usb_device->ifs_head = usb_if->next;
         if(usb_if->next) usb_if->next->prev = usb_if->prev;
 
-        if(!usb_if->usb_device->is_dying) cant_fail(pthread_mutex_unlock(&usb_if->usb_device->ifs_lock));
+        if(!usb_if->usb_device->is_dying) cant_fail_ret(pthread_mutex_unlock(&usb_if->usb_device->ifs_lock));
 
         //Destroy pipes
         for(int i = 0; i < usb_if->num_pipes; i++) winwdf_destroy_object((WDFOBJECT) &usb_if->pipes[i]);
@@ -164,7 +164,7 @@ __winfnc NTSTATUS WdfUsbTargetDeviceCreate(WDF_DRIVER_GLOBALS *globals, WDFOBJEC
 
     usb_dev->libusb_dev = wdf_get_libusb_device(dev);
 
-    cant_fail(pthread_mutex_init(&usb_dev->ifs_lock, NULL));
+    cant_fail_ret(pthread_mutex_init(&usb_dev->ifs_lock, NULL));
     usb_dev->ifs_head = NULL;
 
     //Initialize device
@@ -278,14 +278,14 @@ __winfnc WDFOBJECT WdfUsbTargetDeviceGetInterface(WDF_DRIVER_GLOBALS *globals, W
     }
 
     //Link into USB device interface list
-    cant_fail(pthread_mutex_lock(&usb_dev->ifs_lock));
+    cant_fail_ret(pthread_mutex_lock(&usb_dev->ifs_lock));
 
     usb_if->prev = NULL;
     usb_if->next = usb_dev->ifs_head;
     if(usb_dev->ifs_head) usb_dev->ifs_head->prev = usb_if;
     usb_dev->ifs_head = usb_if;
 
-    cant_fail(pthread_mutex_unlock(&usb_dev->ifs_lock));
+    cant_fail_ret(pthread_mutex_unlock(&usb_dev->ifs_lock));
 
     return &usb_if->object;
 }

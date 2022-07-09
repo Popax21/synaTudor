@@ -84,15 +84,15 @@ void winlog_register_trace_msg(GUID guid, int num, const char *format) {
     msg->format = format;
 
     //Add to message list
-    cant_fail(pthread_rwlock_wrlock(&trace_msgs_lock));
+    cant_fail_ret(pthread_rwlock_wrlock(&trace_msgs_lock));
     msg->next = trace_msgs_head;
     trace_msgs_head = msg;
-    cant_fail(pthread_rwlock_unlock(&trace_msgs_lock));
+    cant_fail_ret(pthread_rwlock_unlock(&trace_msgs_lock));
 }
 
 void winlog_trace(GUID guid, int num, win_va_list vas) {
     //Find the trace message
-    cant_fail(pthread_rwlock_rdlock(&trace_msgs_lock));
+    cant_fail_ret(pthread_rwlock_rdlock(&trace_msgs_lock));
 
     struct trace_msg *msg = NULL;
     for(struct trace_msg *m = trace_msgs_head; m != NULL; m = m->next) {
@@ -102,25 +102,25 @@ void winlog_trace(GUID guid, int num, win_va_list vas) {
         }
     }
 
-    cant_fail(pthread_rwlock_unlock(&trace_msgs_lock));
+    cant_fail_ret(pthread_rwlock_unlock(&trace_msgs_lock));
 
     //Log the message
     if(!msg) return;
 
-    cant_fail(pthread_mutex_lock(&LOG_LOCK));
+    cant_fail_ret(pthread_mutex_lock(&LOG_LOCK));
     printf("[TRACE][%u][%x...][%02x] ", win_get_thread_id(), guid.PartA, num);
     winlog_printf(msg->format, true, vas);
     printf("\n");
-    cant_fail(pthread_mutex_unlock(&LOG_LOCK));
+    cant_fail_ret(pthread_mutex_unlock(&LOG_LOCK));
 }
 
 __winfnc ULONG DbgPrintEx(ULONG comp_id, ULONG level, const char *format, ...) {
     win_va_list vas;
     win_va_start(vas, format);
-    cant_fail(pthread_mutex_lock(&LOG_LOCK));
+    cant_fail_ret(pthread_mutex_lock(&LOG_LOCK));
     printf("[DbgPrintEx] ");
     winlog_printf(format, false, vas);
-    cant_fail(pthread_mutex_unlock(&LOG_LOCK));
+    cant_fail_ret(pthread_mutex_unlock(&LOG_LOCK));
     win_va_end(vas);
     return 0;
 }

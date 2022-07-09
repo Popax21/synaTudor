@@ -84,7 +84,7 @@ bool tudor_reg_handler(void *ctx, void *ctx_obj, const char *key_name, const cha
     //Handle pair data store key
     if(strcmp(key_name, "HKEY_CURRENT_USER\\Software\\Synaptics\\PairingData") == 0) {
         //Find existing pairing data
-        cant_fail(pthread_mutex_lock(&tudor_pair_data_lock));
+        cant_fail_ret(pthread_mutex_lock(&tudor_pair_data_lock));
         for(struct tudor_pair_data *pd = tudor_pair_data_head; pd; pd = pd->next) {
             if(strcmp(pd->name, val_name) == 0) {
                 if(!is_write) {
@@ -101,11 +101,11 @@ bool tudor_reg_handler(void *ctx, void *ctx_obj, const char *key_name, const cha
                     memcpy(pd->data, buf, *buf_size);
                 }
 
-                cant_fail(pthread_mutex_unlock(&tudor_pair_data_lock));
+                cant_fail_ret(pthread_mutex_unlock(&tudor_pair_data_lock));
                 return true;
             }
         }
-        cant_fail(pthread_mutex_unlock(&tudor_pair_data_lock));
+        cant_fail_ret(pthread_mutex_unlock(&tudor_pair_data_lock));
 
         if(is_write) {
             //Add new pairing data

@@ -164,7 +164,7 @@ int main(int argc, char **argv) {
 
     //Start the libusb polling thread
     pthread_t usb_poll_thread;
-    cant_fail(pthread_create(&usb_poll_thread, NULL, libusb_poll_thread_func, usb_ctx));
+    cant_fail_ret(pthread_create(&usb_poll_thread, NULL, libusb_poll_thread_func, usb_ctx));
 
     //Initialize tudor driver
     log_info("Initializing tudor driver...");
@@ -247,7 +247,7 @@ int main(int argc, char **argv) {
     libusb_close(usb_dev);
 
     //Shutdown libusb
-    cant_fail(pthread_join(usb_poll_thread, NULL));
+    cant_fail_ret(pthread_join(usb_poll_thread, NULL));
     libusb_exit(usb_ctx);
 
     return EXIT_SUCCESS;

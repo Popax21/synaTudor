@@ -15,7 +15,7 @@ static void module_destr(struct winmodule *module) {
 }
 
 struct winmodule *winmodule_find(const char *name) {
-    cant_fail(pthread_rwlock_rdlock(&modules_lock));
+    cant_fail_ret(pthread_rwlock_rdlock(&modules_lock));
 
     struct winmodule *module = NULL;
     for(struct winmodule *m = modules_head; m != NULL; m = m->next) {
@@ -25,12 +25,12 @@ struct winmodule *winmodule_find(const char *name) {
         }
     }
 
-    cant_fail(pthread_rwlock_unlock(&modules_lock));
+    cant_fail_ret(pthread_rwlock_unlock(&modules_lock));
     return module;
 }
 
 void winmodule_register(struct winmodule *module) {
-    cant_fail(pthread_rwlock_wrlock(&modules_lock));
+    cant_fail_ret(pthread_rwlock_wrlock(&modules_lock));
 
     module->handle = winhandle_create(module, (winhandle_destr_fnc*) module_destr);
 
@@ -39,11 +39,11 @@ void winmodule_register(struct winmodule *module) {
     if(modules_head) modules_head->prev = module;
     modules_head = module;
 
-    cant_fail(pthread_rwlock_unlock(&modules_lock));
+    cant_fail_ret(pthread_rwlock_unlock(&modules_lock));
 }
 
 void winmodule_unregister(struct winmodule *module) {
-    cant_fail(pthread_rwlock_wrlock(&modules_lock));
+    cant_fail_ret(pthread_rwlock_wrlock(&modules_lock));
 
     if(module->handle) {
         winhandle_destroy(module->handle);
@@ -54,7 +54,7 @@ void winmodule_unregister(struct winmodule *module) {
     else modules_head = module->next;
     if(module->next) module->next->prev = module->prev;
 
-    cant_fail(pthread_rwlock_unlock(&modules_lock));
+    cant_fail_ret(pthread_rwlock_unlock(&modules_lock));
 }
 
 static __thread struct winmodule *cur_module;
