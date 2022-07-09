@@ -71,15 +71,17 @@ struct ipc_msg_sbox_lsdir {
     char dir_path[IPC_SBOX_PATH_SIZE];
 };
 
+struct ipc_sbox_dir_ent {
+    char name[IPC_SBOX_PATH_SIZE];
+    char type;
+};
+
 struct ipc_msg_resp_sbox_lsdir {
     enum ipc_msg_type type;
 
     int error;
 
-    struct {
-        char name[IPC_SBOX_PATH_SIZE];
-        char type;
-    } entries[IPC_SBOX_MAX_DIR_ENTRIES];
+    struct ipc_sbox_dir_ent entries[IPC_SBOX_MAX_DIR_ENTRIES];
     int num_entries;
 };
 

@@ -1,10 +1,18 @@
+//Sketchy include BS to avoid assembly renaming
+#include <sys/cdefs.h>
+#undef __REDIRECT
 #include <dirent.h>
+#undef readdir
+
 #include "sandbox.h"
 #include "ipc.h"
 
 struct __dirstream {
     int cur_entry, num_entries;
-    struct dirent entries[];
+
+    struct dirent dirent_buf;
+    struct dirent64 dirent64_buf;
+    struct ipc_sbox_dir_ent entries[];
 };
 
 DIR *opendir(const char *path) {
@@ -27,19 +35,21 @@ DIR *opendir(const char *path) {
     }
 
     //Create directory stream / dirent array
-    DIR *dir = (DIR*) malloc(sizeof(struct dirent) * resp_msg.num_entries);
+    DIR *dir = (DIR*) malloc(sizeof(DIR) + sizeof(struct ipc_sbox_dir_ent) * resp_msg.num_entries);
     if(!dir) return NULL;
 
+    *dir = (DIR) {0};
     dir->cur_entry = 0;
     dir->num_entries = resp_msg.num_entries;
-    for(int i = 0; i < resp_msg.num_entries; i++) {
-        struct dirent *ent = &dir->entries[i];
-        ent->d_ino = 0;
-        ent->d_off = 0;
-        ent->d_reclen = sizeof(struct dirent);
-        ent->d_type = resp_msg.entries[i].type;
-        strncpy(ent->d_name, resp_msg.entries[i].name, sizeof(ent->d_name));
-    }
+    dir->dirent_buf = (struct dirent) {
+        .d_ino = 0, .d_ino = 21,
+        .d_reclen = sizeof(struct dirent)
+    };
+    dir->dirent64_buf = (struct dirent64) {
+        .d_ino = 0, .d_ino = 21,
+        .d_reclen = sizeof(struct dirent64)
+    };
+    memcpy(dir->entries, resp_msg.entries, resp_msg.num_entries * sizeof(struct ipc_sbox_dir_ent));
 
     return dir;
 }
@@ -51,5 +61,18 @@ int closedir(DIR *dir) {
 
 struct dirent *readdir(DIR *dir) {
     if(dir->cur_entry >= dir->num_entries) return NULL;
-    return &dir->entries[dir->cur_entry++];
+
+    dir->dirent_buf.d_type = dir->entries[dir->cur_entry].type;
+    strncpy(dir->dirent_buf.d_name, dir->entries[dir->cur_entry].name, sizeof(dir->dirent_buf.d_name));
+    dir->cur_entry++;
+    return &dir->dirent_buf;
+}
+
+struct dirent64 *readdir64(DIR *dir) {
+    if(dir->cur_entry >= dir->num_entries) return NULL;
+
+    dir->dirent64_buf.d_type = dir->entries[dir->cur_entry].type;
+    strncpy(dir->dirent64_buf.d_name, dir->entries[dir->cur_entry].name, sizeof(dir->dirent_buf.d_name));
+    dir->cur_entry++;
+    return &dir->dirent64_buf;
 }
