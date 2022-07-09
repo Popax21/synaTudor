@@ -17,6 +17,7 @@ struct _FpiDeviceTudor {
     GSocket *ipc_socket;
     GCancellable *ipc_cancel;
     IPCMessageBuf *send_msg;
+    bool in_shutdown;
 
     GPtrArray *db_records;
 };

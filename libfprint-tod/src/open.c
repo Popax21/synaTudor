@@ -14,6 +14,7 @@ static void dispose_dev(FpiDeviceTudor *tdev) {
     g_clear_object(&tdev->ipc_cancel);
     g_clear_object(&tdev->ipc_socket);
     g_clear_object(&tdev->dbus_con);
+    tdev->in_shutdown = false;
 
     g_debug("Disposed tudor device resources");
 }
@@ -37,7 +38,7 @@ static void host_exit_cb(FpiDeviceTudor *tdev, guint host_id, gint status) {
     }
 
     //If we're in a close action, we have to dispose the device and complete the action here
-    if(fpi_device_get_current_action(dev) == FPI_DEVICE_ACTION_CLOSE) {
+    if(tdev->in_shutdown) {
         dispose_dev(tdev);
         g_usb_device_open(fpi_device_get_usb_device(dev), NULL);
         fpi_device_close_complete(dev, NULL);
@@ -146,7 +147,7 @@ void fpi_device_tudor_open(FpDevice *dev) {
 static void close_timeout_cb(FpDevice *dev, gpointer user_data) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
 
-    if(fpi_device_get_current_action(dev) == FPI_DEVICE_ACTION_CLOSE) {
+    if(tdev->in_shutdown) {
         g_warning("Tudor host process hit shut down timeout!");
         dispose_dev(tdev);
         g_usb_device_open(fpi_device_get_usb_device(dev), NULL);
@@ -166,6 +167,7 @@ void fpi_device_tudor_close(FpDevice *dev) {
     }
 
     //Send shutdown message
+    tdev->in_shutdown = true;
     tdev->send_msg->size = sizeof(enum ipc_msg_type);
     tdev->send_msg->type = IPC_MSG_SHUTDOWN;
 
