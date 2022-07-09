@@ -31,9 +31,6 @@ enum ipc_msg_type {
     IPC_MSG_RESP_IDENTIFY
 };
 
-#define IPC_SBOX_PATH_SIZE 128
-#define IPC_SBOX_MAX_DIR_ENTRIES 32
-
 #define IPC_SENSOR_NAME_SIZE 64
 #define IPC_MAX_PDATA_SIZE 4096
 
