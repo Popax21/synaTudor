@@ -2,7 +2,11 @@
 #include "sandbox.h"
 #include "ipc.h"
 
-int open(const char *path, int flags) {
+#include "noredirect.h"
+#include <fcntl.h>
+#undef open
+
+int open(const char *path, int flags, ...) {
     log_debug("Hooked open call for file '%s'", path);
 
     //Send the host module a message
@@ -21,3 +25,5 @@ int open(const char *path, int flags) {
     errno = resp_msg.error;
     return open_fd;
 }
+
+int open64(const char *path, int flags, ...) { return open(path, flags); }
