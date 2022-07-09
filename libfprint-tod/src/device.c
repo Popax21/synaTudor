@@ -87,7 +87,7 @@ static void fpi_device_tudor_class_init(FpiDeviceTudorClass *class) {
     obj_class->dispose = fpi_device_tudor_dispose;
 
     FpDeviceClass *dev_class = FP_DEVICE_CLASS(class);
-    dev_class->id = "tudor_relink_dev";
+    dev_class->id = "syna_tudor_relink";
     dev_class->full_name = "Synaptics Tudor";
     dev_class->type = FP_DEVICE_TYPE_USB;
     dev_class->id_table = tudor_ids;
