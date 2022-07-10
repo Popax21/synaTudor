@@ -66,7 +66,7 @@ bool load_pdata(FpiDeviceTudor *tdev, GByteArray **pdata, GError **error) {
         const void *pdata_data = g_variant_get_fixed_array(pdata_var, &pdata_len, 1);
         *pdata = g_byte_array_new_take(g_memdup2(pdata_data, pdata_len), pdata_len);
 
-        g_info("Loaded pairing data for Tudor sensor '%s' - %lu bytes", tdev->sensor_name, pdata_len);
+        g_info("Loaded pairing data for tudor sensor '%s' - %lu bytes", tdev->sensor_name, pdata_len);
     } else *pdata = NULL;
 
     g_variant_unref(pdata_var);
@@ -84,7 +84,7 @@ bool store_pdata(FpiDeviceTudor *tdev, GByteArray *pdata, GError **error) {
     if(!rets) return false;
     g_variant_unref(rets);
 
-    g_info("Stored pairing data for Tudor sensor '%s' - %lu bytes", tdev->sensor_name, pdata->len);
+    g_info("Stored pairing data for tudor sensor '%s' - %lu bytes", tdev->sensor_name, pdata->len);
     return true;
 }
 
