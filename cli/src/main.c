@@ -167,6 +167,8 @@ int main(int argc, char **argv) {
     cant_fail_ret(pthread_create(&usb_poll_thread, NULL, libusb_poll_thread_func, usb_ctx));
 
     //Initialize tudor driver
+    tudor_get_pdata_fnc = get_pair_data;
+    tudor_set_pdata_fnc = set_pair_data;
     log_info("Initializing tudor driver...");
     if(!tudor_init()) {
         log_error("Error initializing tudor driver!");
@@ -188,7 +190,7 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    //Open the deviceS
+    //Open the device
     log_info("Opening tudor device...");
     struct tudor_device device;
     if(!tudor_open(&device, usb_dev, NULL)) {
@@ -241,6 +243,7 @@ int main(int argc, char **argv) {
         log_error("Error shutting down tudor driver!");
         return EXIT_FAILURE;
     }
+    free_pair_data();
 
     //Close the USB device
     libusb_poll_thread_exit = true;

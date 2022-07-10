@@ -172,13 +172,5 @@ bool tudor_shutdown() {
     //Unregister dummy modules
     winmodule_unregister(&ntdll_module);
 
-    //Free pairing data
-    for(struct tudor_pair_data *pd = tudor_pair_data_head, *npd = pd ? pd->next : NULL; pd; pd = npd, npd = pd ? pd->next : NULL) {
-        free(pd->name);
-        free(pd->data);
-        free(pd);
-    }
-    tudor_pair_data_head = NULL;
-
     return true;
 }

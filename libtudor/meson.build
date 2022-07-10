@@ -57,7 +57,6 @@ libtudor_src = [
     'src/winapi/wdf/reg.c',
     'src/winapi/wdf/usb.c',
 
-    'src/tudor/pairdata.c',
     'src/tudor/driver.c',
     'src/tudor/device.c',
     'src/tudor/storage.c',

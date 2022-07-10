@@ -20,14 +20,11 @@ bool tudor_init();
 bool tudor_shutdown();
 
 struct tudor_pair_data {
-    struct tudor_pair_data *next;
-    char *name;
     void *data;
     size_t data_size;
 };
-extern pthread_mutex_t tudor_pair_data_lock;
-extern struct tudor_pair_data *tudor_pair_data_head;
-void tudor_add_pair_data(const char *name, const void *data, size_t data_size);
+extern const struct tudor_pair_data *(*tudor_get_pdata_fnc)(const char *name);
+extern void (*tudor_set_pdata_fnc)(const char *name, const struct tudor_pair_data *pdata);
 
 struct tudor_device_state {
     bool pairing_in_process, unpairing_in_process;

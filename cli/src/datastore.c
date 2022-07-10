@@ -3,6 +3,72 @@
 #include <tudor/log.h>
 #include "datastore.h"
 
+static pthread_mutex_t pdata_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct pdata {
+    struct pdata *next;
+    char *name;
+    struct tudor_pair_data data;
+} *pdata_head = NULL;
+
+const struct tudor_pair_data *get_pair_data(const char *name) {
+    //Find pairing data
+    cant_fail_ret(pthread_mutex_lock(&pdata_lock));
+    for(struct pdata *pd = pdata_head; pd; pd = pd->next) {
+        if(strcmp(pd->name, name) == 0) {
+            cant_fail_ret(pthread_mutex_unlock(&pdata_lock));
+            return &pd->data;
+        }
+    }
+    cant_fail_ret(pthread_mutex_unlock(&pdata_lock));
+    return NULL;
+}
+
+void set_pair_data(const char *name, const struct tudor_pair_data *data) {
+    //Duplicate pairing data
+    struct tudor_pair_data pdata_data = {
+        .data = malloc(data->data_size),
+        .data_size = data->data_size
+    };
+    if(!pdata_data.data) {
+        perror("Error allocating pairing data buffer");
+        abort();
+    }
+    memcpy(pdata_data.data, data->data, data->data_size);
+
+    //Find existing pairing data
+    cant_fail_ret(pthread_mutex_lock(&pdata_lock));
+    for(struct pdata *pd = pdata_head; pd; pd = pd->next) {
+        if(strcmp(pd->name, name) == 0) {
+            free(pd->data.data);
+            pd->data = pdata_data;
+            cant_fail_ret(pthread_mutex_unlock(&pdata_lock));
+            return;
+        }
+    }
+
+    //Create new pairing data
+    struct pdata *pdata = (struct pdata*) malloc(sizeof(struct pdata));
+    if(!pdata) {
+        perror("Error allocating pairing data");
+        abort();
+    }
+
+    char *pdata_name = strdup(name);
+    if(!pdata_name) {
+        perror("Error allocating pairing data name");
+        abort();
+    }
+
+    *pdata = (struct pdata) {
+        .next = pdata_head,
+        .name = pdata_name,
+        .data = pdata_data
+    };
+    pdata_head = pdata;
+
+    cant_fail_ret(pthread_mutex_unlock(&pdata_lock));
+}
+
 bool load_datastore_pair_data(FILE *file) {
     while(true) {
         //Read name
@@ -42,17 +108,30 @@ bool load_datastore_pair_data(FILE *file) {
         }
 
         //Add pairing data
-        tudor_add_pair_data(name, data, data_size);
+        cant_fail_ret(pthread_mutex_lock(&pdata_lock));
 
-        free(name);
-        free(data);
+        struct pdata *pdata = (struct pdata*) malloc(sizeof(struct pdata));
+        if(!pdata) {
+            perror("Error allocating pairing data");
+            return false;
+        }
+        *pdata = (struct pdata) {
+            .next = pdata_head,
+            .name = name,
+            .data.data = data,
+            .data.data_size = data_size
+        };
+        pdata_head = pdata;
+
+        cant_fail_ret(pthread_mutex_unlock(&pdata_lock));
+        log_debug("Added pairing data for sensor '%s'...", name);
     }
     return true;
 }
 
 bool save_datastore_pair_data(FILE *file) {
-    cant_fail_ret(pthread_mutex_lock(&tudor_pair_data_lock));
-    for(struct tudor_pair_data *pdata = tudor_pair_data_head; pdata; pdata = pdata->next) {
+    cant_fail_ret(pthread_mutex_lock(&pdata_lock));
+    for(struct pdata *pdata = pdata_head; pdata; pdata = pdata->next) {
         //Write name
         int name_len = strlen(pdata->name);
         if(
@@ -65,14 +144,14 @@ bool save_datastore_pair_data(FILE *file) {
 
         //Write data
         if(
-            fwrite(&pdata->data_size, 1, sizeof(size_t), file) != sizeof(size_t) ||
-            fwrite(pdata->data, 1, pdata->data_size, file) != pdata->data_size
+            fwrite(&pdata->data.data_size, 1, sizeof(size_t), file) != sizeof(size_t) ||
+            fwrite(pdata->data.data, 1, pdata->data.data_size, file) != pdata->data.data_size
         ) {
             perror("Error writing pairing data");
             return false;
         }
     }
-    cant_fail_ret(pthread_mutex_unlock(&tudor_pair_data_lock));
+    cant_fail_ret(pthread_mutex_unlock(&pdata_lock));
 
     if(fputc(0, file) == EOF) {
         perror("Error writing pairing data end terminator");
@@ -80,6 +159,16 @@ bool save_datastore_pair_data(FILE *file) {
     }
 
     return true;
+}
+
+void free_pair_data() {
+    //Free pairing data
+    for(struct pdata *pd = pdata_head, *npd = pd ? pd->next : NULL; pd; pd = npd, npd = pd ? pd->next : NULL) {
+        free(pd->name);
+        free(pd->data.data);
+        free(pd);
+    }
+    pdata_head = NULL;
 }
 
 bool load_datastore_records(FILE *file, struct tudor_device *device) {

@@ -1,5 +1,8 @@
 #include "internal.h"
 
+const struct tudor_pair_data *(*tudor_get_pdata_fnc)(const char *name);
+void (*tudor_set_pdata_fnc)(const char *name, const struct tudor_pair_data *pdata);
+
 bool tudor_reg_handler(void *ctx, void *ctx_obj, const char *key_name, const char *val_name, bool is_write, void *buf, size_t *buf_size, enum winreg_val_type *val_type) {
     if(!buf_size) return false;
 
@@ -83,33 +86,26 @@ bool tudor_reg_handler(void *ctx, void *ctx_obj, const char *key_name, const cha
 
     //Handle pair data store key
     if(strcmp(key_name, "HKEY_CURRENT_USER\\Software\\Synaptics\\PairingData") == 0) {
-        //Find existing pairing data
-        cant_fail_ret(pthread_mutex_lock(&tudor_pair_data_lock));
-        for(struct tudor_pair_data *pd = tudor_pair_data_head; pd; pd = pd->next) {
-            if(strcmp(pd->name, val_name) == 0) {
-                if(!is_write) {
-                    if(buf && *buf_size >= pd->data_size) {
-                        memcpy(buf, pd->data, pd->data_size);
-                    } else if(buf) return false;
-                    *buf_size = pd->data_size;
-                    *val_type = WINREG_BINARY;
-                } else {
-                    free(pd->data);
-                    pd->data = malloc(*buf_size);
-                    if(!pd->data) { perror("Error allocating pairing data buffer"); abort(); }
-                    pd->data_size = *buf_size;
-                    memcpy(pd->data, buf, *buf_size);
-                }
+        //Call callback
+        if(!is_write) {
+            if(tudor_get_pdata_fnc) {
+                const struct tudor_pair_data *pdata = tudor_get_pdata_fnc(val_name);
+                if(!pdata) return false;
 
-                cant_fail_ret(pthread_mutex_unlock(&tudor_pair_data_lock));
+                if(buf && *buf_size >= pdata->data_size) {
+                    memcpy(buf, pdata->data, pdata->data_size);
+                } else if(buf) return false;
+                *buf_size = pdata->data_size;
+                *val_type = WINREG_BINARY;
+            }
+        } else {
+            if(tudor_set_pdata_fnc) {
+                tudor_set_pdata_fnc(val_name, &(struct tudor_pair_data) {
+                    .data = buf,
+                    .data_size = *buf_size
+                });
                 return true;
             }
-        }
-        cant_fail_ret(pthread_mutex_unlock(&tudor_pair_data_lock));
-
-        if(is_write) {
-            //Add new pairing data
-            tudor_add_pair_data(val_name, buf, *buf_size);
         }
 
         return false;
