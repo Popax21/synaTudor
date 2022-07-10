@@ -46,6 +46,56 @@ static void recv_init_msg(int sock, int *usb_dev_fd, uint8_t *usb_bus, uint8_t *
     }
 }
 
+static int pdata_ipc_sock;
+static const struct tudor_pair_data *get_pdata_cb(const char *name) {
+    log_info("Getting pairing data for sensor '%s'...", name);
+
+    //Send an IPC message to the module
+    struct ipc_msg_load_pdata msg = { .type = IPC_MSG_LOAD_PDATA };
+    strncpy(msg.sensor_name, name, sizeof(msg.sensor_name));
+    ipc_send_msg(pdata_ipc_sock, &msg, sizeof(msg));
+
+    //Receive the response
+    struct {
+        struct ipc_msg_resp_load_pdata msg;
+        char buf[IPC_MAX_PDATA_SIZE];
+    } resp;
+    size_t pdata_sz = ipc_recv_msg(pdata_ipc_sock, &resp, IPC_MSG_RESP_LOAD_PDATA, sizeof(resp.msg), sizeof(resp), NULL) - sizeof(resp.msg);
+
+    //Leak the pairing data buffer ¯\_(ツ)_/¯
+    struct tudor_pair_data *pdata = (struct tudor_pair_data*) malloc(sizeof(struct tudor_pair_data) + pdata_sz);
+    if(!pdata) {
+        perror("Couldn't allocate pairing data buffer");
+        abort();
+    }
+    pdata->data = pdata+1;
+    pdata->data_size = pdata_sz;
+    memcpy(pdata->data, resp.msg.pdata, pdata->data_size);
+
+    return pdata;
+}
+
+static void set_pdata_cb(const char *name, const struct tudor_pair_data *data) {
+    if(data->data_size > IPC_MAX_PDATA_SIZE) {
+        log_error("Pairing data over maximum size!");
+        abort();
+    }
+    log_info("Setting pairing data for sensor '%s'...", name);
+
+    //Send an IPC message to the module
+    struct {
+        struct ipc_msg_store_pdata msg;
+        char buf[IPC_MAX_PDATA_SIZE];
+    } msg = { .msg.type = IPC_MSG_STORE_PDATA };
+    strncpy(msg.msg.sensor_name, name, sizeof(msg.msg.sensor_name));
+    memcpy(msg.msg.pdata, data->data, data->data_size);
+    ipc_send_msg(pdata_ipc_sock, &msg, sizeof(msg.msg) + data->data_size);
+
+    //Wait for ACK
+    enum ipc_msg_type resp;
+    ipc_recv_msg(pdata_ipc_sock, &resp, IPC_MSG_ACK, sizeof(resp), sizeof(resp), NULL);
+}
+
 int main() {
     //Configure stdout/stderr buffering
     cant_fail(setvbuf(stdout, NULL, _IOLBF, 1024));
@@ -105,6 +155,9 @@ int main() {
     log_debug("Started USB polling thread");
 
     //Initialize driver
+    tudor_get_pdata_fnc = get_pdata_cb;
+    tudor_set_pdata_fnc = set_pdata_cb;
+    pdata_ipc_sock = sock;
     if(!tudor_init()) {
         log_error("Couldn't initialize tudor driver!");
         return EXIT_FAILURE;
