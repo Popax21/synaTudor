@@ -88,6 +88,9 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
                 g_byte_array_unref(pdata);
             }
             if(!send_ipc_msg(tdev, tdev->send_msg, &error)) goto error;
+
+            //Receive further messages
+            recv_ipc_msg(tdev, open_recv_cb, NULL);
         } break;
         case IPC_MSG_STORE_PDATA: {
             //Check sensor name
@@ -116,6 +119,9 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
             tdev->send_msg->size = sizeof(enum ipc_msg_type);
             tdev->send_msg->type = IPC_MSG_ACK;
             if(!send_ipc_msg(tdev, tdev->send_msg, &error)) goto error;
+
+            //Receive further messages
+            recv_ipc_msg(tdev, open_recv_cb, NULL);
         } break;
         case IPC_MSG_READY: {
             //Complete the open procedure
