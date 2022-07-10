@@ -138,7 +138,6 @@ int main() {
     ipc_run_handler_loop(sock);
 
     //Close device
-    usb_thread_exit = true;
     if(!tudor_close(&dev)) {
         log_error("Couldn't close tudor device!");
     }
@@ -152,6 +151,7 @@ int main() {
     log_info("Shutdown tudor driver");
 
     //Close the USB device
+    usb_thread_exit = true;
     libusb_close(usb_dev);
     cant_fail(close(usb_dev_fd));
 
