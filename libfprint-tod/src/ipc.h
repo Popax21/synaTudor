@@ -15,6 +15,10 @@ typedef struct _IPCMessageBuf {
         enum ipc_msg_type type;
         struct ipc_msg_init init;
 
+        struct ipc_msg_load_pdata load_pdata;
+        struct ipc_msg_resp_load_pdata resp_load_pdata;
+        struct ipc_msg_store_pdata store_pdata;
+
         struct ipc_msg_add_record add_record;
         struct ipc_msg_del_record del_record;
 

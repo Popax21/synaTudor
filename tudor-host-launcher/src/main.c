@@ -21,9 +21,9 @@ static void launch_method_call(GDBusConnection *con, const gchar *sender, const 
         launch_host_call(invoc, params);
     } else if(strcmp(method_name, TUDOR_HOST_LAUNCHER_KILL_METHOD) == 0) {
         kill_host_call(invoc, params);
-    } else if(strcmp(method_name, TUDOR_HOST_LAUNCHER_LOAD_PAIRING_DATA) == 0) {
+    } else if(strcmp(method_name, TUDOR_HOST_LAUNCHER_LOAD_PAIRING_DATA_METHOD) == 0) {
         load_pdata_call(invoc, params);
-    } else if(strcmp(method_name, TUDOR_HOST_LAUNCHER_STORE_PAIRING_DATA) == 0) {
+    } else if(strcmp(method_name, TUDOR_HOST_LAUNCHER_STORE_PAIRING_DATA_METHOD) == 0) {
         store_pdata_call(invoc, params);
     } else {
         g_dbus_method_invocation_return_error(invoc, G_DBUS_ERROR, G_DBUS_ERROR_INVALID_SIGNATURE, "Unknown method '%s'", method_name);

@@ -1,5 +1,6 @@
 #include <sys/socket.h>
 #include "open.h"
+#include "data.h"
 #include "ipc.h"
 
 static void dispose_dev(FpiDeviceTudor *tdev) {
@@ -14,6 +15,7 @@ static void dispose_dev(FpiDeviceTudor *tdev) {
     g_clear_object(&tdev->ipc_cancel);
     g_clear_object(&tdev->ipc_socket);
     g_clear_object(&tdev->dbus_con);
+    g_clear_pointer(&tdev->sensor_name, g_free);
     tdev->in_shutdown = false;
 
     g_debug("Disposed tudor device resources");
@@ -57,6 +59,64 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
 
     //Handle message
     switch(msg->type) {
+        case IPC_MSG_LOAD_PDATA: {
+            //Check sensor name
+            if(!tdev->sensor_name) tdev->sensor_name = g_strndup(msg->load_pdata.sensor_name, sizeof(msg->load_pdata.sensor_name));
+            else if(strcmp(tdev->sensor_name, msg->load_pdata.sensor_name) != 0) {
+                error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Disallowed load of sensor pairing data '%.*s'", (int) sizeof(msg->load_pdata.sensor_name), msg->load_pdata.sensor_name);
+                goto error;
+            }
+
+            //Load pairing data
+            GByteArray *pdata = NULL;
+            if(!load_pdata(tdev, &pdata, &error)) goto error;
+
+            if(pdata && pdata->len > IPC_MAX_PDATA_SIZE) {
+                g_error("Stored Tudor pairing data lenght exceeds maximum! [%d > %d]", pdata->len, IPC_MAX_PDATA_SIZE);
+                g_byte_array_unref(pdata);
+                pdata = NULL;
+            }
+
+            //Send response
+            tdev->send_msg->size = sizeof(struct ipc_msg_resp_load_pdata) + (pdata ? pdata->len : 0);
+            tdev->send_msg->resp_load_pdata = (struct ipc_msg_resp_load_pdata) {
+                .type = IPC_MSG_RESP_LOAD_PDATA,
+                .has_pdata = (pdata != NULL)
+            };
+            if(pdata) {
+                memcpy(tdev->send_msg->resp_load_pdata.pdata, pdata->data, pdata->len);
+                g_byte_array_unref(pdata);
+            }
+            if(!send_ipc_msg(tdev, tdev->send_msg, &error)) goto error;
+        } break;
+        case IPC_MSG_STORE_PDATA: {
+            //Check sensor name
+            if(!tdev->sensor_name) tdev->sensor_name = g_strndup(msg->load_pdata.sensor_name, sizeof(msg->load_pdata.sensor_name));
+            else if(strcmp(tdev->sensor_name, msg->load_pdata.sensor_name) != 0) {
+                error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Disallowed store of sensor pairing data '%.*s'", (int) sizeof(msg->load_pdata.sensor_name), msg->load_pdata.sensor_name);
+                goto error;
+            }
+
+            //Create pairing data array
+            size_t pdata_len = msg->size - sizeof(struct ipc_msg_store_pdata);
+            if(pdata_len > IPC_MAX_PDATA_SIZE) {
+                error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Pairing data exceeds maximum size");
+                goto error;
+            }
+            GByteArray *pdata = g_byte_array_new_take(g_memdup2(msg->store_pdata.pdata, pdata_len), pdata_len);
+
+            //Store pairing data
+            if(!store_pdata(tdev, pdata, &error)) {
+                g_byte_array_unref(pdata);
+                goto error;
+            }
+            g_byte_array_unref(pdata);
+
+            //Send ACK
+            tdev->send_msg->size = sizeof(enum ipc_msg_type);
+            tdev->send_msg->type = IPC_MSG_ACK;
+            if(!send_ipc_msg(tdev, tdev->send_msg, &error)) goto error;
+        } break;
         case IPC_MSG_READY: {
             //Complete the open procedure
             g_info("Tudor host process ID %d sent READY message", tdev->host_id);

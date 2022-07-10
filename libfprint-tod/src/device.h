@@ -19,6 +19,7 @@ struct _FpiDeviceTudor {
     IPCMessageBuf *send_msg;
     bool in_shutdown;
 
+    gchar *sensor_name;
     GPtrArray *db_records;
 };
 
