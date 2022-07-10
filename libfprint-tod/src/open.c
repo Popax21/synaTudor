@@ -181,11 +181,19 @@ void fpi_device_tudor_open(FpDevice *dev) {
     g_usb_device_close(usb_dev, NULL);
 
     //Send the init message
+    const char *loglvl_env = g_getenv("TUDOR_LOGLVL");
+    const char *loglvl_env_end = loglvl_env;
+    enum log_level loglvl;
+    if(loglvl_env) loglvl = (enum log_level) strtol(loglvl_env, &loglvl_env_end, 10);
+    if(loglvl_env == loglvl_env_end) loglvl = LOG_INFO;
+    if(loglvl < LOG_VERBOSE) loglvl = LOG_VERBOSE;
+    if(loglvl > LOG_ERROR) loglvl = LOG_ERROR;
+
     tdev->send_msg->transfer_fd = usb_fd;
     tdev->send_msg->size = sizeof(struct ipc_msg_init); 
     tdev->send_msg->init = (struct ipc_msg_init) {
         .type = IPC_MSG_INIT,
-        .log_level = LOG_DEBUG,
+        .log_level = loglvl,
         .usb_bus = g_usb_device_get_bus(usb_dev),
         .usb_addr = g_usb_device_get_address(usb_dev)
     };
