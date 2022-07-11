@@ -3,13 +3,14 @@
 
 static void req_cb(struct winwdf_request *req, NTSTATUS status, OVERLAPPED *ovlp) {
     //Get request info
-    size_t num_transfered = 0;
     const void *out_buf = NULL;
+    size_t out_buf_size, num_transfered = 0;
     if(status == STATUS_SUCCESS) {
-        if(!winwdf_get_request_info(req, NULL, NULL, NULL, &out_buf, NULL, &num_transfered)) {
+        if(!winwdf_get_request_info(req, NULL, NULL, NULL, &out_buf, &out_buf_size, &num_transfered)) {
             log_error("Couldn't get request info!");
             abort();
         }
+        if(num_transfered > out_buf_size) num_transfered = out_buf_size;
     }
 
     if(LOG_LEVEL <= LOG_VERBOSE) {
@@ -24,7 +25,7 @@ static void req_cb(struct winwdf_request *req, NTSTATUS status, OVERLAPPED *ovlp
     winio_complete_overlapped(ovlp, status, num_transfered);
 }
 
-static NTSTATUS tudor_devctrl(struct tudor_device *device, OVERLAPPED *ovlp, ULONG code, void *in_buf, size_t in_size, void *out_buf, size_t *out_size, struct winwdf_request **req) {
+static NTSTATUS tudor_devctrl(struct tudor_device *device, OVERLAPPED *ovlp, ULONG code, void *in_buf, size_t in_size, void *out_buf, size_t out_size, struct winwdf_request **req) {
     if(LOG_LEVEL <= LOG_VERBOSE) {
         cant_fail_ret(pthread_mutex_lock(&LOG_LOCK));
         printf("[DEVCTRL] -> in code 0x%x (size 0x%lx): ", code, in_size);
@@ -187,6 +188,7 @@ bool tudor_close(struct tudor_device *device) {
 }
 
 bool tudor_enroll_start(struct tudor_device *device, RECGUID guid, enum tudor_finger finger) {
+    winmodule_set_cur(&tudor_adapter_dll->module);
     HRESULT hres;
 
     if(device->enrolling) {
@@ -210,9 +212,48 @@ bool tudor_enroll_start(struct tudor_device *device, RECGUID guid, enum tudor_fi
     return true;
 }
 
-bool tudor_enroll_capture(struct tudor_device *device, bool *done) {
+static void enroll_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res) {
+    winmodule_set_cur(&tudor_adapter_dll->module);
     HRESULT hres;
-    NTSTATUS status;
+    bool success = false, done = true;
+
+    if(status != STATUS_SUCCESS) {
+        log_error("Error starting capture: 0x%x!", status);
+        goto exit;
+    }
+
+    //Follow https://docs.microsoft.com/en-us/windows/win32/secbiomet/adapter-workflow - WinBioEnrollCapture
+    ULONG reject_detail;
+    if((hres = tudor_sensor_adapter->FinishCapture(res->dev->pipeline, &reject_detail)) != ERROR_SUCCESS) {
+        log_error("Error finishing sensor capture: 0x%x! [reject detail 0x%x]", hres, reject_detail);
+        if(hres == WINBIO_E_BAD_CAPTURE) done = false;
+        goto exit;
+    };
+    if((hres = tudor_sensor_adapter->PushDataToEngine(res->dev->pipeline, WINBIO_PURPOSE_ENROLL, 0, &reject_detail)) != ERROR_SUCCESS) {
+        log_error("Error pushing sensor data to engine: 0x%x! [reject detail 0x%x]", hres, reject_detail);
+        if(hres == WINBIO_E_BAD_CAPTURE) done = false;
+        goto exit;
+    };
+
+    log_debug("Updating enrollment...");
+    if((hres = tudor_engine_adapter->UpdateEnrollment(res->dev->pipeline, &reject_detail)) != ERROR_SUCCESS && hres != WINBIO_I_MORE_DATA) {
+        log_error("Error updating enrollment: 0x%x! [reject detail 0x%x]", hres, reject_detail);
+        if(hres == WINBIO_E_BAD_CAPTURE) done = false;
+        goto exit;
+    };
+
+    success = true;
+    done = hres != WINBIO_I_MORE_DATA;
+
+    exit:;
+    *res->args.enroll.done = done;
+    async_complete_op(res, success);
+}
+
+bool tudor_enroll_capture(struct tudor_device *device, bool *done, tudor_async_res_t *res) {
+    winmodule_set_cur(&tudor_adapter_dll->module);
+    *res = NULL;
+    HRESULT hres;
 
     *done = true;
     if(!device->enrolling) {
@@ -220,39 +261,18 @@ bool tudor_enroll_capture(struct tudor_device *device, bool *done) {
         return false;
     }
 
-    //Follow https://docs.microsoft.com/en-us/windows/win32/secbiomet/adapter-workflow - WinBioEnrollCapture
     log_debug("Capturing sample...");
     OVERLAPPED *ovlp;
     WINBIO_CALL_PIPELINE(tudor_sensor_adapter->StartCapture, device->pipeline, WINBIO_PURPOSE_ENROLL, &ovlp);
-    if((status = winio_wait_overlapped(ovlp, NULL)) != STATUS_SUCCESS) {
-        log_error("Error starting capture: 0x%x!", status);
-        return false;
-    }
 
-    ULONG reject_detail;
-    if((hres = tudor_sensor_adapter->FinishCapture(device->pipeline, &reject_detail)) != ERROR_SUCCESS) {
-        log_error("Error finishing sensor capture: 0x%x! [reject detail 0x%x]", hres, reject_detail);
-        if(hres == WINBIO_E_BAD_CAPTURE) *done = false;
-        return false;
-    };
-    if((hres = tudor_sensor_adapter->PushDataToEngine(device->pipeline, WINBIO_PURPOSE_ENROLL, 0, &reject_detail)) != ERROR_SUCCESS) {
-        log_error("Error pushing sensor data to engine: 0x%x! [reject detail 0x%x]", hres, reject_detail);
-        if(hres == WINBIO_E_BAD_CAPTURE) *done = false;
-        return false;
-    };
-
-    log_debug("Updating enrollment...");
-    if((hres = tudor_engine_adapter->UpdateEnrollment(device->pipeline, &reject_detail)) != ERROR_SUCCESS && hres != WINBIO_I_MORE_DATA) {
-        log_error("Error updating enrollment: 0x%x! [reject detail 0x%x]", hres, reject_detail);
-        if(hres == WINBIO_E_BAD_CAPTURE) *done = false;
-        return false;
-    };
-
-    *done = hres != WINBIO_I_MORE_DATA;
+    *res = async_new_res(device, ovlp);
+    (*res)->args.enroll = (struct async_args_enroll) { .done = done };
+    winio_set_overlapped_callback(ovlp, (winio_overlapped_cb_fnc*) enroll_cb, *res, true);
     return true;
 }
 
 bool tudor_enroll_commit(struct tudor_device *device, bool *is_duplicate) {
+    winmodule_set_cur(&tudor_adapter_dll->module);
     HRESULT hres;
 
     *is_duplicate = false;
@@ -273,6 +293,7 @@ bool tudor_enroll_commit(struct tudor_device *device, bool *is_duplicate) {
     }
 
     log_debug("Committing enrollment...");
+
     //The driver doesn't support enrollment hashes (so we don't call GetEnrollmentHash)
     if((hres = tudor_engine_adapter->CommitEnrollment(device->pipeline, &(WINBIO_IDENTITY) {
         .Type = WINBIO_ID_TYPE_GUID,
@@ -287,7 +308,8 @@ bool tudor_enroll_commit(struct tudor_device *device, bool *is_duplicate) {
     return true;
 }
 
-bool tudor_enroll_discard(struct tudor_device *device)  {
+bool tudor_enroll_discard(struct tudor_device *device) {
+    winmodule_set_cur(&tudor_adapter_dll->module);
     HRESULT hres;
 
     if(!device->enrolling) {
@@ -306,9 +328,56 @@ bool tudor_enroll_discard(struct tudor_device *device)  {
     return true;
 }
 
-bool tudor_verify(struct tudor_device *device, RECGUID guid, enum tudor_finger finger, bool *matches) {
+static void verify_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res) {
+    winmodule_set_cur(&tudor_adapter_dll->module);
     HRESULT hres;
-    NTSTATUS status;
+    bool success = false, matches = false;
+
+    if(status != STATUS_SUCCESS) {
+        log_error("Error starting capture: 0x%x!", status);
+        goto exit;
+    }
+
+    ULONG reject_detail;
+    if((hres = tudor_sensor_adapter->FinishCapture(res->dev->pipeline, &reject_detail)) != ERROR_SUCCESS) {
+        log_error("Error finishing sensor capture: 0x%x! [reject detail 0x%x]", hres, reject_detail);
+        goto exit;
+    };
+    if((hres = tudor_sensor_adapter->PushDataToEngine(res->dev->pipeline, WINBIO_PURPOSE_VERIFY, 0, &reject_detail)) != ERROR_SUCCESS) {
+        log_error("Error pushing sensor data to engine: 0x%x! [reject detail 0x%x]", hres, reject_detail);
+        goto exit;
+    };
+
+    log_debug("Verifying sample...");
+    BOOLEAN is_match;
+    UCHAR *payload_ptr, *hash_ptr;
+    SIZE_T payload_size, hash_size;
+    if((hres = tudor_engine_adapter->VerifyFeatureSet(res->dev->pipeline, &(WINBIO_IDENTITY) {
+        .Type = WINBIO_ID_TYPE_GUID,
+        .TemplateGuid = *(GUID*) &res->args.verify.guid
+    }, (UCHAR) res->args.verify.finger, &is_match, &payload_ptr, &payload_size, &hash_ptr, &hash_size, &reject_detail)) != ERROR_SUCCESS) {
+        if(hres == WINBIO_E_NO_MATCH) {
+            success = true;
+            matches = false;
+            goto exit;
+        }
+
+        log_error("Error verifying sample: 0x%x! [reject detail 0x%x]", hres, reject_detail);
+        goto exit;
+    };
+
+    success = true;
+    matches = is_match;
+
+    exit:;
+    *(res->args.verify.matches) = matches;
+    async_complete_op(res, success);
+}
+
+bool tudor_verify(struct tudor_device *device, RECGUID guid, enum tudor_finger finger, bool *matches, tudor_async_res_t *res) {
+    winmodule_set_cur(&tudor_adapter_dll->module);
+    *res = NULL;
+    HRESULT hres;
 
     *matches = false;
     if(device->enrolling) {
@@ -319,45 +388,66 @@ bool tudor_verify(struct tudor_device *device, RECGUID guid, enum tudor_finger f
     log_debug("Capturing sample...");
     OVERLAPPED *ovlp;
     WINBIO_CALL_PIPELINE(tudor_sensor_adapter->StartCapture, device->pipeline, WINBIO_PURPOSE_VERIFY, &ovlp);
-    if((status = winio_wait_overlapped(ovlp, NULL)) != STATUS_SUCCESS) {
-        log_error("Error starting capture: 0x%x!", status);
-        return false;
-    }
 
-    ULONG reject_detail;
-    if((hres = tudor_sensor_adapter->FinishCapture(device->pipeline, &reject_detail)) != ERROR_SUCCESS) {
-        log_error("Error finishing sensor capture: 0x%x! [reject detail 0x%x]", hres, reject_detail);
-        return false;
-    };
-    if((hres = tudor_sensor_adapter->PushDataToEngine(device->pipeline, WINBIO_PURPOSE_VERIFY, 0, &reject_detail)) != ERROR_SUCCESS) {
-        log_error("Error pushing sensor data to engine: 0x%x! [reject detail 0x%x]", hres, reject_detail);
-        return false;
-    };
-
-    log_debug("Verifying sample...");
-    BOOLEAN is_match;
-    UCHAR *payload_ptr, *hash_ptr;
-    SIZE_T payload_size, hash_size;
-    if((hres = tudor_engine_adapter->VerifyFeatureSet(device->pipeline, &(WINBIO_IDENTITY) {
-        .Type = WINBIO_ID_TYPE_GUID,
-        .TemplateGuid = *(GUID*) &guid
-    }, (UCHAR) finger, &is_match, &payload_ptr, &payload_size, &hash_ptr, &hash_size, &reject_detail)) != ERROR_SUCCESS) {
-        if(hres == WINBIO_E_NO_MATCH) {
-            *matches = false;
-            return true;
-        }
-
-        log_error("Error verifying sample: 0x%x! [reject detail 0x%x]", hres, reject_detail);
-        return false;
-    };
-    *matches = is_match;
-
+    *res = async_new_res(device, ovlp);
+    (*res)->args.verify = (struct async_args_verify) { .guid = guid, .finger = finger, .matches = matches };
+    winio_set_overlapped_callback(ovlp, (winio_overlapped_cb_fnc*) verify_cb, *res, true);
     return true;
 }
 
-bool tudor_identify(struct tudor_device *device, bool *found_match, RECGUID *guid, enum tudor_finger *finger) {
+static void identify_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res) {
+    winmodule_set_cur(&tudor_adapter_dll->module);
     HRESULT hres;
-    NTSTATUS status;
+    bool success = false, found_match = false;
+
+    if(status != STATUS_SUCCESS) {
+        log_error("Error starting capture: 0x%x!", status);
+        goto exit;
+    }
+
+    ULONG reject_detail;
+    if((hres = tudor_sensor_adapter->FinishCapture(res->dev->pipeline, &reject_detail)) != ERROR_SUCCESS) {
+        log_error("Error finishing sensor capture: 0x%x! [reject detail 0x%x]", hres, reject_detail);
+        goto exit;
+    };
+    if((hres = tudor_sensor_adapter->PushDataToEngine(res->dev->pipeline, WINBIO_PURPOSE_IDENTIFY, 0, &reject_detail)) != ERROR_SUCCESS) {
+        log_error("Error pushing sensor data to engine: 0x%x! [reject detail 0x%x]", hres, reject_detail);
+        goto exit;
+    };
+
+    log_debug("Identifying sample...");
+    WINBIO_IDENTITY identity;
+    UCHAR subfactor;
+    UCHAR *payload_ptr, *hash_ptr;
+    SIZE_T payload_size, hash_size;
+    if((hres = tudor_engine_adapter->IdentifyFeatureSet(res->dev->pipeline, &identity, &subfactor, &payload_ptr, &payload_size, &hash_ptr, &hash_size, &reject_detail)) != ERROR_SUCCESS) {
+        if(hres == WINBIO_E_UNKNOWN_ID) {
+            found_match = false;
+            goto exit;
+        }
+
+        log_error("Error identifying sample: 0x%x! [reject detail 0x%x]", hres, reject_detail);
+        goto exit;
+    };
+    if(identity.Type != WINBIO_ID_TYPE_GUID) {
+        log_error("Invalid identification ID type: %d!", identity.Type);
+        goto exit;
+    }
+
+    success = true;
+    found_match = true;
+    *(res->args.identify.guid) = *(RECGUID*) &identity.TemplateGuid;
+    *(res->args.identify.finger) = (enum tudor_finger) subfactor;
+
+    exit:;
+    *(res->args.identify.found_match) = found_match;
+    async_complete_op(res, success);
+}
+
+bool tudor_identify(struct tudor_device *device, bool *found_match, RECGUID *guid, enum tudor_finger *finger, tudor_async_res_t *res) {
+    winmodule_set_cur(&tudor_adapter_dll->module);
+    *res = NULL;
+    HRESULT hres;
 
     *found_match = false;
     if(device->enrolling) {
@@ -368,43 +458,9 @@ bool tudor_identify(struct tudor_device *device, bool *found_match, RECGUID *gui
     log_debug("Capturing sample...");
     OVERLAPPED *ovlp;
     WINBIO_CALL_PIPELINE(tudor_sensor_adapter->StartCapture, device->pipeline, WINBIO_PURPOSE_IDENTIFY, &ovlp);
-    if((status = winio_wait_overlapped(ovlp, NULL)) != STATUS_SUCCESS) {
-        log_error("Error starting capture: 0x%x!", status);
-        return false;
-    }
 
-    ULONG reject_detail;
-    if((hres = tudor_sensor_adapter->FinishCapture(device->pipeline, &reject_detail)) != ERROR_SUCCESS) {
-        log_error("Error finishing sensor capture: 0x%x! [reject detail 0x%x]", hres, reject_detail);
-        return false;
-    };
-    if((hres = tudor_sensor_adapter->PushDataToEngine(device->pipeline, WINBIO_PURPOSE_IDENTIFY, 0, &reject_detail)) != ERROR_SUCCESS) {
-        log_error("Error pushing sensor data to engine: 0x%x! [reject detail 0x%x]", hres, reject_detail);
-        return false;
-    };
-
-    log_debug("Identifying sample...");
-    WINBIO_IDENTITY identity;
-    UCHAR subfactor;
-    UCHAR *payload_ptr, *hash_ptr;
-    SIZE_T payload_size, hash_size;
-    if((hres = tudor_engine_adapter->IdentifyFeatureSet(device->pipeline, &identity, &subfactor, &payload_ptr, &payload_size, &hash_ptr, &hash_size, &reject_detail)) != ERROR_SUCCESS) {
-        if(hres == WINBIO_E_UNKNOWN_ID) {
-            *found_match = false;
-            return true;
-        }
-
-        log_error("Error identifying sample: 0x%x! [reject detail 0x%x]", hres, reject_detail);
-        return false;
-    };
-    if(identity.Type != WINBIO_ID_TYPE_GUID) {
-        log_error("Invalid identification ID type: %d!", identity.Type);
-        return false;
-    }
-
-    *found_match = true;
-    *guid = *(RECGUID*) &identity.TemplateGuid;
-    *finger = (enum tudor_finger) subfactor;
-
+    *res = async_new_res(device, ovlp);
+    (*res)->args.identify = (struct async_args_identify) { .found_match = found_match, .guid = guid, .finger = finger };
+    winio_set_overlapped_callback(ovlp, (winio_overlapped_cb_fnc*) identify_cb, *res, true);
     return true;
 }

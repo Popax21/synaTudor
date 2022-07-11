@@ -65,7 +65,10 @@ void cli_main_loop(struct tudor_device *device) {
                 while(true) {
                     //Update enrollment
                     bool is_done;
-                    if(!tudor_enroll_capture(device, &is_done)) {
+                    tudor_async_res_t async_res = NULL;
+                    if(!tudor_enroll_capture(device, &is_done, &async_res) || !tudor_wait_async(async_res)) {
+                        if(async_res) tudor_cleanup_async(async_res);
+
                         if(!is_done) {
                             log_warn("Retrying enrollment update...");
                             continue;
@@ -75,6 +78,7 @@ void cli_main_loop(struct tudor_device *device) {
                         tudor_enroll_discard(device);
                         goto cmdend;
                     }
+                    tudor_cleanup_async(async_res);
 
                     if(is_done) break;
                     puts("Driver requested more samples");
@@ -108,10 +112,14 @@ void cli_main_loop(struct tudor_device *device) {
                 puts("Put your finger on the sensor");
 
                 bool matches;
-                if(!tudor_verify(device, guid, TUDOR_FINGER_ANY, &matches)) {
+                tudor_async_res_t async_res = NULL;
+                if(!tudor_verify(device, guid, TUDOR_FINGER_ANY, &matches, &async_res) || !tudor_wait_async(async_res)) {
+                    if(async_res) tudor_cleanup_async(async_res);
+
                     log_error("Error verify captured sample!");
                     goto cmdend;
                 }
+                tudor_cleanup_async(async_res);
                 puts(matches ? "VERIFICATION SUCCESS" : "VERIFICATION FAILURE");
             } goto cmdend;
             case 'i': {
@@ -121,10 +129,14 @@ void cli_main_loop(struct tudor_device *device) {
                 bool found_match;
                 RECGUID match_guid;
                 enum tudor_finger match_finger;
-                if(!tudor_identify(device, &found_match, &match_guid, &match_finger)) {
+                tudor_async_res_t async_res = NULL;
+                if(!tudor_identify(device, &found_match, &match_guid, &match_finger, &async_res) || !tudor_wait_async(async_res)) {
+                    if(async_res) tudor_cleanup_async(async_res);
+
                     log_error("Error verify captured sample!");
                     goto cmdend;
                 }
+                tudor_cleanup_async(async_res);
 
                 //Print match
                 if(found_match) {

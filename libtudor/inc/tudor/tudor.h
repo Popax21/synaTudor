@@ -19,6 +19,15 @@ extern bool tudor_log_traces;
 bool tudor_init();
 bool tudor_shutdown();
 
+
+typedef struct _async_res *tudor_async_res_t;
+typedef void tudor_async_cb_fnc(tudor_async_res_t res, bool success, void *ctx);
+
+void tudor_set_async_callback(tudor_async_res_t res, tudor_async_cb_fnc *cb, void *ctx);
+void tudor_cancel_async(tudor_async_res_t res);
+bool tudor_wait_async(tudor_async_res_t res);
+void tudor_cleanup_async(tudor_async_res_t res);
+
 struct tudor_pair_data {
     void *data;
     size_t data_size;
@@ -90,11 +99,11 @@ int tudor_wipe_records(struct tudor_device *device, RECGUID *guid, enum tudor_fi
 bool tudor_add_record(struct tudor_device *device, RECGUID guid, enum tudor_finger finger, const void *data, size_t data_size);
 
 bool tudor_enroll_start(struct tudor_device *device, RECGUID guid, enum tudor_finger finger);
-bool tudor_enroll_capture(struct tudor_device *device, bool *done);
+bool tudor_enroll_capture(struct tudor_device *device, bool *done, tudor_async_res_t *res);
 bool tudor_enroll_commit(struct tudor_device *device, bool *is_duplicate);
 bool tudor_enroll_discard(struct tudor_device *device);
 
-bool tudor_verify(struct tudor_device *device, RECGUID guid, enum tudor_finger finger, bool *matches);
-bool tudor_identify(struct tudor_device *device, bool *found_match, RECGUID *guid, enum tudor_finger *finger);
+bool tudor_verify(struct tudor_device *device, RECGUID guid, enum tudor_finger finger, bool *matches, tudor_async_res_t *res);
+bool tudor_identify(struct tudor_device *device, bool *found_match, RECGUID *guid, enum tudor_finger *finger, tudor_async_res_t *res);
 
 #endif

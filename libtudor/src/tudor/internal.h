@@ -6,6 +6,41 @@
 #include "loader.h"
 #include "wdf.h"
 
+struct async_args_enroll {
+    bool *done;
+};
+
+struct async_args_verify {
+    RECGUID guid;
+    enum tudor_finger finger;
+    bool *matches;
+};
+
+struct async_args_identify {
+    bool *found_match;
+    RECGUID *guid;
+    enum tudor_finger *finger;
+};
+
+struct _async_res {
+    struct tudor_device *dev;
+    OVERLAPPED *ovlp;
+    union {
+        struct async_args_enroll enroll;
+        struct async_args_verify verify;
+        struct async_args_identify identify; 
+    } args;
+
+    pthread_mutex_t lock;
+    int success;
+    pthread_cond_t compl_cond;
+    tudor_async_cb_fnc *cb_fnc;
+    void *cb_ctx;
+};
+
+tudor_async_res_t async_new_res(struct tudor_device *dev, OVERLAPPED *ovlp);
+void async_complete_op(tudor_async_res_t res, bool success);
+
 struct windrv_dll {
     struct winmodule module;
     uint8_t *pe_image, *pe_image_end;
