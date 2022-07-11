@@ -1,29 +1,57 @@
 #include <unistd.h>
 #include "internal.h"
 
-static NTSTATUS tudor_devctrl(struct tudor_device *device, ULONG code, void *in_buf, size_t in_size, void *out_buf, size_t *out_size) {
+static void req_cb(struct winwdf_request *req, NTSTATUS status, OVERLAPPED *ovlp) {
+    //Get request info
+    size_t num_transfered = 0;
+    const void *out_buf = NULL;
+    if(status == STATUS_SUCCESS) {
+        if(!winwdf_get_request_info(req, NULL, NULL, NULL, &out_buf, NULL, &num_transfered)) {
+            log_error("Couldn't get request info!");
+            abort();
+        }
+    }
+
     if(LOG_LEVEL <= LOG_VERBOSE) {
         cant_fail_ret(pthread_mutex_lock(&LOG_LOCK));
-        printf("[DEVCTRL][0x%x] -> in (size 0x%lx): ", code, in_size);
+        printf("[DEVCTRL] <- status 0x%x out (size 0x%lx): ", status, num_transfered);
+        if(status == STATUS_SUCCESS) for(size_t i = 0; i < num_transfered; i++) printf("%02x", ((uint8_t*) out_buf)[i]);
+        puts("");
+        cant_fail_ret(pthread_mutex_unlock(&LOG_LOCK));
+    }
+
+    //Complete the OVERLAPPED
+    winio_complete_overlapped(ovlp, status, num_transfered);
+}
+
+static NTSTATUS tudor_devctrl(struct tudor_device *device, OVERLAPPED *ovlp, ULONG code, void *in_buf, size_t in_size, void *out_buf, size_t *out_size, struct winwdf_request **req) {
+    if(LOG_LEVEL <= LOG_VERBOSE) {
+        cant_fail_ret(pthread_mutex_lock(&LOG_LOCK));
+        printf("[DEVCTRL] -> in code 0x%x (size 0x%lx): ", code, in_size);
         for(size_t i = 0; i < in_size; i++) printf("%02x", ((uint8_t*) in_buf)[i]);
         puts("");
         cant_fail_ret(pthread_mutex_unlock(&LOG_LOCK));
     }
 
+    //Start the request
     struct winmodule *mod = winmodule_get_cur();
     winmodule_set_cur(&tudor_driver_dll->module);
-    NTSTATUS status = winwdf_devctrl_file(device->wdf_file, code, in_buf, in_size, out_buf, out_size);
+    NTSTATUS status = winwdf_devctrl_file(device->wdf_file, code, in_buf, in_size, out_buf, out_size, req);
     winmodule_set_cur(mod);
 
-    if(LOG_LEVEL <= LOG_VERBOSE) {
-        cant_fail_ret(pthread_mutex_lock(&LOG_LOCK));
-        printf("[DEVCTRL][0x%x] <- status 0x%x out (size 0x%lx): ", code, status, *out_size);
-        for(size_t i = 0; i < *out_size; i++) printf("%02x", ((uint8_t*) out_buf)[i]);
-        puts("");
-        cant_fail_ret(pthread_mutex_unlock(&LOG_LOCK));
-    }
+    //Add callback
+    if(status == STATUS_SUCCESS) winwdf_add_request_callback(*req, (winwdf_request_cb_fnc*) req_cb, ovlp);
 
     return status;
+}
+
+static NTSTATUS tudor_cancel(struct tudor_device *device, OVERLAPPED *ovlp, struct winwdf_request *req) {
+    winwdf_cancel_request(req);
+    return STATUS_SUCCESS;
+}
+
+static void tudor_cleanup(struct tudor_device *device, OVERLAPPED *ovlp, struct winwdf_request *req) {
+    winwdf_destroy_object((WDFOBJECT) req);
 }
 
 bool tudor_open(struct tudor_device *device, libusb_device_handle *usb_dev, struct tudor_device_state *state) {
@@ -73,7 +101,7 @@ bool tudor_open(struct tudor_device *device, libusb_device_handle *usb_dev, stru
     device->pipeline->EngineInterface = tudor_engine_adapter;
     device->pipeline->SensorInterface = tudor_sensor_adapter;
     device->pipeline->StorageInterface = tudor_storage_adapter;
-    device->pipeline->SensorHandle = device->winbio_file = winio_create_file(device, true, NULL, NULL, (winio_devctrl_fnc*) tudor_devctrl, NULL);
+    device->pipeline->SensorHandle = device->winbio_file = winio_create_file(device, true, NULL, NULL, (winio_devctrl_fnc*) tudor_devctrl, (winio_cancel_fnc*) tudor_cancel, (winio_cleanup_fnc*) tudor_cleanup, NULL);
     device->pipeline->EngineHandle = INVALID_HANDLE_VALUE;
     device->pipeline->StorageHandle = INVALID_HANDLE_VALUE;
     device->pipeline->StorageContext = device;
