@@ -438,6 +438,15 @@ static NTSTATUS usb_transfer_start(struct wdf_request *req, struct transfer_req_
     return STATUS_SUCCESS;
 }
 
+static void usb_transfer_cancel(struct wdf_request *req, struct transfer_req_ctx *ctx, void *data) {
+    //Cancel the transfer
+    int usb_err;
+    if((usb_err = libusb_cancel_transfer(ctx->transfer)) != 0) {
+        log_warn("libusb_cancel_transfer failed: %d [%s]", usb_err, libusb_error_name(usb_err));
+        abort();
+    }
+}
+
 static void usb_transfer_cleanup(struct wdf_request *req, struct transfer_req_ctx *ctx, void *data) {
     //Free memory
     libusb_free_transfer(ctx->transfer);
@@ -471,7 +480,7 @@ __winfnc NTSTATUS WdfUsbTargetDeviceFormatRequestForControlTransfer(WDF_DRIVER_G
     ctx->transfer->flags = 0;
 
     //Configure the request
-    wdf_configure_request(req, NULL, ctx, 0, 0, (wdf_request_start_fnc*) usb_transfer_start, NULL, (wdf_request_cleanup_fnc*) usb_transfer_cleanup, NULL);
+    wdf_configure_request(req, NULL, ctx, 0, 0, (wdf_request_start_fnc*) usb_transfer_start, (wdf_request_cancel_fnc*) usb_transfer_cancel, (wdf_request_cleanup_fnc*) usb_transfer_cleanup, NULL);
 
     return STATUS_SUCCESS;
 }
@@ -517,7 +526,7 @@ __winfnc NTSTATUS WdfUsbTargetPipeFormatRequestForRead(WDF_DRIVER_GLOBALS *globa
     ctx->transfer->flags = 0;
 
     //Configure the request
-    wdf_configure_request(req, NULL, ctx, 0, 0, (wdf_request_start_fnc*) usb_transfer_start, NULL, (wdf_request_cleanup_fnc*) usb_transfer_cleanup, NULL);
+    wdf_configure_request(req, NULL, ctx, 0, 0, (wdf_request_start_fnc*) usb_transfer_start, (wdf_request_cancel_fnc*) usb_transfer_cancel, (wdf_request_cleanup_fnc*) usb_transfer_cleanup, NULL);
 
     return STATUS_SUCCESS;
 }
@@ -563,7 +572,7 @@ __winfnc NTSTATUS WdfUsbTargetPipeFormatRequestForWrite(WDF_DRIVER_GLOBALS *glob
     ctx->transfer->flags = 0;
 
     //Configure the request
-    wdf_configure_request(req,  NULL, ctx, 0, 0, (wdf_request_start_fnc*) usb_transfer_start, NULL, (wdf_request_cleanup_fnc*) usb_transfer_cleanup, NULL);
+    wdf_configure_request(req, NULL, ctx, 0, 0, (wdf_request_start_fnc*) usb_transfer_start, (wdf_request_cancel_fnc*) usb_transfer_cancel, (wdf_request_cleanup_fnc*) usb_transfer_cleanup, NULL);
 
     return STATUS_SUCCESS;
 }
