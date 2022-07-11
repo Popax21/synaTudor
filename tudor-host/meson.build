@@ -1,7 +1,8 @@
 tudor_host_src = [
     'src/main.c',
     'src/sandbox.c',
-    'src/ipc.c'
+    'src/ipc.c',
+    'src/handler.c'
 ]
 
 tudor_host_flags = []

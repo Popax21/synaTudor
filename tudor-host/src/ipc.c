@@ -2,8 +2,7 @@
 #include <sys/socket.h>
 #include <tudor/log.h>
 #include "ipc.h"
-
-static bool ipc_shutdown = false;
+#include "handler.h"
 
 size_t ipc_recv_msg(int sock, void *buf, enum ipc_msg_type type, size_t min_sz, size_t max_sz, int *fd) {
     struct iovec iov = {
@@ -73,21 +72,8 @@ void ipc_send_msg(int sock, void *buf, size_t size) {
     cant_fail(sendmsg(sock, &msg_hdr, 0));
 }
 
-void ipc_handle_msg(int sock, enum ipc_msg_type type) {
-    switch(type) {
-        case IPC_MSG_SHUTDOWN: {
-            ipc_recv_msg(sock, &type, type, sizeof(type), sizeof(type), NULL);
-            ipc_shutdown = true;
-        } break;
-        default: {
-            log_error("Unknown or unexpected IPC message type 0x%x!", type);
-            abort();
-        }
-    }
-}
-
-void ipc_run_handler_loop(int sock) {
-    while(!ipc_shutdown) {
+void ipc_run_handler_loop(struct tudor_device *dev, int sock) {
+    for(bool shutdown = false; !shutdown;) {
         //Peek message
         enum ipc_msg_type msg_type;
 
@@ -108,6 +94,6 @@ void ipc_run_handler_loop(int sock) {
         cant_fail(recvmsg(sock, &msg_hdr, MSG_PEEK));
 
         //Handle the message
-        ipc_handle_msg(sock, msg_type);
+        shutdown = handle_ipc_msg(dev, sock, msg_type);
     }
 }
