@@ -96,6 +96,7 @@ __winfnc BOOL AreFileApisANSI() { return TRUE; }
 WINAPI(AreFileApisANSI)
 
 __winfnc BOOL CancelIoEx(HANDLE file, OVERLAPPED *ovlp) {
+    if(!ovlp) return TRUE;
     winio_cancel_overlapped(ovlp);
     return TRUE;
 }
@@ -106,8 +107,13 @@ __winfnc BOOL GetOverlappedResult(HANDLE file, OVERLAPPED *ovlp, DWORD *num_tran
 
     size_t sz;
     NTSTATUS status = winio_wait_overlapped(ovlp, &sz);
-    if(status == STATUS_SUCCESS) *num_transfered = (DWORD) sz;
-    return status;
+    if(status != STATUS_SUCCESS) {
+        winerr_set_code(status);
+        return FALSE;
+    }
+
+    *num_transfered = (DWORD) sz;
+    return TRUE;
 }
 WINAPI(GetOverlappedResult)
 
@@ -129,7 +135,10 @@ __winfnc BOOL ReadFile(HANDLE handle, void *buf, DWORD buf_size, DWORD *num_read
     winerr_set_code(status);
     if(status != STATUS_SUCCESS) return FALSE;
 
-    if(file->is_async) return TRUE;
+    if(file->is_async) {
+        winerr_set_code(ERROR_IO_PENDING);
+        return FALSE;
+    }
 
     //Wait for the operation to complete
     return GetOverlappedResult(handle, ovlp, num_read, TRUE);
@@ -138,7 +147,7 @@ WINAPI(ReadFile)
 
 __winfnc BOOL WriteFile(HANDLE handle, const void *buf, DWORD buf_size, DWORD *num_written, OVERLAPPED *ovlp) {
     struct winfile *file = (struct winfile*) handle->data;
-    if(!file->read_fnc) { winerr_set(); return FALSE; }
+    if(!file->write_fnc) { winerr_set(); return FALSE; }
 
     //Setup overlapped
     OVERLAPPED lovlp = {0};
@@ -154,7 +163,10 @@ __winfnc BOOL WriteFile(HANDLE handle, const void *buf, DWORD buf_size, DWORD *n
     winerr_set_code(status);
     if(status != STATUS_SUCCESS) return FALSE;
 
-    if(file->is_async) return TRUE;
+    if(file->is_async) {
+        winerr_set_code(ERROR_IO_PENDING);
+        return FALSE;
+    }
 
     //Wait for the operation to complete
     return GetOverlappedResult(handle, ovlp, num_written, TRUE);
@@ -163,7 +175,7 @@ WINAPI(WriteFile)
 
 __winfnc BOOL DeviceIoControl(HANDLE handle, DWORD code, const void *in_buf, DWORD in_size, void *out_buf, DWORD out_size, DWORD *out_ret, OVERLAPPED *ovlp) {
     struct winfile *file = (struct winfile*) handle->data;
-    if(!file->read_fnc) { winerr_set(); return FALSE; }
+    if(!file->devctrl_fnc) { winerr_set(); return FALSE; }
 
     //Setup overlapped
     OVERLAPPED lovlp = {0};
@@ -178,7 +190,10 @@ __winfnc BOOL DeviceIoControl(HANDLE handle, DWORD code, const void *in_buf, DWO
     winerr_set_code(status);
     if(status != STATUS_SUCCESS) return FALSE;
 
-    if(file->is_async) return TRUE;
+    if(file->is_async) {
+        winerr_set_code(ERROR_IO_PENDING);
+        return FALSE;
+    }
 
     //Wait for the operation to complete
     return GetOverlappedResult(handle, ovlp, out_ret, TRUE);
