@@ -40,6 +40,6 @@ void winwdf_close_file(struct winwdf_file *file);
 
 //TODO NTSTATUS winwdf_read_file(struct winwdf_file *file, void *buf, size_t *size);
 //TODO NTSTATUS winwdf_write_file(struct winwdf_file *file, const void *buf, size_t size);
-NTSTATUS winwdf_devctrl_file(struct winwdf_file *file, ULONG code, const void *in_buf, size_t in_size, void *out_buf, size_t *out_size, struct winwdf_request **req);
+NTSTATUS winwdf_devctrl_file(struct winwdf_file *file, ULONG code, const void *in_buf, size_t in_size, void *out_buf, size_t out_size, struct winwdf_request **req);
 
 #endif

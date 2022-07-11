@@ -63,19 +63,18 @@ void winwdf_close_file(struct winwdf_file *file) {
 
 struct devctrl_params {
     void *out_buf;
-    size_t *out_size;
+    size_t out_size;
 };
 
 static void devctrl_cb(struct winwdf_request *req, NTSTATUS status, struct devctrl_params *params) {
     if(status == STATUS_SUCCESS) {
         size_t act_size = wdf_get_info(req);
-        memcpy(params->out_buf, wdf_get_request_out_buf(req), (*params->out_size < act_size) ? (*params->out_size) : act_size);
-        *params->out_size = act_size;
+        memcpy(params->out_buf, wdf_get_request_out_buf(req), (params->out_size < act_size) ? params->out_size : act_size);
     }
     free(params);
 }
 
-NTSTATUS winwdf_devctrl_file(struct winwdf_file *file, ULONG code, const void *in_buf, size_t in_size, void *out_buf, size_t *out_size, struct winwdf_request **out) {
+NTSTATUS winwdf_devctrl_file(struct winwdf_file *file, ULONG code, const void *in_buf, size_t in_size, void *out_buf, size_t out_size, struct winwdf_request **out) {
     struct winwdf_queue *devctrl_queue = wdf_get_dispatch_queue(file->device, WDF_QUEUE_REQ_DEVCTRL);
     if(!devctrl_queue) {
         log_warn("WDF device has no associated devctrl queue!");
@@ -84,13 +83,13 @@ NTSTATUS winwdf_devctrl_file(struct winwdf_file *file, ULONG code, const void *i
 
     //Create request
     struct winwdf_request *req = wdf_create_request(&file->object, wdf_get_fs_obj_attrs(file->device));
-    wdf_configure_request(req, devctrl_queue, file, in_size, *out_size, NULL, NULL, NULL, &(WDF_REQUEST_PARAMETERS) {
+    wdf_configure_request(req, devctrl_queue, file, in_size, out_size, NULL, NULL, NULL, &(WDF_REQUEST_PARAMETERS) {
         .Size = sizeof(WDF_REQUEST_PARAMETERS),
         .MinorFunction = 0,
         .Type = WdfRequestTypeDeviceControl,
         .Parameters.DeviceIoControl.IoControlCode = code,
         .Parameters.DeviceIoControl.InputBufferLength = in_size,
-        .Parameters.DeviceIoControl.OutputBufferLength = *out_size,
+        .Parameters.DeviceIoControl.OutputBufferLength = out_size,
         .Parameters.DeviceIoControl.Type3InputBuffer = 0
     });
     memcpy(wdf_get_request_in_buf(req), in_buf, in_size);
@@ -103,7 +102,7 @@ NTSTATUS winwdf_devctrl_file(struct winwdf_file *file, ULONG code, const void *i
     wdf_start_request(req, &file->object, -1);
 
     //Call callbacks
-    wdf_queue_devctrl(devctrl_queue, req, code, in_size, *out_size);
+    wdf_queue_devctrl(devctrl_queue, req, code, in_size, out_size);
 
     *out = req;
     return STATUS_SUCCESS;
