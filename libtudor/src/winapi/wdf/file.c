@@ -29,7 +29,7 @@ NTSTATUS winwdf_open_device(struct winwdf_device *device, struct winwdf_file **o
     file->device = device;
 
     //Create request
-    struct wdf_request *req = wdf_create_request(&file->object, wdf_get_fs_obj_attrs(device));
+    struct winwdf_request *req = wdf_create_request(&file->object, wdf_get_fs_obj_attrs(device));
     wdf_configure_request(req, create_queue, file, 0, 0, NULL, NULL, NULL, &(WDF_REQUEST_PARAMETERS) {
         .Size = sizeof(WDF_REQUEST_PARAMETERS),
         .MinorFunction = 0,
@@ -50,7 +50,7 @@ NTSTATUS winwdf_open_device(struct winwdf_device *device, struct winwdf_file **o
         if(cfg->EvtDeviceFileCreate) cfg->EvtDeviceFileCreate((WDFOBJECT) device, (WDFOBJECT) req, &file->object);
     }
 
-    NTSTATUS status = wdf_wait_request(req);
+    NTSTATUS status = winwdf_wait_request(req);
     if(status == STATUS_SUCCESS) *out = file;
 
     winwdf_destroy_object((WDFOBJECT) req);
@@ -61,7 +61,21 @@ void winwdf_close_file(struct winwdf_file *file) {
     winwdf_destroy_object(&file->object);
 }
 
-NTSTATUS winwdf_devctrl_file(struct winwdf_file *file, ULONG code, const void *in_buf, size_t in_size, void *out_buf, size_t *out_size) {
+struct devctrl_params {
+    void *out_buf;
+    size_t *out_size;
+};
+
+static void devctrl_cb(struct winwdf_request *req, NTSTATUS status, struct devctrl_params *params) {
+    if(status == STATUS_SUCCESS) {
+        size_t act_size = wdf_get_info(req);
+        memcpy(params->out_buf, wdf_get_request_out_buf(req), (*params->out_size < act_size) ? (*params->out_size) : act_size);
+        *params->out_size = act_size;
+    }
+    free(params);
+}
+
+NTSTATUS winwdf_devctrl_file(struct winwdf_file *file, ULONG code, const void *in_buf, size_t in_size, void *out_buf, size_t *out_size, struct winwdf_request **out) {
     struct winwdf_queue *devctrl_queue = wdf_get_dispatch_queue(file->device, WDF_QUEUE_REQ_DEVCTRL);
     if(!devctrl_queue) {
         log_warn("WDF device has no associated devctrl queue!");
@@ -69,7 +83,7 @@ NTSTATUS winwdf_devctrl_file(struct winwdf_file *file, ULONG code, const void *i
     }
 
     //Create request
-    struct wdf_request *req = wdf_create_request(&file->object, wdf_get_fs_obj_attrs(file->device));
+    struct winwdf_request *req = wdf_create_request(&file->object, wdf_get_fs_obj_attrs(file->device));
     wdf_configure_request(req, devctrl_queue, file, in_size, *out_size, NULL, NULL, NULL, &(WDF_REQUEST_PARAMETERS) {
         .Size = sizeof(WDF_REQUEST_PARAMETERS),
         .MinorFunction = 0,
@@ -80,19 +94,17 @@ NTSTATUS winwdf_devctrl_file(struct winwdf_file *file, ULONG code, const void *i
         .Parameters.DeviceIoControl.Type3InputBuffer = 0
     });
     memcpy(wdf_get_request_in_buf(req), in_buf, in_size);
+
+    struct devctrl_params *params = (struct devctrl_params*) malloc(sizeof(struct devctrl_params));
+    if(!params) return winerr_from_errno();
+    *params = (struct devctrl_params) { .out_buf = out_buf, .out_size = out_size };
+    winwdf_add_request_callback(req, (winwdf_request_cb_fnc*) devctrl_cb, params);
+
     wdf_start_request(req, &file->object, -1);
 
     //Call callbacks
     wdf_queue_devctrl(devctrl_queue, req, code, in_size, *out_size);
-    memcpy(wdf_get_request_in_buf(req), in_buf, in_size);
 
-    NTSTATUS status = wdf_wait_request(req);
-    if(status == STATUS_SUCCESS) {
-        size_t act_size = wdf_get_info(req);
-        memcpy(out_buf, wdf_get_request_out_buf(req), (*out_size < act_size) ? (*out_size) : act_size);
-        *out_size = act_size;
-    }
-
-    winwdf_destroy_object((WDFOBJECT) req);
-    return status;
+    *out = req;
+    return STATUS_SUCCESS;
 }

@@ -347,7 +347,7 @@ WDFFUNC(WdfUsbTargetPipeResetSynchronously, 228)
 struct transfer_req_ctx {
     struct wdf_memory *mem;
     WDFMEMORY_OFFSET mem_off;
-    struct wdf_request *request;
+    struct winwdf_request *request;
     void *ctrl_buf;
 
     struct libusb_transfer *transfer;
@@ -366,7 +366,10 @@ static void pipe_transfer_callback(struct libusb_transfer *transfer) {
     struct transfer_req_ctx *ctx = (struct transfer_req_ctx*) transfer->user_data;
 
     //Handle status
-    if(transfer->status == LIBUSB_TRANSFER_CANCELLED) return;
+    if(transfer->status == LIBUSB_TRANSFER_CANCELLED) {
+        wdf_complete_request(ctx->request, STATUS_CANCELLED, NULL);
+        return;
+    }
 
     NTSTATUS status = STATUS_SUCCESS;
     if(transfer->status != LIBUSB_TRANSFER_COMPLETED) {
@@ -413,7 +416,7 @@ static void pipe_transfer_callback(struct libusb_transfer *transfer) {
     wdf_complete_request(ctx->request, status, &params);
 }
 
-static NTSTATUS usb_transfer_start(struct wdf_request *req, struct transfer_req_ctx *ctx, WDFOBJECT target, int timeout, void **data) {
+static NTSTATUS usb_transfer_start(struct winwdf_request *req, struct transfer_req_ctx *ctx, WDFOBJECT target, int timeout, void **data) {
     *data = NULL;
 
     //Initialize remaining transfer fields
@@ -438,7 +441,7 @@ static NTSTATUS usb_transfer_start(struct wdf_request *req, struct transfer_req_
     return STATUS_SUCCESS;
 }
 
-static void usb_transfer_cancel(struct wdf_request *req, struct transfer_req_ctx *ctx, void *data) {
+static void usb_transfer_cancel(struct winwdf_request *req, struct transfer_req_ctx *ctx, void *data) {
     //Cancel the transfer
     int usb_err;
     if((usb_err = libusb_cancel_transfer(ctx->transfer)) != 0) {
@@ -447,7 +450,7 @@ static void usb_transfer_cancel(struct wdf_request *req, struct transfer_req_ctx
     }
 }
 
-static void usb_transfer_cleanup(struct wdf_request *req, struct transfer_req_ctx *ctx, void *data) {
+static void usb_transfer_cleanup(struct winwdf_request *req, struct transfer_req_ctx *ctx, void *data) {
     //Free memory
     libusb_free_transfer(ctx->transfer);
     free(ctx->ctrl_buf);
@@ -457,7 +460,7 @@ static void usb_transfer_cleanup(struct wdf_request *req, struct transfer_req_ct
 __winfnc NTSTATUS WdfUsbTargetDeviceFormatRequestForControlTransfer(WDF_DRIVER_GLOBALS *globals, WDFOBJECT usb_dev_obj, WDFOBJECT req_obj, WDF_USB_CONTROL_SETUP_PACKET *packet, WDFOBJECT mem_obj, WDFMEMORY_OFFSET *mem_off) {
     struct wdf_usb_device *usb_dev = (struct wdf_usb_device*) usb_dev_obj;
     struct wdf_memory *mem = (struct wdf_memory*) mem_obj;
-    struct wdf_request *req = (struct wdf_request*) req_obj;
+    struct winwdf_request *req = (struct winwdf_request*) req_obj;
 
     //Create the context and transfer
     struct transfer_req_ctx *ctx = (struct transfer_req_ctx*) malloc(sizeof(struct transfer_req_ctx));
@@ -489,7 +492,7 @@ WDFFUNC(WdfUsbTargetDeviceFormatRequestForControlTransfer, 213)
 __winfnc NTSTATUS WdfUsbTargetPipeFormatRequestForRead(WDF_DRIVER_GLOBALS *globals, WDFOBJECT usb_pipe_obj, WDFOBJECT req_obj, WDFOBJECT mem_obj, WDFMEMORY_OFFSET *mem_off) {
     struct wdf_usb_pipe *usb_pipe = (struct wdf_usb_pipe*) usb_pipe_obj;
     struct wdf_memory *mem = (struct wdf_memory*) mem_obj;
-    struct wdf_request *req = (struct wdf_request*) req_obj;
+    struct winwdf_request *req = (struct winwdf_request*) req_obj;
 
     //Check the endpoint direction
     if((usb_pipe->libusb_ep->bEndpointAddress & 0b10000000) != LIBUSB_ENDPOINT_IN) {
@@ -533,9 +536,9 @@ __winfnc NTSTATUS WdfUsbTargetPipeFormatRequestForRead(WDF_DRIVER_GLOBALS *globa
 WDFFUNC(WdfUsbTargetPipeFormatRequestForRead, 224)
 
 __winfnc NTSTATUS WdfUsbTargetPipeFormatRequestForWrite(WDF_DRIVER_GLOBALS *globals, WDFOBJECT usb_pipe_obj, WDFOBJECT req_obj, WDFOBJECT mem_obj, WDFMEMORY_OFFSET *mem_off) {
-      struct wdf_usb_pipe *usb_pipe = (struct wdf_usb_pipe*) usb_pipe_obj;
+    struct wdf_usb_pipe *usb_pipe = (struct wdf_usb_pipe*) usb_pipe_obj;
     struct wdf_memory *mem = (struct wdf_memory*) mem_obj;
-    struct wdf_request *req = (struct wdf_request*) req_obj;
+    struct winwdf_request *req = (struct winwdf_request*) req_obj;
 
     //Check the endpoint direction
     if((usb_pipe->libusb_ep->bEndpointAddress & 0b10000000) != LIBUSB_ENDPOINT_OUT) {

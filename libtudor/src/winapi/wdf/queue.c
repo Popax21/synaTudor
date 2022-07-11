@@ -65,31 +65,31 @@ void wdf_queue_stop(struct winwdf_queue *queue) {
     queue->stopped = true;
 }
 
-void wdf_queue_create(struct winwdf_queue *queue, struct wdf_request *req) {
+void wdf_queue_create(struct winwdf_queue *queue, struct winwdf_request *req) {
     if(queue->stopped || !queue->config.EvtIoDefault) {
         log_warn("Couldn't process WDF queue create request!");
     } else queue->config.EvtIoDefault(&queue->object, (WDFOBJECT) req);
 }
 
-void wdf_queue_read(struct winwdf_queue *queue, struct wdf_request *req, size_t len) {
+void wdf_queue_read(struct winwdf_queue *queue, struct winwdf_request *req, size_t len) {
     if(queue->stopped || !queue->config.EvtIoRead) {
         log_warn("Couldn't process WDF queue read request!");
     } else queue->config.EvtIoRead(&queue->object, (WDFOBJECT) req, len);
 }
 
-void wdf_queue_write(struct winwdf_queue *queue, struct wdf_request *req, size_t len) {
+void wdf_queue_write(struct winwdf_queue *queue, struct winwdf_request *req, size_t len) {
     if(queue->stopped || !queue->config.EvtIoWrite) {
         log_warn("Couldn't process WDF queue write request!");
     } else queue->config.EvtIoWrite(&queue->object, (WDFOBJECT) req, len);
 }
 
-void wdf_queue_devctrl(struct winwdf_queue *queue, struct wdf_request *req, ULONG code, size_t in_len, size_t out_len) {
+void wdf_queue_devctrl(struct winwdf_queue *queue, struct winwdf_request *req, ULONG code, size_t in_len, size_t out_len) {
     if(queue->stopped || !queue->config.EvtIoDeviceControl) {
         log_warn("Couldn't process WDF queue devctrl request!");
     } else queue->config.EvtIoDeviceControl(&queue->object, (WDFOBJECT) req, out_len, in_len, code);
 }
 
-void wdf_queue_int_devctrl(struct winwdf_queue *queue, struct wdf_request *req, ULONG code, size_t in_len, size_t out_len) {
+void wdf_queue_int_devctrl(struct winwdf_queue *queue, struct winwdf_request *req, ULONG code, size_t in_len, size_t out_len) {
     if(queue->stopped || !queue->config.EvtIoInternalDeviceControl) {
         log_warn("Couldn't process WDF queue internal devctrl request!");
     } else queue->config.EvtIoInternalDeviceControl(&queue->object, (WDFOBJECT) req, out_len, in_len, code);

@@ -13,7 +13,13 @@ typedef struct {
     LONGLONG Timeout;
 } WDF_REQUEST_SEND_OPTIONS;
 
-struct wdf_request {
+struct req_callback {
+    struct req_callback *next;
+    winwdf_request_cb_fnc *cb_func;
+    void *ctx;
+};
+
+struct winwdf_request {
     struct wdf_object object;
 
     //Internal state
@@ -36,9 +42,12 @@ struct wdf_request {
     void *in_buf, *out_buf;
     size_t in_buf_size, out_buf_size;
     ULONG_PTR drv_info;
+
+    //Callbacks
+    struct req_callback *callbacks_head;
 };
 
-static void req_destr(struct wdf_request *req) {
+static void req_destr(struct winwdf_request *req) {
     //Reset the request
     wdf_reset_request(req);
 
@@ -51,9 +60,9 @@ static void req_destr(struct wdf_request *req) {
     free(req);
 }
 
-struct wdf_request *wdf_create_request(struct wdf_object *parent, WDF_OBJECT_ATTRIBUTES *obj_attrs) {
+struct winwdf_request *wdf_create_request(struct wdf_object *parent, WDF_OBJECT_ATTRIBUTES *obj_attrs) {
     //Create the request object
-    struct wdf_request *req = (struct wdf_request*) malloc(sizeof(struct wdf_request));
+    struct winwdf_request *req = (struct winwdf_request*) malloc(sizeof(struct winwdf_request));
     if(!req) { perror("Error allocating WDF request memory"); abort(); }
 
     wdf_create_obj(parent, &req->object, (wdf_obj_destr_fnc*) req_destr, obj_attrs);
@@ -71,10 +80,12 @@ struct wdf_request *wdf_create_request(struct wdf_object *parent, WDF_OBJECT_ATT
     req->in_buf = req->out_buf = NULL;
     req->drv_info = 0;
 
+    req->callbacks_head = NULL;
+
     return req;
 }
 
-void wdf_reset_request(struct wdf_request *req) {
+void wdf_reset_request(struct winwdf_request *req) {
     cant_fail_ret(pthread_mutex_lock(&req->lock));
     if(!req->is_configured || req->is_resetting) {
         while(req->is_configured && req->is_started && !req->is_done) cant_fail_ret(pthread_cond_wait(&req->compl_cond, &req->lock));
@@ -84,18 +95,8 @@ void wdf_reset_request(struct wdf_request *req) {
     req->is_resetting = true;
 
     //Call callbacks
-    if(req->is_started && !req->is_done) {
-        if(req->drv_cancel) {
-            cant_fail_ret(pthread_mutex_unlock(&req->lock));
-            req->drv_cancel(&req->object);
-            cant_fail_ret(pthread_mutex_lock(&req->lock));
-        }
-
-        if(req->cancel_fnc) req->cancel_fnc(req, req->context, req->data);
-        else {
-            while(req->is_configured && req->is_started && !req->is_done) cant_fail_ret(pthread_cond_wait(&req->compl_cond, &req->lock));
-        }
-    }
+    if(req->is_started && !req->is_done) winwdf_cancel_request(req);
+    while(req->is_configured && req->is_started && !req->is_done) cant_fail_ret(pthread_cond_wait(&req->compl_cond, &req->lock));
     if(req->cleanup_fnc) req->cleanup_fnc(req, req->context, req->data);
 
     //Reset state
@@ -114,10 +115,12 @@ void wdf_reset_request(struct wdf_request *req) {
     req->in_buf = req->out_buf = NULL;
     req->drv_info = 0;
 
+    for(struct req_callback *cb = req->callbacks_head, *ncb = cb ? cb->next : NULL; cb; cb = ncb, ncb = ncb ? ncb->next : NULL) free(cb);
+
     cant_fail_ret(pthread_mutex_unlock(&req->lock));
 }
 
-void wdf_configure_request(struct wdf_request *req, struct winwdf_queue *io_queue, void *ctx, size_t in_size, size_t out_size, wdf_request_start_fnc *start_fnc, wdf_request_cancel_fnc *cancel_fnc, wdf_request_cleanup_fnc *cleanup_fnc, WDF_REQUEST_PARAMETERS *params) {
+void wdf_configure_request(struct winwdf_request *req, struct winwdf_queue *io_queue, void *ctx, size_t in_size, size_t out_size, wdf_request_start_fnc *start_fnc, wdf_request_cancel_fnc *cancel_fnc, wdf_request_cleanup_fnc *cleanup_fnc, WDF_REQUEST_PARAMETERS *params) {
     cant_fail_ret(pthread_mutex_lock(&req->lock));
     while(req->is_configured && req->is_started && !req->is_done) cant_fail_ret(pthread_cond_wait(&req->compl_cond, &req->lock));
     if(req->is_configured) wdf_reset_request(req);
@@ -156,7 +159,7 @@ void wdf_configure_request(struct wdf_request *req, struct winwdf_queue *io_queu
     cant_fail_ret(pthread_mutex_unlock(&req->lock));
 }
 
-void wdf_start_request(struct wdf_request *req, struct wdf_object *target, int timeout) {
+void wdf_start_request(struct winwdf_request *req, struct wdf_object *target, int timeout) {
     cant_fail_ret(pthread_mutex_lock(&req->lock));
     if(req->is_configured && !req->is_started) {
         if(req->start_fnc) req->status = req->start_fnc(req, req->context, target, timeout, &req->data);
@@ -169,7 +172,7 @@ void wdf_start_request(struct wdf_request *req, struct wdf_object *target, int t
     cant_fail_ret(pthread_mutex_unlock(&req->lock));
 }
 
-void wdf_complete_request(struct wdf_request *req, NTSTATUS status, WDF_REQUEST_COMPLETION_PARAMS *params) {
+void wdf_complete_request(struct winwdf_request *req, NTSTATUS status, WDF_REQUEST_COMPLETION_PARAMS *params) {
     cant_fail_ret(pthread_mutex_lock(&req->lock));
 
     if(!req->is_configured || !req->is_started || req->is_done) {
@@ -196,10 +199,67 @@ void wdf_complete_request(struct wdf_request *req, NTSTATUS status, WDF_REQUEST_
     //Signal that the request is done
     cant_fail_ret(pthread_cond_broadcast(&req->compl_cond));
 
+    //Call callbacks
+    for(struct req_callback *cb = req->callbacks_head; cb; cb = cb->next) cb->cb_func(req, status, cb->ctx);
+
     cant_fail_ret(pthread_mutex_unlock(&req->lock));
 }
 
-NTSTATUS wdf_wait_request(struct wdf_request *req) {
+void winwdf_add_callback(struct winwdf_request *req, winwdf_request_cb_fnc *cb_fnc, void *ctx) {
+    cant_fail_ret(pthread_mutex_lock(&req->lock));
+
+    if(!req->is_configured) {
+        cant_fail_ret(pthread_mutex_unlock(&req->lock));
+        log_warn("winwdf_add_callback called on non-configured request!");
+        return;
+    }
+
+    //Check if the request is already done
+    if(req->is_started && req->is_done) {
+        cb_fnc(req, req->status, ctx);
+        cant_fail_ret(pthread_mutex_unlock(&req->lock));
+        return;
+    }
+
+    //Allocate a new callback structure
+    struct req_callback *cb = (struct req_callback*) malloc(sizeof(struct req_callback));
+    if(!cb) { perror("Couldn't allocate memory for WDF request callback"); abort(); }
+    *cb = (struct req_callback) {
+        .next = req->callbacks_head,
+        .cb_func = cb_fnc,
+        .ctx = ctx
+    };
+    req->callbacks_head = cb;
+
+    cant_fail_ret(pthread_mutex_unlock(&req->lock));
+}
+
+void winwdf_cancel_request(struct winwdf_request *req) {
+    cant_fail_ret(pthread_mutex_lock(&req->lock));
+
+    if(!req->is_configured || !req->is_started) {
+        cant_fail_ret(pthread_mutex_unlock(&req->lock));
+        log_warn("winwdf_cancel_request called on non-configured or non-started request!");
+        return;
+    }
+
+    //Call cancel functions
+    if(!req->is_done) {
+        if(req->drv_cancel) {
+            cant_fail_ret(pthread_mutex_unlock(&req->lock));
+            req->drv_cancel(&req->object);
+            cant_fail_ret(pthread_mutex_lock(&req->lock));
+        }
+
+        if(req->cancel_fnc) {
+            req->cancel_fnc(req, req->context, req->data);
+        }
+    }
+ 
+    cant_fail_ret(pthread_mutex_unlock(&req->lock));
+}
+
+NTSTATUS winwdf_wait_request(struct winwdf_request *req) {
     cant_fail_ret(pthread_mutex_lock(&req->lock));
 
     NTSTATUS status = WINERR_SET_CODE;
@@ -212,7 +272,7 @@ NTSTATUS wdf_wait_request(struct wdf_request *req) {
     return status;
 }
 
-NTSTATUS wdf_get_request_status(struct wdf_request *req) {
+NTSTATUS wdf_get_request_status(struct winwdf_request *req) {
     NTSTATUS status = WINERR_SET_CODE;
     cant_fail_ret(pthread_mutex_lock(&req->lock));
     if(req->is_configured && req->is_started && req->is_done) status = req->status;
@@ -220,21 +280,21 @@ NTSTATUS wdf_get_request_status(struct wdf_request *req) {
     return status;
 }
 
-void *wdf_get_request_in_buf(struct wdf_request *req) {
+void *wdf_get_request_in_buf(struct winwdf_request *req) {
     cant_fail_ret(pthread_mutex_lock(&req->lock));
     void *in_buf = req->is_configured ? req->in_buf : NULL;
     cant_fail_ret(pthread_mutex_unlock(&req->lock));
     return in_buf;
 }
 
-void *wdf_get_request_out_buf(struct wdf_request *req) {
+void *wdf_get_request_out_buf(struct winwdf_request *req) {
     cant_fail_ret(pthread_mutex_lock(&req->lock));
     void *out_buf = req->is_configured ? req->out_buf : NULL;
     cant_fail_ret(pthread_mutex_unlock(&req->lock));
     return out_buf;
 }
 
-ULONG_PTR wdf_get_info(struct wdf_request *req) {
+ULONG_PTR wdf_get_info(struct winwdf_request *req) {
     ULONG_PTR info = 0;
     cant_fail_ret(pthread_mutex_lock(&req->lock));
     if(req->is_configured) info = req->drv_info;
@@ -249,7 +309,7 @@ __winfnc NTSTATUS WdfRequestCreate(WDF_DRIVER_GLOBALS *globals, WDF_OBJECT_ATTRI
 WDFFUNC(WdfRequestCreate, 148)
 
 __winfnc NTSTATUS WdfRequestMarkCancelable(WDF_DRIVER_GLOBALS *globals, WDFOBJECT req_obj, WDF_REQUEST_CANCEL_FNC *cancel_fnc) {
-    struct wdf_request *req = (struct wdf_request*) req_obj;
+    struct winwdf_request *req = (struct winwdf_request*) req_obj;
 
     NTSTATUS status = WINERR_SET_CODE;
     cant_fail_ret(pthread_mutex_lock(&req->lock));
@@ -264,7 +324,7 @@ WDFFUNC(WdfRequestMarkCancelable, 154)
 
 __winfnc NTSTATUS WdfRequestUnmarkCancelable(WDF_DRIVER_GLOBALS *globals, WDFOBJECT req_obj) {
 
-    struct wdf_request *req = (struct wdf_request*) req_obj;
+    struct winwdf_request *req = (struct winwdf_request*) req_obj;
 
     NTSTATUS status = WINERR_SET_CODE;
     cant_fail_ret(pthread_mutex_lock(&req->lock));
@@ -278,7 +338,7 @@ __winfnc NTSTATUS WdfRequestUnmarkCancelable(WDF_DRIVER_GLOBALS *globals, WDFOBJ
 WDFFUNC(WdfRequestUnmarkCancelable, 156)
 
 __winfnc BOOLEAN WdfRequestSend(WDF_DRIVER_GLOBALS *globals, WDFOBJECT req_obj, WDFOBJECT target, WDF_REQUEST_SEND_OPTIONS *opts) {
-    struct wdf_request *req = (struct wdf_request*) req_obj;
+    struct winwdf_request *req = (struct winwdf_request*) req_obj;
 
     //Determine the timeout
     int timeout = -1;
@@ -318,7 +378,7 @@ __winfnc BOOLEAN WdfRequestSend(WDF_DRIVER_GLOBALS *globals, WDFOBJECT req_obj, 
 WDFFUNC(WdfRequestSend, 152)
 
 __winfnc NTSTATUS WdfRequestGetStatus(WDF_DRIVER_GLOBALS *globals, WDFOBJECT req_obj) {
-    struct wdf_request *req = (struct wdf_request*) req_obj;
+    struct winwdf_request *req = (struct winwdf_request*) req_obj;
     
     NTSTATUS status;
     cant_fail_ret(pthread_mutex_lock(&req->lock));
@@ -330,7 +390,7 @@ __winfnc NTSTATUS WdfRequestGetStatus(WDF_DRIVER_GLOBALS *globals, WDFOBJECT req
 WDFFUNC(WdfRequestGetStatus, 153)
 
 __winfnc WDFOBJECT WdfRequestGetIoQueue(WDF_DRIVER_GLOBALS *globals, WDFOBJECT req_obj) {
-    struct wdf_request *req = (struct wdf_request*) req_obj;
+    struct winwdf_request *req = (struct winwdf_request*) req_obj;
     
     WDFOBJECT queue;
     cant_fail_ret(pthread_mutex_lock(&req->lock));
@@ -342,7 +402,7 @@ __winfnc WDFOBJECT WdfRequestGetIoQueue(WDF_DRIVER_GLOBALS *globals, WDFOBJECT r
 WDFFUNC(WdfRequestGetIoQueue, 175)
 
 __winfnc void WdfRequestGetParameters(WDF_DRIVER_GLOBALS *globals, WDFOBJECT req_obj, WDF_REQUEST_PARAMETERS *params) {
-    struct wdf_request *req = (struct wdf_request*) req_obj;
+    struct winwdf_request *req = (struct winwdf_request*) req_obj;
     
     cant_fail_ret(pthread_mutex_lock(&req->lock));
     if(req->is_configured) memcpy(params, &req->params, sizeof(WDF_REQUEST_PARAMETERS));
@@ -352,7 +412,7 @@ __winfnc void WdfRequestGetParameters(WDF_DRIVER_GLOBALS *globals, WDFOBJECT req
 WDFFUNC(WdfRequestGetParameters, 165)
 
 __winfnc NTSTATUS WdfRequestGetCompletionParams(WDF_DRIVER_GLOBALS *globals, WDFOBJECT req_obj, WDF_REQUEST_COMPLETION_PARAMS *params) {
-    struct wdf_request *req = (struct wdf_request*) req_obj;
+    struct winwdf_request *req = (struct winwdf_request*) req_obj;
     
     NTSTATUS status;
     cant_fail_ret(pthread_mutex_lock(&req->lock));
@@ -367,7 +427,7 @@ __winfnc NTSTATUS WdfRequestGetCompletionParams(WDF_DRIVER_GLOBALS *globals, WDF
 WDFFUNC(WdfRequestGetCompletionParams, 161)
 
 __winfnc NTSTATUS WdfRequestRetrieveInputBuffer(WDF_DRIVER_GLOBALS *globals, WDFOBJECT req_obj, size_t min_len, void **buf, size_t *len) {
-    struct wdf_request *req = (struct wdf_request*) req_obj;
+    struct winwdf_request *req = (struct winwdf_request*) req_obj;
     
     NTSTATUS status;
     cant_fail_ret(pthread_mutex_lock(&req->lock));
@@ -386,7 +446,7 @@ __winfnc NTSTATUS WdfRequestRetrieveInputBuffer(WDF_DRIVER_GLOBALS *globals, WDF
 WDFFUNC(WdfRequestRetrieveInputBuffer, 168)
 
 __winfnc NTSTATUS WdfRequestRetrieveOutputBuffer(WDF_DRIVER_GLOBALS *globals, WDFOBJECT req_obj, size_t min_len, void **buf, size_t *len) {
-    struct wdf_request *req = (struct wdf_request*) req_obj;
+    struct winwdf_request *req = (struct winwdf_request*) req_obj;
     
     NTSTATUS status;
     cant_fail_ret(pthread_mutex_lock(&req->lock));
@@ -405,7 +465,7 @@ __winfnc NTSTATUS WdfRequestRetrieveOutputBuffer(WDF_DRIVER_GLOBALS *globals, WD
 WDFFUNC(WdfRequestRetrieveOutputBuffer, 169)
 
 __winfnc ULONG_PTR WdfRequestGetInformation(WDF_DRIVER_GLOBALS *globals, WDFOBJECT req_obj) {
-    struct wdf_request *req = (struct wdf_request*) req_obj;
+    struct winwdf_request *req = (struct winwdf_request*) req_obj;
     
     ULONG_PTR info = 0;
     cant_fail_ret(pthread_mutex_lock(&req->lock));
@@ -417,7 +477,7 @@ __winfnc ULONG_PTR WdfRequestGetInformation(WDF_DRIVER_GLOBALS *globals, WDFOBJE
 WDFFUNC(WdfRequestGetInformation, 171)
 
 __winfnc void WdfRequestSetInformation(WDF_DRIVER_GLOBALS *globals, WDFOBJECT req_obj, ULONG_PTR info) {
-    struct wdf_request *req = (struct wdf_request*) req_obj;
+    struct winwdf_request *req = (struct winwdf_request*) req_obj;
     
     cant_fail_ret(pthread_mutex_lock(&req->lock));
     if(req->is_configured) req->drv_info = info;
@@ -426,7 +486,7 @@ __winfnc void WdfRequestSetInformation(WDF_DRIVER_GLOBALS *globals, WDFOBJECT re
 WDFFUNC(WdfRequestSetInformation, 170)
 
 __winfnc void WdfRequestComplete(WDF_DRIVER_GLOBALS *globals, WDFOBJECT req_obj, NTSTATUS status) {
-    struct wdf_request *req = (struct wdf_request*) req_obj;
+    struct winwdf_request *req = (struct winwdf_request*) req_obj;
     wdf_complete_request(req, status, NULL);
 }
 WDFFUNC(WdfRequestComplete, 163)

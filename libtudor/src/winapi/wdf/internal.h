@@ -101,29 +101,26 @@ void wdf_configure_device_dispatch(struct winwdf_device *dev, struct winwdf_queu
 void wdf_queue_resume(struct winwdf_queue *queue);
 void wdf_queue_stop(struct winwdf_queue *queue);
 
-struct wdf_request;
-void wdf_queue_create(struct winwdf_queue *queue, struct wdf_request *req);
-void wdf_queue_read(struct winwdf_queue *queue, struct wdf_request *req, size_t len);
-void wdf_queue_write(struct winwdf_queue *queue, struct wdf_request *req, size_t len);
-void wdf_queue_devctrl(struct winwdf_queue *queue, struct wdf_request *req, ULONG code, size_t in_len, size_t out_len);
-void wdf_queue_int_devctrl(struct winwdf_queue *queue, struct wdf_request *req, ULONG code, size_t in_len, size_t out_len);
+void wdf_queue_create(struct winwdf_queue *queue, struct winwdf_request *req);
+void wdf_queue_read(struct winwdf_queue *queue, struct winwdf_request *req, size_t len);
+void wdf_queue_write(struct winwdf_queue *queue, struct winwdf_request *req, size_t len);
+void wdf_queue_devctrl(struct winwdf_queue *queue, struct winwdf_request *req, ULONG code, size_t in_len, size_t out_len);
+void wdf_queue_int_devctrl(struct winwdf_queue *queue, struct winwdf_request *req, ULONG code, size_t in_len, size_t out_len);
 
 //Requests
-struct wdf_request;
-typedef NTSTATUS wdf_request_start_fnc(struct wdf_request *req, void *ctx, struct wdf_object *target, int timeout, void **data);
-typedef void wdf_request_cancel_fnc(struct wdf_request *req, void *ctx, void *data);
-typedef void wdf_request_cleanup_fnc(struct wdf_request *req, void *ctx, void *data);
+typedef NTSTATUS wdf_request_start_fnc(struct winwdf_request *req, void *ctx, struct wdf_object *target, int timeout, void **data);
+typedef void wdf_request_cancel_fnc(struct winwdf_request *req, void *ctx, void *data);
+typedef void wdf_request_cleanup_fnc(struct winwdf_request *req, void *ctx, void *data);
 
-struct wdf_request *wdf_create_request(struct wdf_object *parent, WDF_OBJECT_ATTRIBUTES *obj_attrs);
-void wdf_reset_request(struct wdf_request *req);
-void wdf_configure_request(struct wdf_request *req, struct winwdf_queue *io_queue, void *ctx, size_t in_size, size_t out_size, wdf_request_start_fnc *start_fnc, wdf_request_cancel_fnc *cancel_fnc, wdf_request_cleanup_fnc *cleanup_fnc, WDF_REQUEST_PARAMETERS *params);
-void wdf_start_request(struct wdf_request *req, struct wdf_object *target, int timeout);
-void wdf_complete_request(struct wdf_request *req, NTSTATUS status, WDF_REQUEST_COMPLETION_PARAMS *params);
-NTSTATUS wdf_wait_request(struct wdf_request *req);
+struct winwdf_request *wdf_create_request(struct wdf_object *parent, WDF_OBJECT_ATTRIBUTES *obj_attrs);
+void wdf_reset_request(struct winwdf_request *req);
+void wdf_configure_request(struct winwdf_request *req, struct winwdf_queue *io_queue, void *ctx, size_t in_size, size_t out_size, wdf_request_start_fnc *start_fnc, wdf_request_cancel_fnc *cancel_fnc, wdf_request_cleanup_fnc *cleanup_fnc, WDF_REQUEST_PARAMETERS *params);
+void wdf_start_request(struct winwdf_request *req, struct wdf_object *target, int timeout);
+void wdf_complete_request(struct winwdf_request *req, NTSTATUS status, WDF_REQUEST_COMPLETION_PARAMS *params);
 
-NTSTATUS wdf_get_request_status(struct wdf_request *req);
-void *wdf_get_request_in_buf(struct wdf_request *req);
-void *wdf_get_request_out_buf(struct wdf_request *req);
-ULONG_PTR wdf_get_info(struct wdf_request *req);
+NTSTATUS wdf_get_request_status(struct winwdf_request *req);
+void *wdf_get_request_in_buf(struct winwdf_request *req);
+void *wdf_get_request_out_buf(struct winwdf_request *req);
+ULONG_PTR wdf_get_info(struct winwdf_request *req);
 
 #endif
