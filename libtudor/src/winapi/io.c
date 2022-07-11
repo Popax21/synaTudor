@@ -53,9 +53,9 @@ void winio_set_overlapped_callback(OVERLAPPED *ovlp, winio_overlapped_cb_fnc *cb
     }
 
     op->cb_ctx = ctx;
-    __atomic_store_n(&op->cb_fnc, cb, __ATOMIC_ACQ_REL);
+    __atomic_store_n(&op->cb_fnc, cb, __ATOMIC_RELEASE);
 
-    NTSTATUS status = __atomic_load_n(&op->cb_status, __ATOMIC_ACQ_REL);
+    NTSTATUS status = __atomic_load_n(&op->cb_status, __ATOMIC_ACQUIRE);
     if(status != STATUS_PENDING) {
         cb = __atomic_exchange_n(&op->cb_fnc, NULL, __ATOMIC_ACQ_REL);
         if(cb) cb(ovlp, status, ctx);
@@ -77,17 +77,17 @@ void winio_cancel_overlapped(OVERLAPPED *ovlp) {
 }
 
 void winio_complete_overlapped(OVERLAPPED *ovlp, NTSTATUS status, size_t num_transfered) {
-    //Call callback
-    struct winfile_op *op = (struct winfile_op*) ovlp->Pointer;
-    __atomic_store_n(&op->cb_status, status, __ATOMIC_ACQ_REL);
-
-    winio_overlapped_cb_fnc *cb = __atomic_exchange_n(&op->cb_fnc, NULL, __ATOMIC_ACQ_REL);
-    if(cb) cb(ovlp, status, op->cb_ctx);
-
     //Complete overlapped
     ovlp->Internal = status;
     if(ovlp->Internal == STATUS_SUCCESS) ovlp->InternalHigh = num_transfered;
     if(ovlp->hEvent) win_set_event(ovlp->hEvent);
+
+    //Call callback
+    struct winfile_op *op = (struct winfile_op*) ovlp->Pointer;
+    __atomic_store_n(&op->cb_status, status, __ATOMIC_RELEASE);
+
+    winio_overlapped_cb_fnc *cb = __atomic_exchange_n(&op->cb_fnc, NULL, __ATOMIC_ACQ_REL);
+    if(cb) cb(ovlp, status, op->cb_ctx);
 }
 
 NTSTATUS winio_wait_overlapped(OVERLAPPED *ovlp, size_t *num_transfered) {
