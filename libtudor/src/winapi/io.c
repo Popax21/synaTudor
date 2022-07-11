@@ -45,7 +45,7 @@ static inline bool init_overlapped(OVERLAPPED *ovlp, struct winfile *file, void 
     return true;
 }
 
-void windio_set_overlapped_callback(OVERLAPPED *ovlp, winio_overlapped_cb_fnc *cb, void *ctx) {
+void winio_set_overlapped_callback(OVERLAPPED *ovlp, winio_overlapped_cb_fnc *cb, void *ctx) {
     struct winfile_op *op = (struct winfile_op*) ovlp->Pointer;
     if(!op) {
         cb(ovlp, (NTSTATUS) ovlp->Internal, ctx);
