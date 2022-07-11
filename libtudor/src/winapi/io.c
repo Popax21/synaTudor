@@ -8,6 +8,7 @@ struct winfile_op {
     volatile NTSTATUS cb_status;
     winio_overlapped_cb_fnc *cb_fnc;
     void *cb_ctx;
+    bool cb_new_thread;
 };
 
 struct winfile {
@@ -45,20 +46,53 @@ static inline bool init_overlapped(OVERLAPPED *ovlp, struct winfile *file, void 
     return true;
 }
 
-void winio_set_overlapped_callback(OVERLAPPED *ovlp, winio_overlapped_cb_fnc *cb, void *ctx) {
+//The following code was written at 23:56, please ignore
+//<< START CODE >>
+
+struct ovlp_cb {
+    OVERLAPPED *ovlp;
+    NTSTATUS status;
+    winio_overlapped_cb_fnc *cb;
+    void *ctx;
+};
+
+static void *ovlp_cb_thread_func(struct ovlp_cb *cb) {
+    cb->cb(cb->ovlp, cb->status, cb->ctx);
+    free(cb);
+    return NULL;
+}
+
+static inline void call_overlapped_cb(OVERLAPPED *ovlp, NTSTATUS status, winio_overlapped_cb_fnc *cb, void *ctx, bool new_thread) {
+    if(!new_thread) {
+        cb(ovlp, status, ctx);
+        return;
+    }
+
+    struct ovlp_cb *c = (struct ovlp_cb*) malloc(sizeof(struct ovlp_cb));
+    if(!c) { perror("Couldn't allocate OVERLAPPED callback"); abort(); }
+    *c = (struct ovlp_cb) { .ovlp = ovlp, .status = status, .cb = cb, .ctx = ctx };
+
+    pthread_t thread;
+    cant_fail_ret(pthread_create(&thread, NULL, (void *(*)(void*)) ovlp_cb_thread_func, c));
+}
+
+//<< END CODE >>
+
+void winio_set_overlapped_callback(OVERLAPPED *ovlp, winio_overlapped_cb_fnc *cb, void *ctx, bool new_thread) {
     struct winfile_op *op = (struct winfile_op*) ovlp->Pointer;
     if(!op) {
-        cb(ovlp, (NTSTATUS) ovlp->Internal, ctx);
+        call_overlapped_cb(ovlp, (NTSTATUS) ovlp->Internal, cb, ctx, new_thread);
         return;
     }
 
     op->cb_ctx = ctx;
+    op->cb_new_thread = new_thread;
     __atomic_store_n(&op->cb_fnc, cb, __ATOMIC_RELEASE);
 
     NTSTATUS status = __atomic_load_n(&op->cb_status, __ATOMIC_ACQUIRE);
     if(status != STATUS_PENDING) {
         cb = __atomic_exchange_n(&op->cb_fnc, NULL, __ATOMIC_ACQ_REL);
-        if(cb) cb(ovlp, status, ctx);
+        if(cb) call_overlapped_cb(ovlp, status, cb, ctx, new_thread);
     }
 }
 
@@ -87,7 +121,7 @@ void winio_complete_overlapped(OVERLAPPED *ovlp, NTSTATUS status, size_t num_tra
     __atomic_store_n(&op->cb_status, status, __ATOMIC_RELEASE);
 
     winio_overlapped_cb_fnc *cb = __atomic_exchange_n(&op->cb_fnc, NULL, __ATOMIC_ACQ_REL);
-    if(cb) cb(ovlp, status, op->cb_ctx);
+    if(cb) call_overlapped_cb(ovlp, status, cb, op->cb_ctx, op->cb_new_thread);
 }
 
 NTSTATUS winio_wait_overlapped(OVERLAPPED *ovlp, size_t *num_transfered) {

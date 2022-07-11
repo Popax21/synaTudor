@@ -81,7 +81,7 @@ void winlog_trace(GUID guid, int num, win_va_list vas);
 
 //IO
 typedef void winio_overlapped_cb_fnc(OVERLAPPED *ovlp, NTSTATUS status, void *ctx);
-void winio_set_overlapped_callback(OVERLAPPED *ovlp, winio_overlapped_cb_fnc *cb, void *ctx);
+void winio_set_overlapped_callback(OVERLAPPED *ovlp, winio_overlapped_cb_fnc *cb, void *ctx, bool new_thread);
 void winio_cancel_overlapped(OVERLAPPED *ovlp);
 void winio_complete_overlapped(OVERLAPPED *ovlp, NTSTATUS status, size_t num_transfered);
 NTSTATUS winio_wait_overlapped(OVERLAPPED *ovlp, size_t *num_transfered);
