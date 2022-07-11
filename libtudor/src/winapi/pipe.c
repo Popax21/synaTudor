@@ -13,12 +13,12 @@ static struct winpipe {
     pthread_cond_t listen_cond;
 } *pipes_head;
 
-static bool pipe_read(struct winpipe *pipe, void *buf, size_t *buf_size) {
-    return false;
+static NTSTATUS pipe_read(struct winpipe *pipe, OVERLAPPED *ovlp, void *buf, size_t *buf_size, void **op_ctx) {
+    return WINERR_SET_CODE;
 }
 
-static bool pipe_write(struct winpipe *pipe, const void *buf, size_t *buf_size) {
-    return false;
+static NTSTATUS pipe_write(struct winpipe *pipe, OVERLAPPED *ovlp, const void *buf, size_t *buf_size, void **op_ctx) {
+    return WINERR_SET_CODE;
 }
 
 static void pipe_destroy(struct winpipe *pipe) {
@@ -70,7 +70,7 @@ __winfnc HANDLE CreateNamedPipeW(const char16_t *name, DWORD open_mode, DWORD pi
     pipes_head = pipe;
     cant_fail_ret(pthread_mutex_unlock(&pipes_lock));
 
-    return winio_create_file(pipe, (open_mode & FILE_FLAG_OVERLAPPED) != 0, (winio_read_fnc*) pipe_read, (winio_write_fnc*) pipe_write, NULL, (winio_destroy_fnc*) pipe_destroy);
+    return winio_create_file(pipe, (open_mode & FILE_FLAG_OVERLAPPED) != 0, (winio_read_fnc*) pipe_read, (winio_write_fnc*) pipe_write, NULL, NULL, (winio_destroy_fnc*) pipe_destroy);
 }
 WINAPI(CreateNamedPipeW)
 

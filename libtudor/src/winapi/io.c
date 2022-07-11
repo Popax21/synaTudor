@@ -6,6 +6,16 @@ struct winfile_op {
     void *op_ctx;  
 };
 
+struct winfile {
+    void *ctx;
+    bool is_async;
+    winio_read_fnc *read_fnc;
+    winio_write_fnc *write_fnc;
+    winio_devctrl_fnc *devctrl_fnc;
+    winio_cancel_fnc *cancel_fnc;
+    winio_destroy_fnc *destroy_fnc;
+};
+
 static inline bool init_overlapped(OVERLAPPED *ovlp, struct winfile *file, void ***op_ctx) {
     struct winfile_op *op = (struct winfile_op*) malloc(sizeof(struct winfile_op));
     if(!op) { winerr_set_errno(); return false; }
@@ -54,16 +64,6 @@ NTSTATUS winio_wait_overlapped(OVERLAPPED *ovlp, size_t *num_transfered) {
 
     return status;
 }
-
-struct winfile {
-    void *ctx;
-    bool is_async;
-    winio_read_fnc *read_fnc;
-    winio_write_fnc *write_fnc;
-    winio_devctrl_fnc *devctrl_fnc;
-    winio_cancel_fnc *cancel_fnc;
-    winio_destroy_fnc *destroy_fnc;
-};
 
 static void file_destr(struct winfile *file) {
     if(file->destroy_fnc) file->destroy_fnc(file->ctx);
