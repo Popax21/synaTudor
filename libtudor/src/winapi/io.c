@@ -58,7 +58,7 @@ void windio_set_overlapped_callback(OVERLAPPED *ovlp, winio_overlapped_cb_fnc *c
     NTSTATUS status = __atomic_load_n(&op->cb_status, __ATOMIC_ACQ_REL);
     if(status != STATUS_PENDING) {
         cb = __atomic_exchange_n(&op->cb_fnc, NULL, __ATOMIC_ACQ_REL);
-        if(cb) cb(ovlp, op->cb_status, ctx);
+        if(cb) cb(ovlp, status, ctx);
     }
 }
 
