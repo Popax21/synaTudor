@@ -3,7 +3,10 @@
 
 struct winfile_op {
     struct winfile *file;
-    void *op_ctx;  
+    void *op_ctx;
+
+    volatile winio_overlapped_cb_fnc *cb_fnc;
+    volatile void *cb_ctx;
 };
 
 struct winfile {
@@ -20,7 +23,12 @@ struct winfile {
 static inline bool init_overlapped(OVERLAPPED *ovlp, struct winfile *file, void ***op_ctx) {
     struct winfile_op *op = (struct winfile_op*) malloc(sizeof(struct winfile_op));
     if(!op) { winerr_set_errno(); return false; }
-    *op = (struct winfile_op) { .file = file, .op_ctx = NULL };
+    *op = (struct winfile_op) {
+        .file = file,
+        .op_ctx = NULL,
+        .cb_fnc = NULL,
+        .cb_ctx = NULL
+    };
     *op_ctx = &op->op_ctx;
 
     ovlp->Internal = STATUS_PENDING;
@@ -34,31 +42,49 @@ static inline bool init_overlapped(OVERLAPPED *ovlp, struct winfile *file, void 
     return true;
 }
 
-static inline void cleanup_op(OVERLAPPED *ovlp) {
+void windio_set_overlapped_callback(OVERLAPPED *ovlp, winio_overlapped_cb_fnc *cb, void *ctx) {
     struct winfile_op *op = (struct winfile_op*) ovlp->Pointer;
-    if(!op) return;
-    ovlp->Pointer = NULL;
+    if(op) {
+        op->cb_ctx = ctx;
+        op->cb_fnc = cb;
+    }
 
-    if(op->op_ctx && op->file->cleanup_fnc) op->file->cleanup_fnc(op->file->ctx, ovlp, op->op_ctx);
-    free(op);
+    __atomic_thread_fence(__ATOMIC_ACQ_REL);
+
+    NTSTATUS status = (NTSTATUS) ovlp->Internal;
+    if(status != STATUS_PENDING) {
+        if(op) cb = __atomic_exchange_n(&op->cb_fnc, NULL, __ATOMIC_ACQ_REL);
+        if(cb) cb(ovlp, status, ctx);
+    }
 }
 
-NTSTATUS winio_cancel_overlapped(OVERLAPPED *ovlp) {
-    if((NTSTATUS) ovlp->Internal != STATUS_PENDING) return STATUS_SUCCESS;
+void winio_cancel_overlapped(OVERLAPPED *ovlp) {
+    if(ovlp->Internal != STATUS_PENDING) {
+        winio_cleanup_overlapped(ovlp);
+        return;
+    }
 
     struct winfile_op *op = (struct winfile_op*) ovlp->Pointer;
-    if(!op) return STATUS_SUCCESS;
+    if(op && op->op_ctx && op->file->cancel_fnc) {
+        op->file->cancel_fnc(op->file->ctx, ovlp, op->op_ctx);
+    }
 
-    NTSTATUS status = STATUS_SUCCESS;
-    if(op->op_ctx && op->file->cancel_fnc) status = op->file->cancel_fnc(op->file->ctx, ovlp, op->op_ctx);
-    cleanup_op(ovlp);
-    return status;
+    winio_wait_overlapped(ovlp, NULL);
 }
 
 void winio_complete_overlapped(OVERLAPPED *ovlp, NTSTATUS status, size_t num_transfered) {
     ovlp->Internal = status;
     if(ovlp->Internal == STATUS_SUCCESS) ovlp->InternalHigh = num_transfered;
     if(ovlp->hEvent) win_set_event(ovlp->hEvent);
+
+    __atomic_thread_fence(__ATOMIC_ACQ_REL);
+
+    //Call callback
+    struct winfile_op *op = (struct winfile_op*) ovlp->Pointer;
+    if(op) {
+        winio_overlapped_cb_fnc *cb = __atomic_exchange_n(&op->cb_fnc, NULL, __ATOMIC_ACQ_REL);
+        if(cb) cb(ovlp, status, op->cb_ctx);
+    }
 }
 
 NTSTATUS winio_wait_overlapped(OVERLAPPED *ovlp, size_t *num_transfered) {
@@ -67,8 +93,17 @@ NTSTATUS winio_wait_overlapped(OVERLAPPED *ovlp, size_t *num_transfered) {
 
     NTSTATUS status = (NTSTATUS) ovlp->Internal;
     if(status == STATUS_SUCCESS && num_transfered) *num_transfered = ovlp->InternalHigh;
-    cleanup_op(ovlp);
+    winio_cleanup_overlapped(ovlp);
     return status;
+}
+
+inline void winio_cleanup_overlapped(OVERLAPPED *ovlp) {
+    struct winfile_op *op = (struct winfile_op*) ovlp->Pointer;
+    if(!op) return;
+    ovlp->Pointer = NULL;
+
+    if(op->op_ctx && op->file->cleanup_fnc) op->file->cleanup_fnc(op->file->ctx, ovlp, op->op_ctx);
+    free(op);
 }
 
 static void file_destr(struct winfile *file) {

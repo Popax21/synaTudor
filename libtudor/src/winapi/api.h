@@ -80,15 +80,18 @@ void winlog_register_trace_msg(GUID guid, int num, const char *format);
 void winlog_trace(GUID guid, int num, win_va_list vas);
 
 //IO
-NTSTATUS winio_cancel_overlapped(OVERLAPPED *ovlp);
+typedef void winio_overlapped_cb_fnc(OVERLAPPED *ovlp, NTSTATUS status, void *ctx);
+void windio_set_overlapped_callback(OVERLAPPED *ovlp, winio_overlapped_cb_fnc *cb, void *ctx);
+void winio_cancel_overlapped(OVERLAPPED *ovlp);
 void winio_complete_overlapped(OVERLAPPED *ovlp, NTSTATUS status, size_t num_transfered);
 NTSTATUS winio_wait_overlapped(OVERLAPPED *ovlp, size_t *num_transfered);
+void winio_cleanup_overlapped(OVERLAPPED *ovlp);
 
 typedef NTSTATUS winio_read_fnc(void *ctx, OVERLAPPED *ovlp, off_t offset, void *buf, size_t buf_size, void **op_ctx);
 typedef NTSTATUS winio_write_fnc(void *ctx, OVERLAPPED *ovlp, off_t offset, const void *buf, size_t buf_size, void **op_ctx);
 typedef NTSTATUS winio_devctrl_fnc(void *ctx, OVERLAPPED *ovlp, ULONG code, const void *in_buf, size_t in_size, void *out_buf, size_t out_size, void **op_ctx);
 typedef NTSTATUS winio_cancel_fnc(void *ctx, OVERLAPPED *ovlp, void *op_ctx);
-typedef NTSTATUS winio_cleanup_fnc(void *ctx, OVERLAPPED *ovlp, void *op_ctx);
+typedef void winio_cleanup_fnc(void *ctx, OVERLAPPED *ovlp, void *op_ctx);
 typedef void winio_destroy_fnc(void *ctx);
 
 HANDLE winio_create_file(void *ctx, bool is_async, winio_read_fnc *read_fnc, winio_write_fnc *write_fnc, winio_devctrl_fnc *devctrl_fnc, winio_cancel_fnc *cancel_fnc, winio_cleanup_fnc *cleanup_fnc, winio_destroy_fnc *destroy_fnc);
