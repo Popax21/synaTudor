@@ -30,8 +30,8 @@ void cli_main_loop(struct tudor_device *device) {
         puts("  s - shutdown driver");
 
         printf("> ");
-        char cmd = tolower(getchar());
-        while(!abort_cmd_loop && getchar() != '\n') continue;
+        char cmd = getchar();
+        while(!abort_cmd_loop && isspace(cmd)) cmd = getchar();
         if(abort_cmd_loop) break;
 
         //Execute command
