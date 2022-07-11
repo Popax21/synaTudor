@@ -13,6 +13,7 @@ struct winfile {
     winio_write_fnc *write_fnc;
     winio_devctrl_fnc *devctrl_fnc;
     winio_cancel_fnc *cancel_fnc;
+    winio_cancel_fnc *cleanup_fnc;
     winio_destroy_fnc *destroy_fnc;
 };
 
@@ -33,6 +34,15 @@ static inline bool init_overlapped(OVERLAPPED *ovlp, struct winfile *file, void 
     return true;
 }
 
+static inline void cleanup_op(OVERLAPPED *ovlp) {
+    struct winfile_op *op = (struct winfile_op*) ovlp->Pointer;
+    if(!op) return;
+    ovlp->Pointer = NULL;
+
+    if(op->op_ctx && op->file->cleanup_fnc) op->file->cleanup_fnc(op->file->ctx, ovlp, op->op_ctx);
+    free(op);
+}
+
 NTSTATUS winio_cancel_overlapped(OVERLAPPED *ovlp) {
     if((NTSTATUS) ovlp->Internal != STATUS_PENDING) return STATUS_SUCCESS;
 
@@ -41,8 +51,7 @@ NTSTATUS winio_cancel_overlapped(OVERLAPPED *ovlp) {
 
     NTSTATUS status = STATUS_SUCCESS;
     if(op->op_ctx && op->file->cancel_fnc) status = op->file->cancel_fnc(op->file->ctx, ovlp, op->op_ctx);
-    free(ovlp->Pointer);
-    ovlp->Pointer = NULL;
+    cleanup_op(ovlp);
     return status;
 }
 
@@ -58,10 +67,7 @@ NTSTATUS winio_wait_overlapped(OVERLAPPED *ovlp, size_t *num_transfered) {
 
     NTSTATUS status = (NTSTATUS) ovlp->Internal;
     if(status == STATUS_SUCCESS && num_transfered) *num_transfered = ovlp->InternalHigh;
-
-    free(ovlp->Pointer);
-    ovlp->Pointer = NULL;
-
+    cleanup_op(ovlp);
     return status;
 }
 
@@ -70,7 +76,7 @@ static void file_destr(struct winfile *file) {
     free(file);
 }
 
-HANDLE winio_create_file(void *ctx, bool is_async, winio_read_fnc *read_fnc, winio_write_fnc *write_fnc, winio_devctrl_fnc *devctrl_fnc, winio_destroy_fnc *destroy_fnc, winio_cancel_fnc *cancel_fnc) {
+HANDLE winio_create_file(void *ctx, bool is_async, winio_read_fnc *read_fnc, winio_write_fnc *write_fnc, winio_devctrl_fnc *devctrl_fnc, winio_cancel_fnc *cancel_fnc, winio_cleanup_fnc *cleanup_fnc, winio_destroy_fnc *destroy_fnc) {
     struct winfile *file = (struct winfile*) malloc(sizeof(struct winfile));
     if(!file) { perror("Couldn't allocate file object"); abort(); }
     file->ctx = ctx;
@@ -79,6 +85,7 @@ HANDLE winio_create_file(void *ctx, bool is_async, winio_read_fnc *read_fnc, win
     file->write_fnc = write_fnc;
     file->devctrl_fnc = devctrl_fnc;
     file->cancel_fnc = cancel_fnc;
+    file->cleanup_fnc = cleanup_fnc;
     file->destroy_fnc = destroy_fnc;
     return winhandle_create(file, (winhandle_destr_fnc*) file_destr);
 }

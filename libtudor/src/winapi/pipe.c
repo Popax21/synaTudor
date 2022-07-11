@@ -70,7 +70,7 @@ __winfnc HANDLE CreateNamedPipeW(const char16_t *name, DWORD open_mode, DWORD pi
     pipes_head = pipe;
     cant_fail_ret(pthread_mutex_unlock(&pipes_lock));
 
-    return winio_create_file(pipe, (open_mode & FILE_FLAG_OVERLAPPED) != 0, (winio_read_fnc*) pipe_read, (winio_write_fnc*) pipe_write, NULL, NULL, (winio_destroy_fnc*) pipe_destroy);
+    return winio_create_file(pipe, (open_mode & FILE_FLAG_OVERLAPPED) != 0, (winio_read_fnc*) pipe_read, (winio_write_fnc*) pipe_write, NULL, NULL, NULL, (winio_destroy_fnc*) pipe_destroy);
 }
 WINAPI(CreateNamedPipeW)
 
