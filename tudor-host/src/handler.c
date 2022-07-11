@@ -32,7 +32,7 @@ bool handle_ipc_msg(struct tudor_device *dev, int ipc_sock, enum ipc_msg_type ty
                 }
             }
 
-            log_debug("Added record GUID %08x... finger %d size %d", msg.msg.guid.PartA, msg.msg.finger, rec_size);
+            log_debug("Added record GUID %08x... finger %d size %lu", msg.msg.guid.PartA, msg.msg.finger, rec_size);
             send_ack(ipc_sock);
         } break;
 
