@@ -40,7 +40,7 @@ NTSTATUS winio_cancel_overlapped(OVERLAPPED *ovlp) {
     if(!op) return STATUS_SUCCESS;
 
     NTSTATUS status = STATUS_SUCCESS;
-    if(op->op_ctx && op->file->cancel_fnc) status = op->file->cancel_fnc(op->file->ctx, op->op_ctx);
+    if(op->op_ctx && op->file->cancel_fnc) status = op->file->cancel_fnc(op->file->ctx, ovlp, op->op_ctx);
     free(ovlp->Pointer);
     ovlp->Pointer = NULL;
     return status;

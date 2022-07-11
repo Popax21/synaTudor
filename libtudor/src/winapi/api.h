@@ -87,7 +87,7 @@ NTSTATUS winio_wait_overlapped(OVERLAPPED *ovlp, size_t *num_transfered);
 typedef NTSTATUS winio_read_fnc(void *ctx, OVERLAPPED *ovlp, off_t offset, void *buf, size_t buf_size, void **op_ctx);
 typedef NTSTATUS winio_write_fnc(void *ctx, OVERLAPPED *ovlp, off_t offset, const void *buf, size_t buf_size, void **op_ctx);
 typedef NTSTATUS winio_devctrl_fnc(void *ctx, OVERLAPPED *ovlp, ULONG code, const void *in_buf, size_t in_size, void *out_buf, size_t out_size, void **op_ctx);
-typedef NTSTATUS winio_cancel_fnc(void *ctx, void *op_ctx);
+typedef NTSTATUS winio_cancel_fnc(void *ctx, OVERLAPPED *ovlp, void *op_ctx);
 typedef void winio_destroy_fnc(void *ctx);
 
 HANDLE winio_create_file(void *ctx, bool is_async, winio_read_fnc *read_fnc, winio_write_fnc *write_fnc, winio_devctrl_fnc *devctrl_fnc, winio_destroy_fnc *destroy_fnc, winio_cancel_fnc *cancel_fnc);
