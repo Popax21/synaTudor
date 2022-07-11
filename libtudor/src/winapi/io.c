@@ -29,7 +29,8 @@ NTSTATUS winio_cancel_overlapped(OVERLAPPED *ovlp) {
     struct winfile_op *op = (struct winfile_op*) ovlp->Pointer;
     if(!op) return STATUS_SUCCESS;
 
-    NTSTATUS status = op->op_ctx ?  op->file->cancel_fnc(op->file->ctx, op->op_ctx) : STATUS_SUCCESS;
+    NTSTATUS status = STATUS_SUCCESS;
+    if(op->op_ctx && op->file->cancel_fnc) status = op->file->cancel_fnc(op->file->ctx, op->op_ctx);
     free(ovlp->Pointer);
     ovlp->Pointer = NULL;
     return status;
