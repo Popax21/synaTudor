@@ -272,6 +272,26 @@ NTSTATUS winwdf_wait_request(struct winwdf_request *req) {
     return status;
 }
 
+bool winwdf_get_request_info(struct winwdf_request *req, NTSTATUS *status, const void **in_buf, size_t *in_buf_size, const void **out_buf, size_t *out_buf_size, ULONG_PTR *drv_info) {
+    cant_fail_ret(pthread_mutex_lock(&req->lock));
+
+    if(!req->is_configured || !req->is_started) {
+        cant_fail_ret(pthread_mutex_unlock(&req->lock));
+        log_warn("winwdf_get_request_info called on non-configured or non-started request!");
+        return false;
+    }
+
+    if(status) *status = req->status;
+    if(in_buf) *in_buf = req->in_buf;
+    if(in_buf_size) *in_buf_size = req->in_buf_size;
+    if(out_buf) *out_buf = req->out_buf;
+    if(out_buf_size) *out_buf_size = req->out_buf_size;
+    if(drv_info) *drv_info = req->drv_info;
+
+    cant_fail_ret(pthread_mutex_unlock(&req->lock));
+    return true;
+}
+
 NTSTATUS wdf_get_request_status(struct winwdf_request *req) {
     NTSTATUS status = WINERR_SET_CODE;
     cant_fail_ret(pthread_mutex_lock(&req->lock));

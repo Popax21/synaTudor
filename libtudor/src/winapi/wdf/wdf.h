@@ -28,6 +28,7 @@ void winwdf_remove_device(struct winwdf_device *device);
 //Requests
 struct winwdf_request;
 typedef void winwdf_request_cb_fnc(struct winwdf_request *req, NTSTATUS status, void *ctx);
+bool winwdf_get_request_info(struct winwdf_request *req, NTSTATUS *status, const void **in_buf, size_t *in_buf_size, const void **out_buf, size_t *out_buf_size, ULONG_PTR *drv_info);
 void winwdf_add_request_callback(struct winwdf_request *req, winwdf_request_cb_fnc *cb, void *ctx);
 void winwdf_cancel_request(struct winwdf_request *req);
 NTSTATUS winwdf_wait_request(struct winwdf_request *req);
