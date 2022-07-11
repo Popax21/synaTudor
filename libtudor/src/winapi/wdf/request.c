@@ -205,12 +205,12 @@ void wdf_complete_request(struct winwdf_request *req, NTSTATUS status, WDF_REQUE
     cant_fail_ret(pthread_mutex_unlock(&req->lock));
 }
 
-void winwdf_add_callback(struct winwdf_request *req, winwdf_request_cb_fnc *cb_fnc, void *ctx) {
+void winwdf_add_request_callback(struct winwdf_request *req, winwdf_request_cb_fnc *cb_fnc, void *ctx) {
     cant_fail_ret(pthread_mutex_lock(&req->lock));
 
     if(!req->is_configured) {
         cant_fail_ret(pthread_mutex_unlock(&req->lock));
-        log_warn("winwdf_add_callback called on non-configured request!");
+        log_warn("winwdf_add_request_callback called on non-configured request!");
         return;
     }
 
