@@ -34,9 +34,11 @@ __winfnc BOOL InitializeCriticalSectionEx(CRITICAL_SECTION *sect, DWORD spinCoun
     cant_fail_ret(pthread_mutexattr_init(&attr));
     cant_fail_ret(pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE));
     if(pthread_mutex_init((pthread_mutex_t*) sect->LockSemaphore, &attr) != 0) {
+        cant_fail_ret(pthread_mutexattr_destroy(&attr));
         winerr_set_errno();
         return FALSE;
     }
+    cant_fail_ret(pthread_mutexattr_destroy(&attr));
 
     return TRUE;
 }

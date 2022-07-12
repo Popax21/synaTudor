@@ -71,6 +71,7 @@ struct winwdf_request *wdf_create_request(struct wdf_object *parent, WDF_OBJECT_
     cant_fail_ret(pthread_mutexattr_init(&lock_attr));
     cant_fail_ret(pthread_mutexattr_settype(&lock_attr, PTHREAD_MUTEX_RECURSIVE));
     cant_fail_ret(pthread_mutex_init(&req->lock, &lock_attr));
+    cant_fail_ret(pthread_mutexattr_destroy(&lock_attr));
     req->is_configured = req->is_started = req->is_done = false;
     req->status = STATUS_SUCCESS;
     cant_fail_ret(pthread_cond_init(&req->compl_cond, NULL));
