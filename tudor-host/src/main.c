@@ -187,8 +187,8 @@ int main() {
     ipc_send_msg(sock, &ready_type, sizeof(ready_type));
     log_info("Sent ready message");
 
-    //Enter IPC handling loop
-    ipc_run_handler_loop(&dev, sock);
+    //Enter handler loop
+    run_handler_loop(&dev, sock);
 
     //Close device
     if(!tudor_close(&dev)) {

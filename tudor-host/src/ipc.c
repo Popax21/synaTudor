@@ -4,6 +4,28 @@
 #include "ipc.h"
 #include "handler.h"
 
+enum ipc_msg_type ipc_peek_msg(int sock) {
+    enum ipc_msg_type msg_type;
+
+    struct iovec iov = {
+        .iov_base = &msg_type,
+        .iov_len = sizeof(msg_type)
+    };
+
+    struct msghdr msg_hdr = {
+        .msg_name = NULL,
+        .msg_namelen = 0,
+        .msg_iov = &iov,
+        .msg_iovlen = 1,
+        .msg_control = NULL,
+        .msg_controllen = 0
+    };
+
+    cant_fail(recvmsg(sock, &msg_hdr, MSG_PEEK));
+
+    return msg_type;
+}
+
 size_t ipc_recv_msg(int sock, void *buf, enum ipc_msg_type type, size_t min_sz, size_t max_sz, int *fd) {
     struct iovec iov = {
         .iov_base = buf,
@@ -70,30 +92,4 @@ void ipc_send_msg(int sock, void *buf, size_t size) {
     };
 
     cant_fail(sendmsg(sock, &msg_hdr, 0));
-}
-
-void ipc_run_handler_loop(struct tudor_device *dev, int sock) {
-    for(bool shutdown = false; !shutdown;) {
-        //Peek message
-        enum ipc_msg_type msg_type;
-
-        struct iovec iov = {
-            .iov_base = &msg_type,
-            .iov_len = sizeof(msg_type)
-        };
-
-        struct msghdr msg_hdr = {
-            .msg_name = NULL,
-            .msg_namelen = 0,
-            .msg_iov = &iov,
-            .msg_iovlen = 1,
-            .msg_control = NULL,
-            .msg_controllen = 0
-        };
-
-        cant_fail(recvmsg(sock, &msg_hdr, MSG_PEEK));
-
-        //Handle the message
-        shutdown = handle_ipc_msg(dev, sock, msg_type);
-    }
 }

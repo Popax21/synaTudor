@@ -19,7 +19,6 @@ extern bool tudor_log_traces;
 bool tudor_init();
 bool tudor_shutdown();
 
-
 typedef struct _async_res *tudor_async_res_t;
 typedef void tudor_async_cb_fnc(tudor_async_res_t res, bool success, void *ctx);
 

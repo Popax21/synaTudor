@@ -3,6 +3,6 @@
 
 #include "ipc.h"
 
-bool handle_ipc_msg(struct tudor_device *dev, int sock, enum ipc_msg_type type);
+void run_handler_loop(struct tudor_device *dev, int sock);
 
 #endif
