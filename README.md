@@ -28,7 +28,7 @@ the functionality:
   loaded by the libfprint TOD fork.
 
 ## Building / Installation
-The same build system used by libfprint, meson, is used to for this project.
+The same build system used by libfprint, meson, is used for this project.
 During the first build, the Windows driver is automatically downloaded and
 extracted. `innoextract` has to be installed for this.
 To build and install all contained parts, execute:
@@ -38,6 +38,7 @@ cd build
 ninja
 sudo ninja install
 ```
+(for Arch Linux specifically, you might want to use `arch-meson` instead of `meson`)
 
 For documentation about build options etc., see the individual parts.
 
