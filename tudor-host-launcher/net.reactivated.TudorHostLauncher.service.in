@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=net.reactivated.TudorHostLauncher
+Exec=@INSTALL_DIR@/tudor_host_launcher
+User=root
+SystemdService=tudor-host-launcher.service

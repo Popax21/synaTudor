@@ -50,7 +50,3 @@ seperate package which you can install instead of the regular libfprint one
 It's recommended to use [this
 fork](https://gitlab.freedesktop.org/Popax21/libfprint/-/tree/tod) for now,
 until it's merged into the base repository.
-
-**NOTE:** After the installation has completed, you'll probably want to enable
-and start `tudor-host-launcher.service`. For the reasoning behind why a seperate
-systemd service is needed, see [here](tudor-host-launcher/README.md).
