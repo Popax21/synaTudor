@@ -74,6 +74,7 @@ static inline void call_overlapped_cb(OVERLAPPED *ovlp, NTSTATUS status, winio_o
 
     pthread_t thread;
     cant_fail_ret(pthread_create(&thread, NULL, (void *(*)(void*)) ovlp_cb_thread_func, c));
+    cant_fail_ret(pthread_detach(thread));
 }
 
 //<< END CODE >>
