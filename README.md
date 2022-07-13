@@ -25,7 +25,7 @@ the functionality:
   bypass the strict fprintd sandboxing, which messes with the host's even
   stricter sandboxing.
 - [libfprint-tod](libfprint-tod/README.md): Contains the libfprint module, to be
-  loaded by the libfprint TOD fork. [BROKEN, WIP]
+  loaded by the libfprint TOD fork.
 
 ## Building / Installation
 The same build system used by libfprint, meson, is used to for this project.
