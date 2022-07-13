@@ -50,10 +50,11 @@ size_t ipc_recv_msg(int sock, void *buf, enum ipc_msg_type type, size_t min_sz, 
         .msg_controllen = sizeof(cmsg)
     };
 
-    cant_fail(recvmsg(sock, &msg_hdr, 0));
+    ssize_t msg_size;
+    cant_fail(msg_size = recvmsg(sock, &msg_hdr, 0));
 
-    if(iov.iov_len < min_sz || max_sz < iov.iov_len) {
-        log_error("Invalid IPC message size: 0x%lx (min 0x%lx, max 0x%lx)", iov.iov_len, min_sz, max_sz);
+    if(msg_size < min_sz || max_sz < msg_size) {
+        log_error("Invalid IPC message size: 0x%lx (min 0x%lx, max 0x%lx)", msg_size, min_sz, max_sz);
         abort();
     }
 
@@ -73,7 +74,7 @@ size_t ipc_recv_msg(int sock, void *buf, enum ipc_msg_type type, size_t min_sz, 
         else cant_fail(close(cmsg.fd));
     } else if(fd) *fd = -1;
 
-    return iov.iov_len;
+    return msg_size;
 }
 
 void ipc_send_msg(int sock, void *buf, size_t size) {

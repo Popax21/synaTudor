@@ -109,7 +109,13 @@ static void enroll_cb(tudor_async_res_t *res, bool success, struct handler_state
         }
 
         //Allocate response message
-        size_t resp_size = sizeof(struct ipc_msg_resp_enroll) + enroll_rec->data_size;
+        size_t rec_size = enroll_rec->data_size, resp_size = sizeof(struct ipc_msg_resp_enroll) + rec_size;
+
+        if(rec_size > IPC_MAX_RECORD_SIZE) {
+            log_error("Enrollment record size exceeding maximum size: %lu > %d!", rec_size, IPC_MAX_RECORD_SIZE);
+            abort();
+        }
+
         struct ipc_msg_resp_enroll *resp = (struct ipc_msg_resp_enroll*) malloc(resp_size);
         if(!resp) {
             perror("Couldn't allocate enrollment response buffer");
@@ -128,7 +134,7 @@ static void enroll_cb(tudor_async_res_t *res, bool success, struct handler_state
         ipc_send_msg(state->ipc_sock, resp, resp_size);
         free(resp);
 
-        log_info("Enroll capture successfull -> enrollment commited for GUID %08x... finger %d", state->action.enroll.guid.PartA, state->action.enroll.finger);
+        log_info("Enroll capture successfull -> enrollment commited for GUID %08x... finger %d - record size %lu", state->action.enroll.guid.PartA, state->action.enroll.finger, rec_size);
     } else {
         //Start another capture
         init_action(state);
@@ -242,23 +248,23 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
             check_in_action(state, type);
 
             //Receive the message
-            struct {
-                struct ipc_msg_add_record msg;
-                char buf[IPC_MAX_RECORD_SIZE];
-            } msg;
-            size_t rec_size = ipc_recv_msg(state->ipc_sock, &msg, type, sizeof(msg.msg), sizeof(msg), NULL) - sizeof(msg.msg);
+            struct ipc_msg_add_record *msg = (struct ipc_msg_add_record*) malloc(sizeof(struct ipc_msg_add_record) + IPC_MAX_RECORD_SIZE);
+            if(!msg) { perror("Couldn't allocate ADD_RECORD IPC message buffer"); abort(); }
+            size_t rec_size = ipc_recv_msg(state->ipc_sock, msg, type, sizeof(struct ipc_msg_add_record), sizeof(struct ipc_msg_add_record) + IPC_MAX_RECORD_SIZE, NULL) - sizeof(struct ipc_msg_add_record);
 
             //Add the record
-            if(!tudor_add_record(state->dev, msg.msg.guid, msg.msg.finger, msg.msg.record_data, rec_size)) {
+            if(!tudor_add_record(state->dev, msg->guid, msg->finger, msg->record_data, rec_size)) {
                 //Delete the old one first
-                log_debug("Replacing old record GUID %08x... finger %d", msg.msg.guid.PartA, msg.msg.finger);
-                tudor_wipe_records(state->dev, &msg.msg.guid, msg.msg.finger);
-                if(!tudor_add_record(state->dev, msg.msg.guid, msg.msg.finger, msg.msg.record_data, rec_size)) {
+                log_warn("Replacing old record GUID %08x... finger %d", msg->guid.PartA, msg->finger);
+                tudor_wipe_records(state->dev, &msg->guid, msg->finger);
+                if(!tudor_add_record(state->dev, msg->guid, msg->finger, msg->record_data, rec_size)) {
                     log_error("Couldn't add record!");
                     abort();
                 }
             }
-            log_info("Added record GUID %08x... finger %d size %lu", msg.msg.guid.PartA, msg.msg.finger, rec_size);
+
+            log_info("Added record GUID %08x... finger %d size %lu", msg->guid.PartA, msg->finger, rec_size);
+            free(msg);
 
             //Send ACK
             send_ack(state->ipc_sock);
