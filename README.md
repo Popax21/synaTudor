@@ -19,7 +19,7 @@ the functionality:
   relinking and interfacing with the driver.
 - [cli](cli/README.md): Contains a simple CLI wrapper for the relinked driver.
 - [tudor-host](tudor-host/README.md): Contains the host application for
-  libtudor, used by the libfprint module. [BROKEN, WIP]
+  libtudor, used by the libfprint module.
 - [tudor-host-launcher](tudor-host-launcher/README.md): Contains the systemd
   service which launches the tudor host processes. This extra step is needed to
   bypass the strict fprintd sandboxing, which messes with the host's even
