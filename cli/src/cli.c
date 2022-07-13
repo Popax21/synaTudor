@@ -133,7 +133,7 @@ void cli_main_loop(struct tudor_device *device) {
                 if(!tudor_identify(device, &found_match, &match_guid, &match_finger, &async_res) || !tudor_wait_async(async_res)) {
                     if(async_res) tudor_cleanup_async(async_res);
 
-                    log_error("Error verify captured sample!");
+                    log_error("Error identifying captured sample!");
                     goto cmdend;
                 }
                 tudor_cleanup_async(async_res);

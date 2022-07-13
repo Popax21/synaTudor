@@ -422,6 +422,7 @@ static void identify_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res
     SIZE_T payload_size, hash_size;
     if((hres = tudor_engine_adapter->IdentifyFeatureSet(res->dev->pipeline, &identity, &subfactor, &payload_ptr, &payload_size, &hash_ptr, &hash_size, &reject_detail)) != ERROR_SUCCESS) {
         if(hres == WINBIO_E_UNKNOWN_ID) {
+            success = true;
             found_match = false;
             goto exit;
         }
