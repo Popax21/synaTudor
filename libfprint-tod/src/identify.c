@@ -217,7 +217,7 @@ void fpi_device_tudor_identify(FpDevice *dev) {
     //Create identify prints array
     GArray *prints = g_array_sized_new(false, false, sizeof(struct identify_print), fp_prints->len);
     g_array_set_clear_func(prints, (GDestroyNotify) clear_identify_print);
-    for(int i = 0; i < prints->len; i++) {
+    for(int i = 0; i < fp_prints->len; i++) {
         struct identify_print print = {
             .print = g_object_ref(FP_PRINT(fp_prints->pdata[i])),
             .record = NULL
