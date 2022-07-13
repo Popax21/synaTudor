@@ -10,6 +10,7 @@ typedef struct _IPCMessageBuf IPCMessageBuf;
 
 struct _FpiDeviceTudor {
     FpDevice parent;
+    GList *dev_list_link;
 
     GDBusConnection *dbus_con;
 

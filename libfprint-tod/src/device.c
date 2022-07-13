@@ -18,12 +18,6 @@ static FpIdEntry tudor_ids[] = {
     { 0 }
 };
 
-static void fpi_device_tudor_init(FpiDeviceTudor *tdev) {
-    //Allocate data
-    tdev->send_msg = ipc_msg_buf_new();
-    tdev->db_records = g_ptr_array_new_with_free_func(g_object_unref);
-}
-
 static void close_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
     //Check for errors
     GError *error = NULL;
@@ -37,9 +31,7 @@ static void close_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
     *((bool*) user_data) = true;
 }
 
-static void fpi_device_tudor_dispose(GObject *obj) {
-    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(obj);
-
+static void ensure_closed(FpiDeviceTudor *tdev) {
     if(tdev->host_has_id) {
         //Close the device
         g_info("Closing tudor device host ID %u...", tdev->host_id);
@@ -48,6 +40,39 @@ static void fpi_device_tudor_dispose(GObject *obj) {
         close_device(g_object_ref(tdev), close_cb, &cb_called);
         while(!cb_called) g_main_context_iteration(NULL, TRUE);
     }
+}
+
+static GList *dev_list = 0;
+static bool atexit_installed = false;
+
+static void atexit_hook() {
+    for(GList *l = dev_list; l; l = l->next) {
+        ensure_closed(FPI_DEVICE_TUDOR(l->data));
+    }
+}
+
+static void fpi_device_tudor_init(FpiDeviceTudor *tdev) {
+    //Allocate data
+    tdev->send_msg = ipc_msg_buf_new();
+    tdev->db_records = g_ptr_array_new_with_free_func(g_object_unref);
+
+    //fprintd does some stupid stuff and just calls exit() when its timeout is hit
+    //Use an atexit hook to still properly shut down anyway
+    tdev->dev_list_link = dev_list = g_list_prepend(dev_list, tdev);
+    if(!atexit_installed) {
+        atexit_installed = true;
+        atexit(atexit_hook);
+    }
+}
+
+static void fpi_device_tudor_dispose(GObject *obj) {
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(obj);
+
+    //Remove from device list
+    g_list_free(g_list_remove_link(dev_list, tdev->dev_list_link));
+
+    //Ensure the device's closed
+    ensure_closed(tdev);
 
     //Chain to parent
     G_OBJECT_CLASS(fpi_device_tudor_parent_class)->dispose(obj);
