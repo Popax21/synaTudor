@@ -43,26 +43,14 @@ static void ensure_closed(FpiDeviceTudor *tdev) {
 }
 
 static GList *dev_list = 0;
-static bool atexit_installed = false;
-
-static void atexit_hook() {
-    for(GList *l = dev_list; l; l = l->next) {
-        ensure_closed(FPI_DEVICE_TUDOR(l->data));
-    }
-}
 
 static void fpi_device_tudor_init(FpiDeviceTudor *tdev) {
     //Allocate data
     tdev->send_msg = ipc_msg_buf_new();
     tdev->db_records = g_ptr_array_new_with_free_func(g_object_unref);
 
-    //fprintd does some stupid stuff and just calls exit() when its timeout is hit
-    //Use an atexit hook to still properly shut down anyway
+    //Add to device list
     tdev->dev_list_link = dev_list = g_list_prepend(dev_list, tdev);
-    if(!atexit_installed) {
-        atexit_installed = true;
-        atexit(atexit_hook);
-    }
 }
 
 static void fpi_device_tudor_dispose(GObject *obj) {
@@ -126,6 +114,14 @@ GError *handle_cancel_ack(FpiDeviceTudor *tdev) {
     }
 }
 
+static void atexit_hook() {
+    log_debug("Tudor close atexit hook called");
+    for(GList *l = dev_list; l; l = l->next) {
+        log_debug("Cleaning up tudor host %p...", l->data);
+        ensure_closed(FPI_DEVICE_TUDOR(l->data));
+    }
+}
+
 static void fpi_device_tudor_class_init(FpiDeviceTudorClass *class) {
     GObjectClass *obj_class = G_OBJECT_CLASS(class);
     obj_class->dispose = fpi_device_tudor_dispose;
@@ -150,4 +146,8 @@ static void fpi_device_tudor_class_init(FpiDeviceTudorClass *class) {
     dev_class->clear_storage = fpi_device_clear_storage;
 
     fpi_device_class_auto_initialize_features(dev_class);
+
+    //fprintd does some stupid stuff and just calls exit() when its timeout is hit
+    //Use an atexit hook to still properly shut down anyway
+    atexit(atexit_hook);
 }
