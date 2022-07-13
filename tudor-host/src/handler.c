@@ -258,7 +258,7 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
                     abort();
                 }
             }
-            log_debug("Added record GUID %08x... finger %d size %lu", msg.msg.guid.PartA, msg.msg.finger, rec_size);
+            log_info("Added record GUID %08x... finger %d size %lu", msg.msg.guid.PartA, msg.msg.finger, rec_size);
 
             //Send ACK
             send_ack(state->ipc_sock);
@@ -273,7 +273,7 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
 
             //Delete the record
             int num_recs = tudor_wipe_records(state->dev, &msg.guid, msg.finger);
-            log_debug("Deleted %d records with GUID %08x... finger %d", num_recs, msg.guid.PartA, msg.finger);
+            log_info("Deleted %d records with GUID %08x... finger %d", num_recs, msg.guid.PartA, msg.finger);
 
             //Send ACK
             send_ack(state->ipc_sock);
@@ -285,7 +285,7 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
 
             //Wipe records
             int num_recs = tudor_wipe_records(state->dev, NULL, TUDOR_FINGER_ANY);
-            log_debug("Cleared %d records", num_recs);
+            log_info("Cleared %d records", num_recs);
 
             //Send ACK
             send_ack(state->ipc_sock);
