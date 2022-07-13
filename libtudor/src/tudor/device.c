@@ -225,20 +225,20 @@ static void enroll_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res) 
     //Follow https://docs.microsoft.com/en-us/windows/win32/secbiomet/adapter-workflow - WinBioEnrollCapture
     ULONG reject_detail;
     if((hres = tudor_sensor_adapter->FinishCapture(res->dev->pipeline, &reject_detail)) != ERROR_SUCCESS) {
-        log_error("Error finishing sensor capture: 0x%x! [reject detail 0x%x]", hres, reject_detail);
         if(hres == WINBIO_E_BAD_CAPTURE) done = false;
+        log_error("Error finishing sensor capture: 0x%x! [reject detail 0x%x]", hres, reject_detail);
         goto exit;
     };
     if((hres = tudor_sensor_adapter->PushDataToEngine(res->dev->pipeline, WINBIO_PURPOSE_ENROLL, 0, &reject_detail)) != ERROR_SUCCESS) {
-        log_error("Error pushing sensor data to engine: 0x%x! [reject detail 0x%x]", hres, reject_detail);
         if(hres == WINBIO_E_BAD_CAPTURE) done = false;
+        log_error("Error pushing sensor data to engine: 0x%x! [reject detail 0x%x]", hres, reject_detail);
         goto exit;
     };
 
     log_debug("Updating enrollment...");
     if((hres = tudor_engine_adapter->UpdateEnrollment(res->dev->pipeline, &reject_detail)) != ERROR_SUCCESS && hres != WINBIO_I_MORE_DATA) {
-        log_error("Error updating enrollment: 0x%x! [reject detail 0x%x]", hres, reject_detail);
         if(hres == WINBIO_E_BAD_CAPTURE) done = false;
+        log_error("Error updating enrollment: 0x%x! [reject detail 0x%x]", hres, reject_detail);
         goto exit;
     };
 
@@ -331,7 +331,7 @@ bool tudor_enroll_discard(struct tudor_device *device) {
 static void verify_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res) {
     winmodule_set_cur(&tudor_adapter_dll->module);
     HRESULT hres;
-    bool success = false, matches = false;
+    bool success = false, retry = false, matches = false;
 
     if(status != STATUS_SUCCESS) {
         log_error("Error starting capture: 0x%x!", status);
@@ -340,10 +340,12 @@ static void verify_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res) 
 
     ULONG reject_detail;
     if((hres = tudor_sensor_adapter->FinishCapture(res->dev->pipeline, &reject_detail)) != ERROR_SUCCESS) {
+        if(hres == WINBIO_E_BAD_CAPTURE) retry = true;
         log_error("Error finishing sensor capture: 0x%x! [reject detail 0x%x]", hres, reject_detail);
         goto exit;
     };
     if((hres = tudor_sensor_adapter->PushDataToEngine(res->dev->pipeline, WINBIO_PURPOSE_VERIFY, 0, &reject_detail)) != ERROR_SUCCESS) {
+        if(hres == WINBIO_E_BAD_CAPTURE) retry = true;
         log_error("Error pushing sensor data to engine: 0x%x! [reject detail 0x%x]", hres, reject_detail);
         goto exit;
     };
@@ -356,6 +358,7 @@ static void verify_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res) 
         .Type = WINBIO_ID_TYPE_GUID,
         .TemplateGuid = *(GUID*) &res->args.verify.guid
     }, (UCHAR) res->args.verify.finger, &is_match, &payload_ptr, &payload_size, &hash_ptr, &hash_size, &reject_detail)) != ERROR_SUCCESS) {
+        if(hres == WINBIO_E_BAD_CAPTURE) retry = true;
         if(hres == WINBIO_E_NO_MATCH) {
             success = true;
             matches = false;
@@ -370,15 +373,17 @@ static void verify_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res) 
     matches = is_match;
 
     exit:;
+    *(res->args.verify.retry) = retry;
     *(res->args.verify.matches) = matches;
     async_complete_op(res, success);
 }
 
-bool tudor_verify(struct tudor_device *device, RECGUID guid, enum tudor_finger finger, bool *matches, tudor_async_res_t *res) {
+bool tudor_verify(struct tudor_device *device, RECGUID guid, enum tudor_finger finger, bool *retry, bool *matches, tudor_async_res_t *res) {
     winmodule_set_cur(&tudor_adapter_dll->module);
     *res = NULL;
     HRESULT hres;
 
+    *retry = false;
     *matches = false;
     if(device->enrolling) {
         log_error("Currently enrolling a finger!");
@@ -390,7 +395,7 @@ bool tudor_verify(struct tudor_device *device, RECGUID guid, enum tudor_finger f
     WINBIO_CALL_PIPELINE(tudor_sensor_adapter->StartCapture, device->pipeline, WINBIO_PURPOSE_VERIFY, &ovlp);
 
     *res = async_new_res(device, ovlp);
-    (*res)->args.verify = (struct async_args_verify) { .guid = guid, .finger = finger, .matches = matches };
+    (*res)->args.verify = (struct async_args_verify) { .retry = retry, .guid = guid, .finger = finger, .matches = matches };
     winio_set_overlapped_callback(ovlp, (winio_overlapped_cb_fnc*) verify_cb, *res, true);
     return true;
 }
@@ -398,7 +403,7 @@ bool tudor_verify(struct tudor_device *device, RECGUID guid, enum tudor_finger f
 static void identify_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res) {
     winmodule_set_cur(&tudor_adapter_dll->module);
     HRESULT hres;
-    bool success = false, found_match = false;
+    bool success = false, retry = false, found_match = false;
 
     if(status != STATUS_SUCCESS) {
         log_error("Error starting capture: 0x%x!", status);
@@ -407,10 +412,12 @@ static void identify_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res
 
     ULONG reject_detail;
     if((hres = tudor_sensor_adapter->FinishCapture(res->dev->pipeline, &reject_detail)) != ERROR_SUCCESS) {
+        if(hres == WINBIO_E_BAD_CAPTURE) retry = true;
         log_error("Error finishing sensor capture: 0x%x! [reject detail 0x%x]", hres, reject_detail);
         goto exit;
     };
     if((hres = tudor_sensor_adapter->PushDataToEngine(res->dev->pipeline, WINBIO_PURPOSE_IDENTIFY, 0, &reject_detail)) != ERROR_SUCCESS) {
+        if(hres == WINBIO_E_BAD_CAPTURE) retry = true;
         log_error("Error pushing sensor data to engine: 0x%x! [reject detail 0x%x]", hres, reject_detail);
         goto exit;
     };
@@ -421,6 +428,7 @@ static void identify_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res
     UCHAR *payload_ptr, *hash_ptr;
     SIZE_T payload_size, hash_size;
     if((hres = tudor_engine_adapter->IdentifyFeatureSet(res->dev->pipeline, &identity, &subfactor, &payload_ptr, &payload_size, &hash_ptr, &hash_size, &reject_detail)) != ERROR_SUCCESS) {
+        if(hres == WINBIO_E_BAD_CAPTURE) retry = true;
         if(hres == WINBIO_E_UNKNOWN_ID) {
             success = true;
             found_match = false;
@@ -441,15 +449,17 @@ static void identify_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res
     *(res->args.identify.finger) = (enum tudor_finger) subfactor;
 
     exit:;
+    *(res->args.identify.retry) = retry;
     *(res->args.identify.found_match) = found_match;
     async_complete_op(res, success);
 }
 
-bool tudor_identify(struct tudor_device *device, bool *found_match, RECGUID *guid, enum tudor_finger *finger, tudor_async_res_t *res) {
+bool tudor_identify(struct tudor_device *device, bool *retry, bool *found_match, RECGUID *guid, enum tudor_finger *finger, tudor_async_res_t *res) {
     winmodule_set_cur(&tudor_adapter_dll->module);
     *res = NULL;
     HRESULT hres;
 
+    *retry = false;
     *found_match = false;
     if(device->enrolling) {
         log_error("Currently enrolling a finger!");
@@ -461,7 +471,7 @@ bool tudor_identify(struct tudor_device *device, bool *found_match, RECGUID *gui
     WINBIO_CALL_PIPELINE(tudor_sensor_adapter->StartCapture, device->pipeline, WINBIO_PURPOSE_IDENTIFY, &ovlp);
 
     *res = async_new_res(device, ovlp);
-    (*res)->args.identify = (struct async_args_identify) { .found_match = found_match, .guid = guid, .finger = finger };
+    (*res)->args.identify = (struct async_args_identify) { .retry = retry, .found_match = found_match, .guid = guid, .finger = finger };
     winio_set_overlapped_callback(ovlp, (winio_overlapped_cb_fnc*) identify_cb, *res, true);
     return true;
 }

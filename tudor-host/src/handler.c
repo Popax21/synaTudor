@@ -18,10 +18,10 @@ struct handler_state {
         struct {
             RECGUID guid;
             enum tudor_finger finger;
-            bool matches;
+            bool retry, matches;
         } verify;
         struct {
-            bool has_match;
+            bool retry, has_match;
             RECGUID guid;
             enum tudor_finger finger;
         } identify;
@@ -156,7 +156,7 @@ static void enroll_cb(tudor_async_res_t *res, bool success, struct handler_state
             log_info("Enroll capture error -> retrying...");
         }
 
-        //Only set the callback now, to avoid reentrance issues
+        //Only set the callback now to avoid reentrance issues
         tudor_set_async_callback(state->async_res, (tudor_async_cb_fnc*) enroll_cb, state);
     }
 
@@ -172,21 +172,38 @@ static void verify_cb(tudor_async_res_t *res, bool success, struct handler_state
     }
 
     //Check success
-    if(!success) {
+    if(!success && !state->action.verify.retry) {
         log_error("Verify action failed!");
         abort();
+    }
+
+    //If we're retrying, start again
+    if(!success) {
+        init_action(state);
+        if(!tudor_verify(state->dev, state->action.verify.guid, state->action.verify.finger, &state->action.verify.retry, &state->action.verify.matches, &state->async_res)) {
+            log_error("Couldn't start verify action retry!");
+            abort();
+        }
     }
 
     //Send response
     struct ipc_msg_resp_verify msg = {
         .type = IPC_MSG_RESP_VERIFY,
+        .retry = !success,
         .did_match = state->action.verify.matches
     };
     ipc_send_msg(state->ipc_sock, &msg, sizeof(msg));
 
-    log_info("Verify GUID %08x... finger %d -> %s match", state->action.verify.guid.PartA, state->action.verify.finger, msg.did_match ? "does" : "doesn't");
+    if(success) {
+        log_info("Verify GUID %08x... finger %d -> %s match", state->action.verify.guid.PartA, state->action.verify.finger, msg.did_match ? "does" : "doesn't");
+    } else {
+        log_info("Verify GUID %08x... finger %d capture error -> retrying...");
+    }
 
     cant_fail_ret(pthread_mutex_unlock(&state->lock));
+
+    //Only set the callback now to avoid reentrance issues
+    if(!success) tudor_set_async_callback(state->async_res, (tudor_async_cb_fnc*) verify_cb, state);
 }
 
 static void identify_cb(tudor_async_res_t *res, bool success, struct handler_state *state) {
@@ -203,22 +220,37 @@ static void identify_cb(tudor_async_res_t *res, bool success, struct handler_sta
         abort();
     }
 
+    //If we're retrying, start again
+    if(!success && !state->action.verify.retry) {
+        init_action(state);
+        if(!tudor_identify(state->dev, &state->action.identify.retry, &state->action.identify.has_match, &state->action.identify.guid, &state->action.identify.finger, &state->async_res)) {
+            log_error("Couldn't start identify action retry!");
+            abort();
+        }
+    }
+
     //Send response
     struct ipc_msg_resp_identify msg = {
         .type = IPC_MSG_RESP_IDENTIFY,
+        .retry = !success,
         .did_match = state->action.identify.has_match,
         .guid = state->action.identify.guid,
         .finger = state->action.identify.finger
     };
     ipc_send_msg(state->ipc_sock, &msg, sizeof(msg));
 
-    if(msg.did_match) {
+    if(success && msg.did_match) {
         log_info("Identify result -> matches GUID %08x... finger %d", msg.guid.PartA, msg.finger);
-    } else {
+    } else if(success) {
         log_info("Identify result -> no match");
+    } else {
+        log_info("Identify capture error -> retrying...");
     }
 
     cant_fail_ret(pthread_mutex_unlock(&state->lock));
+
+    //Only set the callback now to avoid reentrance issues
+    if(!success) tudor_set_async_callback(state->async_res, (tudor_async_cb_fnc*) identify_cb, state);
 }
 
 static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type type) {
@@ -339,7 +371,7 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
             state->action.verify.finger = msg.finger;
 
             //Start verify action
-            if(!tudor_verify(state->dev, msg.guid, msg.finger, &state->action.verify.matches, &state->async_res)) {
+            if(!tudor_verify(state->dev, msg.guid, msg.finger, &state->action.verify.retry, &state->action.verify.matches, &state->async_res)) {
                 log_error("Couldn't start verify action!");
                 abort();
             }
@@ -358,7 +390,7 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
             init_action(state);
 
             //Start identify action
-            if(!tudor_identify(state->dev, &state->action.identify.has_match, &state->action.identify.guid, &state->action.identify.finger, &state->async_res)) {
+            if(!tudor_identify(state->dev, &state->action.identify.retry, &state->action.identify.has_match, &state->action.identify.guid, &state->action.identify.finger, &state->async_res)) {
                 log_error("Couldn't start identify action!");
                 abort();
             }

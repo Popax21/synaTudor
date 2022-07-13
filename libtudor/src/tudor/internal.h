@@ -13,10 +13,12 @@ struct async_args_enroll {
 struct async_args_verify {
     RECGUID guid;
     enum tudor_finger finger;
+    bool *retry;
     bool *matches;
 };
 
 struct async_args_identify {
+    bool *retry;
     bool *found_match;
     RECGUID *guid;
     enum tudor_finger *finger;

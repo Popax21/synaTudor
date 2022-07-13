@@ -102,7 +102,7 @@ bool tudor_enroll_capture(struct tudor_device *device, bool *done, tudor_async_r
 bool tudor_enroll_commit(struct tudor_device *device, bool *is_duplicate);
 bool tudor_enroll_discard(struct tudor_device *device);
 
-bool tudor_verify(struct tudor_device *device, RECGUID guid, enum tudor_finger finger, bool *matches, tudor_async_res_t *res);
-bool tudor_identify(struct tudor_device *device, bool *found_match, RECGUID *guid, enum tudor_finger *finger, tudor_async_res_t *res);
+bool tudor_verify(struct tudor_device *device, RECGUID guid, enum tudor_finger finger, bool *retry, bool *matches, tudor_async_res_t *res);
+bool tudor_identify(struct tudor_device *device, bool *retry, bool *found_match, RECGUID *guid, enum tudor_finger *finger, tudor_async_res_t *res);
 
 #endif

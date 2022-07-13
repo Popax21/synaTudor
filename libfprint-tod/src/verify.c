@@ -45,6 +45,14 @@ static void verify_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_da
                 break;
             }
 
+            //Check if we should retry
+            if(msg->resp_verify.retry) {
+                g_info("Tudor host requested verify capture retry for GUID %08x... finger %d", params->guid.PartA, params->finger);
+                fpi_device_verify_report(FP_DEVICE(tdev), NULL, NULL, fpi_device_retry_new(FP_DEVICE_RETRY_GENERAL));
+                recv_ipc_msg_no_timeout(tdev, verify_recv_cb, user_data);
+                break;
+            }
+
             g_info("Tudor host reported verify result %s match", msg->resp_verify.did_match ? "did" : "did not");
 
             //Report the result
