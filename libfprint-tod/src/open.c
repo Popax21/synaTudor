@@ -142,14 +142,9 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
     g_object_unref(task);
 }
 
-void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer user_data) {
+void open_device(FpiDeviceTudor *tdev, int usb_fd, uint8_t usb_bus, uint8_t usb_addr, GAsyncReadyCallback callback, gpointer user_data) {
     //Create task
     GTask *task = g_task_new(tdev, NULL, callback, user_data);
-
-    //Get a USB device FD, and close the device, as it conflicts with the host's device usage
-    int usb_fd;
-    GUsbDevice *usb_dev = fpi_device_get_usb_device(FP_DEVICE(tdev));
-    g_assert_no_errno(usb_fd = dup(((int**) usb_dev->priv)[3][10 + 2 + 4 + 2 + 1 + 1])); //Cursed offset magic
 
     //Open a DBus connection
     GError *error = NULL;
@@ -203,8 +198,8 @@ void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer us
     tdev->send_msg->init = (struct ipc_msg_init) {
         .type = IPC_MSG_INIT,
         .log_level = loglvl,
-        .usb_bus = g_usb_device_get_bus(usb_dev),
-        .usb_addr = g_usb_device_get_address(usb_dev)
+        .usb_bus = usb_bus,
+        .usb_addr = usb_addr
     };
     if(!send_ipc_msg(tdev, tdev->send_msg, &error)) {
         g_assert_no_errno(close(usb_fd));
@@ -263,8 +258,6 @@ static void probe_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_dat
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
     GTask *task = G_TASK(res);
 
-    //Close the USB device
-    g_usb_device_close(fpi_device_get_usb_device(FP_DEVICE(tdev)), NULL);
 
     //Check for errors
     GError *error = NULL;
@@ -283,13 +276,19 @@ void fpi_device_tudor_probe(FpDevice *dev) {
 
     //Open the USB device
     GError *error = NULL;
-    if(!g_usb_device_open(fpi_device_get_usb_device(dev), &error)) {
+    GUsbDevice *usb_dev = fpi_device_get_usb_device(FP_DEVICE(tdev));
+    if(!g_usb_device_open(usb_dev, &error)) {
         fpi_device_probe_complete(FP_DEVICE(tdev), NULL, NULL, error);
         return;
     }
 
+    //Get a USB device FD, and close the device, as it conflicts with the host's device usage
+    int usb_fd;
+    g_assert_no_errno(usb_fd = dup(((int**) usb_dev->priv)[3][10 + 2 + 4 + 2 + 1 + 1])); //Cursed offset magic
+    g_usb_device_close(fpi_device_get_usb_device(FP_DEVICE(tdev)), NULL);
+
     //Open the device
-    open_device(tdev, probe_open_cb, NULL);
+    open_device(tdev, usb_fd, g_usb_device_get_bus(usb_dev), g_usb_device_get_addr(usb_dev), probe_open_cb, NULL);
 }
 
 void fpi_device_tudor_open(FpDevice *dev) {
