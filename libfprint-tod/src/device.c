@@ -81,6 +81,7 @@ static void fpi_device_tudor_class_init(FpiDeviceTudorClass *class) {
     dev_class->nr_enroll_stages = TUDOR_NUM_ENROLL_STAGES;
     dev_class->scan_type = FP_SCAN_TYPE_PRESS;
 
+    dev_class->probe = fpi_device_tudor_probe;
     dev_class->open = fpi_device_tudor_open;
     dev_class->close = fpi_device_tudor_close;
 
