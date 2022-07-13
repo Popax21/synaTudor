@@ -37,9 +37,9 @@ static inline void send_ack(int ipc_sock) {
     ipc_send_msg(ipc_sock, &type, sizeof(type));
 }
 
-static inline void check_in_action(struct handler_state *state) {
+static inline void check_in_action(struct handler_state *state, enum ipc_msg_type type) {
     if(state->async_res) {
-        log_error("Invalid message while already in an action!");
+        log_error("Invalid message 0x%x while already in an action!", type);
         abort();
     }
 }
@@ -208,7 +208,7 @@ static void identify_cb(tudor_async_res_t *res, bool success, struct handler_sta
 static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type type) {
     switch(type) {
         case IPC_MSG_SHUTDOWN: {
-            check_in_action(state);
+            check_in_action(state, type);
             consume_simple_msg(state->ipc_sock, type);
         } return true;
 
@@ -228,7 +228,7 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
         } break;
 
         case IPC_MSG_ADD_RECORD: {
-            check_in_action(state);
+            check_in_action(state, type);
 
             //Receive the message
             struct {
@@ -254,7 +254,7 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
         } break;
 
         case IPC_MSG_DEL_RECORD: {
-            check_in_action(state);
+            check_in_action(state, type);
 
             //Receive the message
             struct ipc_msg_del_record msg;
@@ -269,7 +269,7 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
         } break;
 
         case IPC_MSG_CLEAR_RECORDS: {
-            check_in_action(state);
+            check_in_action(state, type);
             consume_simple_msg(state->ipc_sock, type);
 
             //Wipe records
@@ -281,7 +281,7 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
         } break;
 
         case IPC_MSG_ENROLL: {
-            check_in_action(state);
+            check_in_action(state, type);
             
             //Receive the message
             struct ipc_msg_enroll msg;
@@ -311,7 +311,7 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
         } break;
 
         case IPC_MSG_VERIFY: {
-            check_in_action(state);
+            check_in_action(state, type);
 
             //Receive the message
             struct ipc_msg_verify msg;
@@ -335,7 +335,7 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
         } break;
 
         case IPC_MSG_IDENTIFY: {
-            check_in_action(state);
+            check_in_action(state, type);
             consume_simple_msg(state->ipc_sock, type);
 
             //Initialize state
