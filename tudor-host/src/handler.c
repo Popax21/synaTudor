@@ -130,6 +130,14 @@ static void enroll_cb(tudor_async_res_t *res, bool success, struct handler_state
 
         log_info("Enroll capture successfull -> enrollment commited for GUID %08x... finger %d", state->action.enroll.guid.PartA, state->action.enroll.finger);
     } else {
+        //Start another capture
+        init_action(state);
+        if(!tudor_enroll_capture(state->dev, &state->action.enroll.done, &state->async_res)) {
+            log_error("Couldn't start enrollment capture!");
+            abort();
+        }
+
+        //Send response
         struct ipc_msg_resp_enroll msg = {
             .type = IPC_MSG_RESP_ENROLL,
             .retry = !success,
@@ -142,6 +150,9 @@ static void enroll_cb(tudor_async_res_t *res, bool success, struct handler_state
         } else {
             log_info("Enroll capture error -> retrying...");
         }
+
+        //Only set the callback now, to avoid reentrance issues
+        tudor_set_async_callback(state->async_res, (tudor_async_cb_fnc*) enroll_cb, state);
     }
 
     cant_fail_ret(pthread_mutex_unlock(&state->lock));

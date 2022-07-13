@@ -9,6 +9,7 @@
 #include <tudor/tudor.h>
 #include "sandbox.h"
 #include "ipc.h"
+#include "handler.h"
 
 static pthread_t usb_thread;
 static bool usb_thread_exit = false;
