@@ -31,11 +31,11 @@ enum ipc_msg_type {
     IPC_MSG_RESP_IDENTIFY
 };
 
-#define IPC_SENSOR_NAME_SIZE 64
-#define IPC_MAX_PDATA_SIZE 4096
+#define IPC_SENSOR_NAME_SIZE 128
+#define IPC_MAX_PDATA_SIZE 8192
 
-#define IPC_MAX_RECORD_SIZE 4096
-#define IPC_MAX_MESSAGE_SIZE 8096
+#define IPC_MAX_RECORD_SIZE 12288
+#define IPC_MAX_MESSAGE_SIZE 16384
 
 struct ipc_msg_init {
     enum ipc_msg_type type;
