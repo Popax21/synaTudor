@@ -159,7 +159,7 @@ static void load_record_cb(GObject *src_obj, GAsyncResult *res, gpointer user_da
     //Set the print's record
     struct identify_print *print = &g_array_index(params->prints, struct identify_print, params->next_print_idx);
     print->record = g_object_ref(rec);
-    g_info("Loaded tudor identify print record %d/%d: GUID %08x... finger %d", params->next_print_idx, params->prints->len, rec->guid.PartA, rec->finger);
+    g_debug("Loaded tudor identify print record %d/%d: GUID %08x... finger %d", params->next_print_idx, params->prints->len, rec->guid.PartA, rec->finger);
 
     //Load the next print
     params->next_print_idx++;
@@ -171,6 +171,8 @@ static void load_next_print(struct identify_params *params) {
 
     //Check if we're done loading prints
     if(params->next_print_idx >= params->prints->len) {
+        g_info("Loaded %d tudor identify print records", params->prints->len);
+
         //Send identify IPC message
         g_debug("Sending tudor identify IPC message...");
         tdev->send_msg->size = sizeof(enum ipc_msg_type);
@@ -216,10 +218,11 @@ void fpi_device_tudor_identify(FpDevice *dev) {
     GArray *prints = g_array_sized_new(false, false, sizeof(struct identify_print), fp_prints->len);
     g_array_set_clear_func(prints, (GDestroyNotify) clear_identify_print);
     for(int i = 0; i < prints->len; i++) {
-        g_array_index(prints, struct identify_print, i) = (struct identify_print) {
+        struct identify_print print = {
             .print = g_object_ref(FP_PRINT(fp_prints->pdata[i])),
             .record = NULL
         };
+        g_array_append_val(prints, print);
     }
 
     //Create identify params
