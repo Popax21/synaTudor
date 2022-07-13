@@ -57,7 +57,6 @@ static bool cleanup_action(struct handler_state *state) {
     //If we were cancelled, send an ACK   
     if(state->async_cancelled) {
         send_ack(state->ipc_sock);
-        cant_fail_ret(pthread_mutex_unlock(&state->lock));
         return false;   
     }
 

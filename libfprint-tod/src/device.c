@@ -48,17 +48,19 @@ static void cancel_cb(GCancellable *cancel, gpointer user_data) {
         g_clear_error(&error);
         return;
     }
+    tdev->has_canceled = true;
 
     g_debug("Sent tudor cancel IPC message");
 }
 
 guint register_cancel_handler(FpiDeviceTudor *tdev) {
+    tdev->has_canceled = false;
     return g_cancellable_connect(fpi_device_get_cancellable(FP_DEVICE(tdev)), G_CALLBACK(cancel_cb), tdev, NULL);
 }
 
 GError *handle_cancel_ack(FpiDeviceTudor *tdev) {
     //Check if the action is actually cancelled
-    if(!g_cancellable_is_cancelled(fpi_device_get_cancellable(FP_DEVICE(tdev)))) {
+    if(tdev->has_canceled) {
         g_debug("Received tudor cancel IPC ACK");
         return g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED, "Cancellation requested");
     } else {

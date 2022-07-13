@@ -228,7 +228,7 @@ __winfnc NTSTATUS WdfUsbTargetDeviceResetPortSynchronously(WDF_DRIVER_GLOBALS *g
     int usb_err;
     if((usb_err = libusb_reset_device(usb_dev->libusb_dev)) != 0) {
         log_error("libusb_reset_device failed: %d [%s]", usb_err, libusb_error_name(usb_err));
-        return WINERR_SET_CODE;        
+        return WINERR_SET_CODE;
     }
 
     return STATUS_SUCCESS;
@@ -341,7 +341,20 @@ WDFFUNC(WdfUsbInterfaceGetConfiguredPipe, 239)
 __winfnc void WdfUsbTargetPipeSetNoMaximumPacketSizeCheck(WDF_DRIVER_GLOBALS *globals, WDFOBJECT usb_pipe_obj) {}
 WDFFUNC(WdfUsbTargetPipeSetNoMaximumPacketSizeCheck, 220)
 
-__winfnc NTSTATUS WdfUsbTargetPipeResetSynchronously(WDF_DRIVER_GLOBALS *globals, WDFOBJECT usb_pipe_obj, WDFOBJECT request, WDF_REQUEST_SEND_OPTIONS *req_opts) { return STATUS_SUCCESS; }
+__winfnc NTSTATUS WdfUsbTargetPipeAbortSynchronously(WDF_DRIVER_GLOBALS *globals, WDFOBJECT usb_pipe_obj, WDFOBJECT request, WDF_REQUEST_SEND_OPTIONS *req_opts) { return STATUS_SUCCESS; }
+WDFFUNC(WdfUsbTargetPipeAbortSynchronously, 226)
+
+__winfnc NTSTATUS WdfUsbTargetPipeResetSynchronously(WDF_DRIVER_GLOBALS *globals, WDFOBJECT usb_pipe_obj, WDFOBJECT request, WDF_REQUEST_SEND_OPTIONS *req_opts) {
+    struct wdf_usb_pipe *usb_pipe = (struct wdf_usb_pipe*) usb_pipe_obj;
+
+    int usb_err;
+    if((usb_err = libusb_clear_halt(usb_pipe->usb_if->usb_device->libusb_dev, usb_pipe->libusb_ep->bEndpointAddress)) != 0) {
+        log_error("libusb_clear_halt failed: %d [%s]", usb_err, libusb_error_name(usb_err));
+        return WINERR_SET_CODE;
+    }
+
+    return STATUS_SUCCESS;
+}
 WDFFUNC(WdfUsbTargetPipeResetSynchronously, 228)
 
 struct transfer_req_ctx {
