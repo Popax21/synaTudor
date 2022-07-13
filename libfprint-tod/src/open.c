@@ -288,7 +288,7 @@ void fpi_device_tudor_probe(FpDevice *dev) {
     g_usb_device_close(fpi_device_get_usb_device(FP_DEVICE(tdev)), NULL);
 
     //Open the device
-    open_device(tdev, usb_fd, g_usb_device_get_bus(usb_dev), g_usb_device_get_addr(usb_dev), probe_open_cb, NULL);
+    open_device(tdev, usb_fd, g_usb_device_get_bus(usb_dev), g_usb_device_get_address(usb_dev), probe_open_cb, NULL);
 }
 
 void fpi_device_tudor_open(FpDevice *dev) {
