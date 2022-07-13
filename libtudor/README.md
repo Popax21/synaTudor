@@ -1,4 +1,4 @@
-# Tudor driver relinking library
+# libtudor
 This folder contains the common library which relinks and interfaces with the
 native Windows driver. It is used by the [CLI wrapper](../cli/README.md) and the
 [libfprint host](../tudor-host/README.md).

@@ -1,4 +1,4 @@
-# Tudor host launcher
+# tudor-host-launcher
 This folder contains a simple DBus service capable of launching and managing
 tudor_host processes. This is necessary because fprintd is sandboxed in such a
 way that the host's own sandbox fails to properly initialize. Because the host

@@ -44,7 +44,12 @@ For documentation about build options etc., see the individual parts.
 For the libfprint module to be picked up and work work, you'll need to have a
 `libfprint-tod` fork version installed. Most common Linux distributions have a
 seperate package which you can install instead of the regular libfprint one
-(e.g. Arch Linux: AUR `libfprint-tod-git`)
+(e.g. Arch Linux: AUR `libfprint-tod-git`).
+
+**NOTE:** Currently libfprint-tod
+has a bug which can cause fprintd to lock up. It's recommended to use [this
+fork](https://gitlab.freedesktop.org/Popax21/libfprint/-/tree/tod) for now,
+until it's merged into the base repository.
 
 **NOTE:** After the installation has completed, you'll probably want to enable
 and start `tudor-host-launcher.service`. For the reasoning behind why a seperate
