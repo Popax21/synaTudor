@@ -44,6 +44,11 @@ static inline void check_in_action(struct handler_state *state) {
     }
 }
 
+static void init_action(struct handler_state *state) {
+    state->async_res = NULL;
+    state->async_cancelled = false;
+}
+
 static bool cleanup_action(struct handler_state *state) {
     //Clean up result
     tudor_cleanup_async(state->async_res);
@@ -210,10 +215,13 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
         case IPC_MSG_CANCEL: {
             consume_simple_msg(state->ipc_sock, type);
 
+            //Check if there currently is an action
             if(state->async_res) {
+                //Cancel the action
                 state->async_cancelled = true;
                 tudor_cancel_async(state->async_res);
             } else {
+                //Immediatly ACK the cancel
                 log_warn("Received cancel message while not in an action!");
                 send_ack(state->ipc_sock);
             }
@@ -222,34 +230,41 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
         case IPC_MSG_ADD_RECORD: {
             check_in_action(state);
 
+            //Receive the message
             struct {
                 struct ipc_msg_add_record msg;
                 char buf[IPC_MAX_RECORD_SIZE];
             } msg;
             size_t rec_size = ipc_recv_msg(state->ipc_sock, &msg, type, sizeof(msg.msg), sizeof(msg), NULL) - sizeof(msg.msg);
 
+            //Add the record
             if(!tudor_add_record(state->dev, msg.msg.guid, msg.msg.finger, msg.msg.record_data, rec_size)) {
                 //Delete the old one first
+                log_debug("Replacing old record GUID %08x... finger %d", msg.msg.guid.PartA, msg.msg.finger);
                 tudor_wipe_records(state->dev, &msg.msg.guid, msg.msg.finger);
                 if(!tudor_add_record(state->dev, msg.msg.guid, msg.msg.finger, msg.msg.record_data, rec_size)) {
                     log_error("Couldn't add record!");
                     abort();
                 }
             }
-
             log_debug("Added record GUID %08x... finger %d size %lu", msg.msg.guid.PartA, msg.msg.finger, rec_size);
+
+            //Send ACK
             send_ack(state->ipc_sock);
         } break;
 
         case IPC_MSG_DEL_RECORD: {
             check_in_action(state);
 
+            //Receive the message
             struct ipc_msg_del_record msg;
             ipc_recv_msg(state->ipc_sock, &msg, type, sizeof(msg), sizeof(msg), NULL);
 
+            //Delete the record
             int num_recs = tudor_wipe_records(state->dev, &msg.guid, msg.finger);
             log_debug("Deleted %d records with GUID %08x... finger %d", num_recs, msg.guid.PartA, msg.finger);
 
+            //Send ACK
             send_ack(state->ipc_sock);
         } break;
 
@@ -257,26 +272,33 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
             check_in_action(state);
             consume_simple_msg(state->ipc_sock, type);
 
+            //Wipe records
             int num_recs = tudor_wipe_records(state->dev, NULL, TUDOR_FINGER_ANY);
             log_debug("Cleared %d records", num_recs);
 
+            //Send ACK
             send_ack(state->ipc_sock);
         } break;
 
         case IPC_MSG_ENROLL: {
             check_in_action(state);
-
+            
+            //Receive the message
             struct ipc_msg_enroll msg;
             ipc_recv_msg(state->ipc_sock, &msg, type, sizeof(msg), sizeof(msg), NULL);
 
-            state->async_cancelled = false;
+            //Initialize state
+            init_action(state);
             state->action.enroll.guid = msg.guid;
             state->action.enroll.finger = msg.finger;
 
+            //Start enrollment
             if(!tudor_enroll_start(state->dev, msg.guid, msg.finger)) {
                 log_error("Couldn't start enrollment!");
                 abort();
             }
+
+            //Start first capture
             if(!tudor_enroll_capture(state->dev, &state->action.enroll.done, &state->async_res)) {
                 log_error("Couldn't start enrollment capture!");
                 abort();
@@ -284,19 +306,23 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
             log_debug("Started enroll action");
             tudor_set_async_callback(state->async_res, (tudor_async_cb_fnc*) enroll_cb, state);
 
+            //Send ACK
             send_ack(state->ipc_sock);
         } break;
 
         case IPC_MSG_VERIFY: {
             check_in_action(state);
 
+            //Receive the message
             struct ipc_msg_verify msg;
             ipc_recv_msg(state->ipc_sock, &msg, type, sizeof(msg), sizeof(msg), NULL);
 
-            state->async_cancelled = false;
+            //Initialize state
+            init_action(state);
             state->action.verify.guid = msg.guid;
             state->action.verify.finger = msg.finger;
 
+            //Start verify action
             if(!tudor_verify(state->dev, msg.guid, msg.finger, &state->action.verify.matches, &state->async_res)) {
                 log_error("Couldn't start verify action!");
                 abort();
@@ -304,6 +330,7 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
             log_debug("Started verify action");
             tudor_set_async_callback(state->async_res, (tudor_async_cb_fnc*) verify_cb, state);
 
+            //Send ACK
             send_ack(state->ipc_sock);
         } break;
 
@@ -311,8 +338,10 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
             check_in_action(state);
             consume_simple_msg(state->ipc_sock, type);
 
-            state->async_cancelled = false;
+            //Initialize state
+            init_action(state);
 
+            //Start identify action
             if(!tudor_identify(state->dev, &state->action.identify.has_match, &state->action.identify.guid, &state->action.identify.finger, &state->async_res)) {
                 log_error("Couldn't start identify action!");
                 abort();
@@ -320,6 +349,7 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
             log_debug("Started identify action");
             tudor_set_async_callback(state->async_res, (tudor_async_cb_fnc*) identify_cb, state);
 
+            //Send ACK
             send_ack(state->ipc_sock);
         } break;
 
