@@ -94,7 +94,7 @@ static void identify_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_
             FpPrint *list_print = NULL;
             for(int i = 0; i < params->prints->len; i++) {
                 struct identify_print *print = &g_array_index(params->prints, struct identify_print, i);
-                if(print->record != match_rec) break;
+                if(print->record != match_rec) continue;
                 list_print = print->print;
                 break;
             }
