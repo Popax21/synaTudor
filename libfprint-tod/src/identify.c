@@ -159,7 +159,7 @@ static void load_record_cb(GObject *src_obj, GAsyncResult *res, gpointer user_da
     //Set the print's record
     struct identify_print *print = &g_array_index(params->prints, struct identify_print, params->next_print_idx);
     print->record = g_object_ref(rec);
-    g_debug("Loaded tudor identify print record %d/%d: GUID %08x... finger %d", params->next_print_idx, params->prints->len, rec->guid.PartA, rec->finger);
+    g_debug("Loaded tudor identify print record %d/%d: GUID %08x... finger %d", params->next_print_idx+1, params->prints->len, rec->guid.PartA, rec->finger);
 
     //Load the next print
     params->next_print_idx++;
