@@ -115,9 +115,9 @@ GError *handle_cancel_ack(FpiDeviceTudor *tdev) {
 }
 
 static void atexit_hook() {
-    log_debug("Tudor close atexit hook called");
+    g_debug("Tudor close atexit hook called");
     for(GList *l = dev_list; l; l = l->next) {
-        log_debug("Cleaning up tudor host %p...", l->data);
+        g_debug("Cleaning up tudor host %p...", l->data);
         ensure_closed(FPI_DEVICE_TUDOR(l->data));
     }
 }
