@@ -2,7 +2,10 @@ tudor_tod_src = [
     'src/device.c',
     'src/data.c',
     'src/ipc.c',
-    'src/open.c'
+    'src/open.c',
+    'src/enroll.c',
+    'src/verify.c',
+    'src/identify.c'
 ]
 
 libfprint_tod_dep = dependency('libfprint-2-tod-1')

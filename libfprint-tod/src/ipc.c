@@ -196,6 +196,31 @@ void recv_ipc_msg(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer u
     g_source_unref(sock_src);
 }
 
+static void recv_ipc_msg_no_timeout_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
+    GTask *otask = G_TASK(res);
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
+    GTask *task = G_TASK(user_data);
+
+    //Reset timeout
+    g_socket_set_timeout(tdev->ipc_socket, 0);
+
+    //Forward result
+    GError *error = NULL;
+    gpointer ptr = g_task_propagate_pointer(otask, &error);
+    if(ptr) g_task_return_pointer(task, ptr, ipc_msg_buf_free);
+    else g_task_return_error(task, error);
+    g_object_unref(task);
+}
+
+void recv_ipc_msg_no_timeout(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer user_data) {
+    //Create a task
+    GTask *task = g_task_new(tdev, NULL, callback, user_data);
+
+    //Wrap recv_ipc_msg
+    g_socket_set_timeout(tdev->ipc_socket, 0);
+    recv_ipc_msg(tdev, recv_ipc_msg_no_timeout_cb, task);
+}
+
 bool send_ipc_msg(FpiDeviceTudor *tdev, IPCMessageBuf *msg, GError **error) {
     //Check if host process is dead
     if(check_host_proc_dead(tdev, error)) return false;

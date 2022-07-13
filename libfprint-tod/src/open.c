@@ -11,6 +11,9 @@ static void dispose_dev(FpiDeviceTudor *tdev) {
         g_clear_error(&error);
     }
 
+    //Clear DB mirror array
+    g_ptr_array_set_size(tdev->db_records, 0);
+
     //Free object references
     g_clear_object(&tdev->ipc_cancel);
     g_clear_object(&tdev->ipc_socket);
@@ -72,7 +75,7 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
             if(!load_pdata(tdev, &pdata, &error)) goto error;
 
             if(pdata && pdata->len > IPC_MAX_PDATA_SIZE) {
-                g_error("Stored Tudor pairing data lenght exceeds maximum! [%d > %d]", pdata->len, IPC_MAX_PDATA_SIZE);
+                g_error("Stored Tudor pairing data length exceeds maximum! [%d > %d]", pdata->len, IPC_MAX_PDATA_SIZE);
                 g_byte_array_unref(pdata);
                 pdata = NULL;
             }
@@ -125,7 +128,7 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
         } break;
         case IPC_MSG_READY: {
             //Complete the open procedure
-            g_info("Tudor host process ID %d sent READY message", tdev->host_id);
+            g_info("Tudor host process ID reported ready state");
             fpi_device_open_complete(dev, NULL);
         } break;
         default: error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Unexpected message in init sequence: 0x%x", msg->type); goto error;

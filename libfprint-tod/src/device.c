@@ -2,8 +2,9 @@
 #include "data.h"
 #include "ipc.h"
 #include "open.h"
-
-#define NUM_ENROLL_STAGES 8
+#include "enroll.h"
+#include "verify.h"
+#include "identify.h"
 
 G_DEFINE_TYPE(FpiDeviceTudor, fpi_device_tudor, FP_TYPE_DEVICE)
 
@@ -17,16 +18,10 @@ static FpIdEntry tudor_ids[] = {
     { 0 }
 };
 
-static void record_free(struct record *rec) {
-    g_bytes_unref(rec->data);
-    g_object_unref(rec->print);
-    g_free(rec);
-}
-
 static void fpi_device_tudor_init(FpiDeviceTudor *tdev) {
     //Allocate data
     tdev->send_msg = ipc_msg_buf_new();
-    tdev->db_records = g_ptr_array_new_with_free_func((GDestroyNotify) record_free);
+    tdev->db_records = g_ptr_array_new_with_free_func(g_object_unref);
 }
 
 static void fpi_device_tudor_dispose(GObject *obj) {
@@ -37,49 +32,39 @@ static void fpi_device_tudor_dispose(GObject *obj) {
     g_ptr_array_unref(tdev->db_records);
 }
 
-static void fpi_device_tudor_enroll(FpDevice *dev) {
-    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
+static void cancel_cb(GCancellable *cancel, gpointer user_data) {
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(user_data);
 
-    //Check if host process is dead
+    //Force timeout back to normal
+    g_socket_set_timeout(tdev->ipc_socket, IPC_TIMEOUT_SECS);
+
+    //Send cancel message
     GError *error = NULL;
-    if(check_host_proc_dead(tdev, &error)) {
-        fpi_device_enroll_complete(dev, NULL, error);
+    tdev->send_msg->size = sizeof(enum ipc_msg_type);
+    tdev->send_msg->type = IPC_MSG_CANCEL;
+    if(!send_ipc_msg(tdev, tdev->send_msg, &error)) {
+        //Not much we can do
+        g_warning("Failed to send cancel IPC message: %s [%s code %d]", error->message, g_quark_to_string(error->domain), error->code);
+        g_clear_error(&error);
         return;
     }
 
-    //Get print to enroll
-    FpPrint *print;
-    fpi_device_get_enroll_data(dev, &print);
+    g_debug("Sent tudor cancel IPC message");
 }
 
-static void fpi_device_tudor_verify(FpDevice *dev) {
-    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
-
-    //Check if host process is dead
-    GError *error = NULL;
-    if(check_host_proc_dead(tdev, &error)) {
-        fpi_device_enroll_complete(dev, NULL, error);
-        return;
-    }
-
-    //Get print to verify
-    FpPrint *print;
-    fpi_device_get_verify_data(dev, &print);
+guint register_cancel_handler(FpiDeviceTudor *tdev) {
+    return g_cancellable_connect(fpi_device_get_cancellable(FP_DEVICE(tdev)), G_CALLBACK(cancel_cb), tdev, NULL);
 }
 
-static void fpi_device_tudor_identify(FpDevice *dev) {
-    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
-
-    //Check if host process is dead
-    GError *error = NULL;
-    if(check_host_proc_dead(tdev, &error)) {
-        fpi_device_enroll_complete(dev, NULL, error);
-        return;
+GError *handle_cancel_ack(FpiDeviceTudor *tdev) {
+    //Check if the action is actually cancelled
+    if(!g_cancellable_is_cancelled(fpi_device_get_cancellable(FP_DEVICE(tdev)))) {
+        g_debug("Received tudor cancel IPC ACK");
+        return g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED, "Cancellation requested");
+    } else {
+        g_warning("Received unexpected tudor IPC ACK for CANCEL which was never sent!");
+        return fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Received unexpected ACK for CANCEL which was never sent");
     }
-
-    //Get prints to identify
-    GPtrArray *prints;
-    fpi_device_get_identify_data(dev, &prints);
 }
 
 static void fpi_device_tudor_class_init(FpiDeviceTudorClass *class) {
@@ -91,15 +76,15 @@ static void fpi_device_tudor_class_init(FpiDeviceTudorClass *class) {
     dev_class->full_name = "Synaptics Tudor";
     dev_class->type = FP_DEVICE_TYPE_USB;
     dev_class->id_table = tudor_ids;
-    dev_class->nr_enroll_stages = NUM_ENROLL_STAGES;
+    dev_class->nr_enroll_stages = TUDOR_NUM_ENROLL_STAGES;
     dev_class->scan_type = FP_SCAN_TYPE_PRESS;
 
     dev_class->open = fpi_device_tudor_open;
     dev_class->close = fpi_device_tudor_close;
 
-    // dev_class->enroll = fpi_device_tudor_enroll;
-    // dev_class->verify = fpi_device_tudor_verify;
-    // dev_class->identify = fpi_device_tudor_identify;
+    dev_class->enroll = fpi_device_tudor_enroll;
+    dev_class->verify = fpi_device_tudor_verify;
+    dev_class->identify = fpi_device_tudor_identify;
     dev_class->delete = fpi_device_tudor_delete;
     dev_class->clear_storage = fpi_device_clear_storage;
 

@@ -42,7 +42,16 @@ bool kill_host_process(FpiDeviceTudor *tdev, GError **error);
 bool check_host_proc_dead(FpiDeviceTudor *tdev, GError **error);
 
 void recv_ipc_msg(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer user_data);
+void recv_ipc_msg_no_timeout(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer user_data);
 bool send_ipc_msg(FpiDeviceTudor *tdev, IPCMessageBuf *msg, GError **error);
 void send_acked_ipc_msg(FpiDeviceTudor *tdev, IPCMessageBuf *msg, GAsyncReadyCallback callback, gpointer user_data);
+
+static inline bool check_ipc_msg_size(IPCMessageBuf *msg, size_t min_size, GError **error) {
+    if(msg->size < min_size) {
+        *error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Message 0x%x smaller than minimum size", msg->type);
+        return false;
+    }
+    return true;
+}
 
 #endif
