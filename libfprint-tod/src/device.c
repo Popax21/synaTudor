@@ -24,12 +24,44 @@ static void fpi_device_tudor_init(FpiDeviceTudor *tdev) {
     tdev->db_records = g_ptr_array_new_with_free_func(g_object_unref);
 }
 
+static void close_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
+    //Check for errors
+    GError *error = NULL;
+    g_task_propagate_int(G_TASK(res), &error);
+    if(error) {
+        g_warning("Error closing tudor device: %s [%s code %d]", error->message, g_quark_to_string(error->domain), error->code);
+        g_clear_error(&error);
+    }
+
+    //Set callback called flag
+    *((bool*) user_data) = true;
+}
+
 static void fpi_device_tudor_dispose(GObject *obj) {
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(obj);
+
+    if(tdev->host_has_id) {
+        //Close the device
+        g_info("Closing tudor device host ID %u...", tdev->host_id);
+
+        bool cb_called = false;
+        close_device(g_object_ref(tdev), close_cb, &cb_called);
+        while(!cb_called) g_main_context_iteration(NULL, TRUE);
+    }
+
+    //Chain to parent
+    G_OBJECT_CLASS(fpi_device_tudor_parent_class)->dispose(obj);
+}
+
+static void fpi_device_tudor_finalize(GObject *obj) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(obj);
 
     //Free data
     ipc_msg_buf_free(tdev->send_msg);
     g_ptr_array_unref(tdev->db_records);
+
+    //Chain to parent
+    G_OBJECT_CLASS(fpi_device_tudor_parent_class)->finalize(obj);
 }
 
 static void cancel_cb(GCancellable *cancel, gpointer user_data) {
@@ -72,6 +104,7 @@ GError *handle_cancel_ack(FpiDeviceTudor *tdev) {
 static void fpi_device_tudor_class_init(FpiDeviceTudorClass *class) {
     GObjectClass *obj_class = G_OBJECT_CLASS(class);
     obj_class->dispose = fpi_device_tudor_dispose;
+    obj_class->finalize = fpi_device_tudor_finalize;
 
     FpDeviceClass *dev_class = FP_DEVICE_CLASS(class);
     dev_class->id = "syna_tudor_relink";

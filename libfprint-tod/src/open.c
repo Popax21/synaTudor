@@ -150,7 +150,6 @@ void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer us
     int usb_fd;
     GUsbDevice *usb_dev = fpi_device_get_usb_device(FP_DEVICE(tdev));
     g_assert_no_errno(usb_fd = dup(((int**) usb_dev->priv)[3][10 + 2 + 4 + 2 + 1 + 1])); //Cursed offset magic
-    g_usb_device_close(usb_dev, NULL);
 
     //Open a DBus connection
     GError *error = NULL;
@@ -260,10 +259,12 @@ void close_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer u
     fpi_device_add_timeout(FP_DEVICE(tdev), IPC_TIMEOUT_SECS * 1000, close_timeout_cb, NULL, NULL);
 }
 
-static void probe_close_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
+static void probe_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
     GTask *task = G_TASK(res);
-    char *dev_id = (char*) user_data;
+
+    //Close the USB device
+    g_usb_device_close(fpi_device_get_usb_device(FP_DEVICE(tdev)), NULL);
 
     //Check for errors
     GError *error = NULL;
@@ -274,27 +275,7 @@ static void probe_close_cb(GObject *src_obj, GAsyncResult *res, gpointer user_da
     }
 
     //Complete the action
-    fpi_device_probe_complete(FP_DEVICE(tdev), dev_id, NULL, NULL);
-    if(dev_id) g_free(dev_id);
-}
-
-static void probe_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
-    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
-    GTask *task = G_TASK(res);
-
-    //Check for errors
-    GError *error = NULL;
-    g_task_propagate_int(task, &error);
-    if(error) {
-        fpi_device_probe_complete(FP_DEVICE(tdev), NULL, NULL, error);
-        return;
-    }
-
-    //Get the sensor name / device ID
-    char *dev_id = g_strdup(tdev->sensor_name);
-
-    //Close the device again
-    close_device(tdev, probe_close_cb, dev_id);
+    fpi_device_probe_complete(FP_DEVICE(tdev), tdev->sensor_name, NULL, NULL);
 }
 
 void fpi_device_tudor_probe(FpDevice *dev) {
@@ -311,52 +292,20 @@ void fpi_device_tudor_probe(FpDevice *dev) {
     open_device(tdev, probe_open_cb, NULL);
 }
 
-static void dev_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
-    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
-    GTask *task = G_TASK(res);
-
-    //Check for errors
-    GError *error = NULL;
-    g_task_propagate_int(task, &error);
-    if(error) {
-        g_usb_device_open(fpi_device_get_usb_device(FP_DEVICE(tdev)), NULL);
-        fpi_device_open_complete(FP_DEVICE(tdev), error);
-        return;
-    }
-
-    //Complete the action
-    fpi_device_open_complete(FP_DEVICE(tdev), NULL);
-}
-
 void fpi_device_tudor_open(FpDevice *dev) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
 
-    //Open the device
-    open_device(tdev, dev_open_cb, NULL);
-}
-
-static void dev_close_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
-    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
-    GTask *task = G_TASK(res);
-
-    //Re-open the USB device
-    g_usb_device_open(fpi_device_get_usb_device(FP_DEVICE(tdev)), NULL);
-
-    //Check for errors
+    //Check if the host is still alive
     GError *error = NULL;
-    g_task_propagate_int(task, &error);
-    if(error) {
-        fpi_device_close_complete(FP_DEVICE(tdev), error);
-        return;
+    if(check_host_proc_dead(tdev, &error)) {
+        fpi_device_open_complete(dev, error);
     }
 
     //Complete the action
-    fpi_device_close_complete(FP_DEVICE(tdev), NULL);
+    fpi_device_open_complete(dev, NULL);
 }
 
 void fpi_device_tudor_close(FpDevice *dev) {
-    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
-
-    //Close the device
-    close_device(tdev, dev_close_cb, NULL);
+    //Complete the action
+    fpi_device_close_complete(dev, NULL);
 }
