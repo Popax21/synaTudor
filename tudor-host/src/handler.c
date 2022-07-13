@@ -197,7 +197,7 @@ static void verify_cb(tudor_async_res_t *res, bool success, struct handler_state
     if(success) {
         log_info("Verify GUID %08x... finger %d -> %s match", state->action.verify.guid.PartA, state->action.verify.finger, msg.did_match ? "does" : "doesn't");
     } else {
-        log_info("Verify GUID %08x... finger %d capture error -> retrying...");
+        log_info("Verify GUID %08x... finger %d capture error -> retrying...", state->action.verify.guid.PartA, state->action.verify.finger);
     }
 
     cant_fail_ret(pthread_mutex_unlock(&state->lock));
