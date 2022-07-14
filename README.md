@@ -12,6 +12,8 @@ AS PART OF THIS PROJECT, INCLUDING, BUT NOT LIMITED TO, BRICKED SENSORS,
 CORRUPTED FIRMWARE, BYPASSES OF HOST SECURITY, AND VULNERABILITIES IN THE CODE.
 USE AT YOUR OWN RISK.
 
+**NOTE: The project should be fully functional right now, contrary to its earlier state. If there are any issues, please report them.**
+
 ## Structure
 This project is split over multiple folders, all providing different parts of
 the functionality:
