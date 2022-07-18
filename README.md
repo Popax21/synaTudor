@@ -12,6 +12,8 @@ AS PART OF THIS PROJECT, INCLUDING, BUT NOT LIMITED TO, BRICKED SENSORS,
 CORRUPTED FIRMWARE, BYPASSES OF HOST SECURITY, AND VULNERABILITIES IN THE CODE.
 USE AT YOUR OWN RISK.
 
+**NOTE: The project should be fully functional right now, contrary to its earlier state. If there are any issues, please report them.**
+
 ## Structure
 This project is split over multiple folders, all providing different parts of
 the functionality:
@@ -28,7 +30,7 @@ the functionality:
   loaded by the libfprint TOD fork.
 
 ## Building / Installation
-The same build system used by libfprint, meson, is used to for this project.
+The same build system used by libfprint, meson, is used for this project.
 During the first build, the Windows driver is automatically downloaded and
 extracted. `innoextract` has to be installed for this.
 To build and install all contained parts, execute:
@@ -38,15 +40,16 @@ cd build
 ninja
 sudo ninja install
 ```
+(for Arch Linux specifically, you might want to use `arch-meson` instead of `meson`)
 
 For documentation about build options etc., see the individual parts.
 
-For the libfprint module to be picked up and work work, you'll need to have a
-`libfprint-tod` fork version installed. Most common Linux distributions have a
+For the libfprint module to be picked up and work, you'll need to have a
+`libfprint-tod` fork of libfprint installed. Most Linux distributions have a
 seperate package which you can install instead of the regular libfprint one
 (e.g. Arch Linux: AUR `libfprint-tod-git`).
 
 **NOTE:** Currently libfprint-tod has a bug which can cause fprintd to lock up.
 It's recommended to use [this
-fork](https://gitlab.freedesktop.org/Popax21/libfprint/-/tree/tod) for now,
+fork](https://gitlab.freedesktop.org/Popax21/libfprint/-/tree/tod) for now, at least
 until it's merged into the base repository.
