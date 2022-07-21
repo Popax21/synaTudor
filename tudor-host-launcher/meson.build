@@ -26,5 +26,5 @@ configure_file(
     output: 'net.reactivated.TudorHostLauncher.service',
     configuration: configuration_data({ 'INSTALL_DIR': INSTALL_DIR, }),
     install: true,
-    install_dir: dbus_dep.get_pkgconfig_variable('system_bus_services_dir')
+    install_dir: dbus_dep.get_variable(pkgconfig: 'system_bus_services_dir')
 )
