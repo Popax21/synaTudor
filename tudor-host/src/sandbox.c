@@ -150,7 +150,6 @@ static void setup_seccomp() {
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(clone), 1, SCMP_A1_32(SCMP_CMP_MASKED_EQ, CLONE_THREAD, CLONE_THREAD)));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(rseq), 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(futex), 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(futex_waitv), 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(get_robust_list), 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(set_robust_list), 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(prctl), 1, SCMP_A0_32(SCMP_CMP_EQ, PR_SET_NAME)))
