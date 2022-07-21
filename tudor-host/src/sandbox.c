@@ -129,72 +129,72 @@ static void setup_seccomp() {
 
     //Add rules
     pid_t pid = getpid();
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_exit, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_exit_group, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_kill, 1, SCMP_A0_32(SCMP_CMP_EQ, pid)));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_tkill, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_tgkill, 1, SCMP_A0_32(SCMP_CMP_EQ, pid)));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_rt_sigaction, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_rt_sigprocmask, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_rt_sigreturn, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(exit), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(exit_group), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(kill), 1, SCMP_A0_32(SCMP_CMP_EQ, pid)));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(tkill), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(tgkill), 1, SCMP_A0_32(SCMP_CMP_EQ, pid)));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(rt_sigaction), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(rt_sigprocmask), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(rt_sigreturn), 0));
 
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_getpid, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_gettid, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(getpid), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(gettid), 0));
 
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_brk, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_mmap, 1, SCMP_A3_32(SCMP_CMP_MASKED_EQ, MAP_PRIVATE | MAP_ANONYMOUS, MAP_PRIVATE | MAP_ANONYMOUS)));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_munmap, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_mprotect, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_madvise, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(brk), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(mmap), 1, SCMP_A3_32(SCMP_CMP_MASKED_EQ, MAP_PRIVATE | MAP_ANONYMOUS, MAP_PRIVATE | MAP_ANONYMOUS)));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(munmap), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(mprotect), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(madvise), 0));
 
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_clone, 1, SCMP_A1_32(SCMP_CMP_MASKED_EQ, CLONE_THREAD, CLONE_THREAD)));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_rseq, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_futex, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_futex_waitv, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_get_robust_list, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_set_robust_list, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_prctl, 1, SCMP_A0_32(SCMP_CMP_EQ, PR_SET_NAME)))
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_arch_prctl, 1, SCMP_A0_32(SCMP_CMP_EQ, ARCH_SET_GS)))
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(clone), 1, SCMP_A1_32(SCMP_CMP_MASKED_EQ, CLONE_THREAD, CLONE_THREAD)));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(rseq), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(futex), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(futex_waitv), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(get_robust_list), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(set_robust_list), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(prctl), 1, SCMP_A0_32(SCMP_CMP_EQ, PR_SET_NAME)))
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(arch_prctl), 1, SCMP_A0_32(SCMP_CMP_EQ, ARCH_SET_GS)))
 
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_getrandom, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_eventfd, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_eventfd2, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_timerfd_create, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_timerfd_gettime, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_timerfd_settime, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_gettimeofday, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_clock_getres, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_clock_gettime, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_clock_nanosleep, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(getrandom), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(eventfd), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(eventfd2), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(timerfd_create), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(timerfd_gettime), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(timerfd_settime), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(gettimeofday), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(clock_getres), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(clock_gettime), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(clock_nanosleep), 0));
 
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SYS_access, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SYS_stat, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SYS_statx, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(access), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(stat), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(statx), 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_fstat, 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_newfstatat, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SYS_statfs, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SYS_fstatfs, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SYS_name_to_handle_at, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SYS_open_by_handle_at, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(statfs), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(fstatfs), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(name_to_handle_at), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(open_by_handle_at), 0));
 
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_poll, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(EPERM), SYS_open, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(EPERM), SYS_openat, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(EPERM), SYS_openat2, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_fcntl, 1, SCMP_A1_32(SCMP_CMP_EQ, F_GETFD)));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_fcntl, 1, SCMP_A1_32(SCMP_CMP_EQ, F_SETFD)));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_fcntl, 1, SCMP_A1_32(SCMP_CMP_EQ, F_GETFL)));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_fcntl, 1, SCMP_A1_32(SCMP_CMP_EQ, F_SETFL)));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_ioctl, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_lseek, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_read, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_write, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_readv, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_writev, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_close, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(poll), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(EPERM), SCMP_SYS(open), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(EPERM), SCMP_SYS(openat), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(EPERM), SCMP_SYS(openat2), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(fcntl), 1, SCMP_A1_32(SCMP_CMP_EQ, F_GETFD)));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(fcntl), 1, SCMP_A1_32(SCMP_CMP_EQ, F_SETFD)));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(fcntl), 1, SCMP_A1_32(SCMP_CMP_EQ, F_GETFL)));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(fcntl), 1, SCMP_A1_32(SCMP_CMP_EQ, F_SETFL)));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(ioctl), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(lseek), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(read), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(write), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(readv), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(writev), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(close), 0));
 
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_sendmsg, 0));
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SYS_recvmsg, 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(sendmsg), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(recvmsg), 0));
 
     //Load policy
     cant_fail(seccomp_load(scmp_ctx));
