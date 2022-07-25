@@ -147,7 +147,7 @@ static void setup_seccomp() {
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(mprotect), 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(madvise), 0));
 
-    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(clone), 1, SCMP_A1_32(SCMP_CMP_MASKED_EQ, CLONE_THREAD, CLONE_THREAD)));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(clone), 1, SCMP_A0_32(SCMP_CMP_MASKED_EQ, CLONE_THREAD, CLONE_THREAD)));
 #if defined(SYS_clone3)
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(clone3), 0));
 #endif
