@@ -75,8 +75,9 @@ void load_pdata_call(GDBusMethodInvocation *invoc, GVariant *params) {
 
         //Allocate pairing data buffer
         gsize pdata_len = (gsize) g_file_info_get_size(info);
-        gchar *pdata_data = (gchar*) g_malloc(pdata_len);
+        gpointer pdata_data = g_malloc(pdata_len);
         g_object_unref(info);
+        if(pdata_len <= 0) pdata_data = &pdata_data;
 
         //Load the pairing data
         GFileInputStream *stream = g_file_read(pdata_file, NULL, &error);
@@ -140,6 +141,7 @@ void store_pdata_call(GDBusMethodInvocation *invoc, GVariant *params) {
     //Write data to file
     gsize pdata_len;
     const void *pdata_data = (const void*) g_variant_get_fixed_array(pdata, &pdata_len, 1);
+    if(pdata_len <= 0) pdata_data = &pdata_data;
 
     gboolean suc;
     GError *error = NULL;
