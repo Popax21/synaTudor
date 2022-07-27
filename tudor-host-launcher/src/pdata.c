@@ -77,7 +77,6 @@ void load_pdata_call(GDBusMethodInvocation *invoc, GVariant *params) {
         gsize pdata_len = (gsize) g_file_info_get_size(info);
         gpointer pdata_data = g_malloc(pdata_len);
         g_object_unref(info);
-        if(pdata_len <= 0) pdata_data = &pdata_data;
 
         //Load the pairing data
         GFileInputStream *stream = g_file_read(pdata_file, NULL, &error);
@@ -87,7 +86,7 @@ void load_pdata_call(GDBusMethodInvocation *invoc, GVariant *params) {
             g_clear_error(&error);
             return;
         }
-        if(!g_input_stream_read_all(G_INPUT_STREAM(stream), pdata_data, pdata_len, NULL, NULL, &error)) {
+        if(!g_input_stream_read_all(G_INPUT_STREAM(stream), pdata_data ? pdata_data : &pdata_data, pdata_len, NULL, NULL, &error)) {
             g_object_unref(stream);
             g_object_unref(pdata_file);
             g_dbus_method_invocation_return_gerror(invoc, error);
@@ -141,13 +140,12 @@ void store_pdata_call(GDBusMethodInvocation *invoc, GVariant *params) {
     //Write data to file
     gsize pdata_len;
     const void *pdata_data = (const void*) g_variant_get_fixed_array(pdata, &pdata_len, 1);
-    if(pdata_len <= 0) pdata_data = &pdata_data;
 
     gboolean suc;
     GError *error = NULL;
     GFileOutputStream *stream = g_file_replace(pdata_file, NULL, false, G_FILE_CREATE_PRIVATE | G_FILE_CREATE_REPLACE_DESTINATION, NULL, &error);
     if(stream) {
-        suc = g_output_stream_write_all(G_OUTPUT_STREAM(stream), pdata_data, pdata_len, NULL, NULL, &error);
+        suc = g_output_stream_write_all(G_OUTPUT_STREAM(stream), pdata_data ? pdata_data : &pdata_data, pdata_len, NULL, NULL, &error);
         g_object_unref(stream);
     } else suc = false;
 
