@@ -65,7 +65,7 @@ static void fpi_device_tudor_dispose(GObject *obj) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(obj);
 
     //Remove from device list
-    g_list_free(g_list_remove_link(dev_list, tdev->dev_list_link));
+    dev_list = g_list_delete_link(dev_list, tdev->dev_list_link);
 
     //Ensure the device's closed
     ensure_closed(tdev);
