@@ -45,6 +45,7 @@ static void ensure_closed(FpiDeviceTudor *tdev) {
 static GList *dev_list = 0;
 
 static void fpi_device_tudor_init(FpiDeviceTudor *tdev) {
+    tdev->usb_fd = -1;
     tdev->host_has_id = false;
     tdev->host_sleep_inhib = -1;
     tdev->ipc_socket = NULL;
@@ -83,6 +84,9 @@ static void fpi_device_tudor_finalize(GObject *obj) {
     //Free data
     ipc_msg_buf_free(tdev->send_msg);
     g_ptr_array_unref(tdev->db_records);
+
+    //Free USB FD
+    if(tdev->usb_fd >= 0) g_assert_no_errno(close(tdev->usb_fd));
 
     //Chain to parent
     G_OBJECT_CLASS(fpi_device_tudor_parent_class)->finalize(obj);

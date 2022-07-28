@@ -13,6 +13,7 @@ struct _FpiDeviceTudor {
     GList *dev_list_link;
 
     GDBusConnection *dbus_con;
+    gint usb_fd;
 
     guint host_id;
     bool host_has_id, host_dead;

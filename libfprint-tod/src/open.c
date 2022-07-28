@@ -170,7 +170,7 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
     g_object_unref(task);
 }
 
-void open_device(FpiDeviceTudor *tdev, int usb_fd, uint8_t usb_bus, uint8_t usb_addr, GAsyncReadyCallback callback, gpointer user_data) {
+void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer user_data) {
     GError *error = NULL;
 
     //Create task
@@ -178,7 +178,6 @@ void open_device(FpiDeviceTudor *tdev, int usb_fd, uint8_t usb_bus, uint8_t usb_
 
     //Check if the host process is already running
     if(tdev->host_has_id) {
-        g_assert_no_errno(close(usb_fd));
         g_task_return_int(task, 0);
         g_object_unref(task);
         return;
@@ -186,7 +185,6 @@ void open_device(FpiDeviceTudor *tdev, int usb_fd, uint8_t usb_bus, uint8_t usb_
 
     //Open a DBus connection
     if(!open_dbus_con(tdev, &error)) {
-        g_assert_no_errno(close(usb_fd));
         dispose_dev(tdev);
         g_task_return_error(task, error);
         g_object_unref(task);
@@ -195,7 +193,6 @@ void open_device(FpiDeviceTudor *tdev, int usb_fd, uint8_t usb_bus, uint8_t usb_
 
     //Create a sleep inhibitor
     if(!create_sleep_inhibitor(tdev, &error)) {
-        g_assert_no_errno(close(usb_fd));
         dispose_dev(tdev);
         g_task_return_error(task, error);
         g_object_unref(task);
@@ -206,7 +203,6 @@ void open_device(FpiDeviceTudor *tdev, int usb_fd, uint8_t usb_bus, uint8_t usb_
     int sock_fd;
     if(!start_host_process(tdev, &sock_fd, &error)) {
         g_warning("Failed to start Tudor host process - is tudor-host-launcher.service running? Error: '%s' (%s code %d)", error->message, g_quark_to_string(error->domain), error->code);
-        g_assert_no_errno(close(usb_fd));
         dispose_dev(tdev);
         g_task_return_error(task, error);
         g_object_unref(task);
@@ -217,7 +213,6 @@ void open_device(FpiDeviceTudor *tdev, int usb_fd, uint8_t usb_bus, uint8_t usb_
     //Create the IPC socket
     tdev->ipc_socket = g_socket_new_from_fd(sock_fd, &error);
     if(!tdev->ipc_socket) {
-        g_assert_no_errno(close(usb_fd));
         dispose_dev(tdev);
         g_task_return_error(task, error);
         g_object_unref(task);
@@ -225,6 +220,26 @@ void open_device(FpiDeviceTudor *tdev, int usb_fd, uint8_t usb_bus, uint8_t usb_
     }
     g_socket_set_timeout(tdev->ipc_socket, IPC_TIMEOUT_SECS);
     tdev->ipc_cancel = g_cancellable_new();
+
+    //Open the USB device to get its FD
+    GUsbDevice *usb_dev = fpi_device_get_usb_device(FP_DEVICE(tdev));
+    if(tdev->usb_fd < 0) {
+        if(!g_usb_device_open(usb_dev, error)) {
+            dispose_dev(tdev);
+            g_task_return_error(task, error);
+            g_object_unref(task);
+            return;
+        }
+
+        g_assert_no_errno(tdev->usb_fd = dup(((int**) usb_dev->priv)[3][10 + 2 + 4 + 2 + 1 + 1])); //Cursed offset magic
+
+        if(!g_usb_device_close(usb_dev, error)) {
+            dispose_dev(tdev);
+            g_task_return_error(task, error);
+            g_object_unref(task);
+            return;
+        }
+    }
 
     //Send the init message
     enum log_level loglvl;
@@ -235,22 +250,20 @@ void open_device(FpiDeviceTudor *tdev, int usb_fd, uint8_t usb_bus, uint8_t usb_
     if(loglvl < LOG_VERBOSE) loglvl = LOG_VERBOSE;
     if(loglvl > LOG_ERROR) loglvl = LOG_ERROR;
 
-    tdev->send_msg->transfer_fd = usb_fd;
+    tdev->send_msg->transfer_fd = tdev->usb_fd;
     tdev->send_msg->size = sizeof(struct ipc_msg_init); 
     tdev->send_msg->init = (struct ipc_msg_init) {
         .type = IPC_MSG_INIT,
         .log_level = loglvl,
-        .usb_bus = usb_bus,
-        .usb_addr = usb_addr
+        .usb_bus = g_usb_device_get_bus(usb_dev),
+        .usb_addr = g_usb_device_get_address(usb_dev)
     };
     if(!send_ipc_msg(tdev, tdev->send_msg, &error)) {
-        g_assert_no_errno(close(usb_fd));
         dispose_dev(tdev);
         g_task_return_error(task, error);
         g_object_unref(task);
         return;
     }
-    g_assert_no_errno(close(usb_fd));
     g_debug("Initialized tudor host process ID %d with USB bus 0x%02x addr 0x%02x", tdev->host_id, tdev->send_msg->init.usb_bus, tdev->send_msg->init.usb_addr);
 
     //Receive IPC messages
@@ -315,26 +328,28 @@ static void probe_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_dat
 void fpi_device_tudor_probe(FpDevice *dev) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
 
-    //Open the USB device
-    GError *error = NULL;
-    GUsbDevice *usb_dev = fpi_device_get_usb_device(FP_DEVICE(tdev));
-    if(!g_usb_device_open(usb_dev, &error)) {
-        fpi_device_probe_complete(FP_DEVICE(tdev), NULL, NULL, error);
-        return;
-    }
-
-    //Get a USB device FD, and close the device, as it conflicts with the host's device usage
-    int usb_fd = get_usb_device_fd(usb_dev);
-    g_usb_device_close(fpi_device_get_usb_device(FP_DEVICE(tdev)), NULL);
-
     //Open the device
-    open_device(tdev, usb_fd, g_usb_device_get_bus(usb_dev), g_usb_device_get_address(usb_dev), probe_open_cb, NULL);
+    open_device(tdev, probe_open_cb, NULL);
 }
 
 void fpi_device_tudor_open(FpDevice *dev) {
+    //Close the USB device
+    GError *error = NULL;
+    if(!g_usb_device_close(fpi_device_get_usb_device(dev), &error)) {
+        fpi_device_open_complete(dev, error);
+        return;
+    }
+
     fpi_device_open_complete(dev, NULL);
 }
 
 void fpi_device_tudor_close(FpDevice *dev) {
+    //Open the USB device
+    GError *error = NULL;
+    if(!g_usb_device_open(fpi_device_get_usb_device(dev), &error)) {
+        fpi_device_close_complete(dev, error);
+        return;
+    }
+
     fpi_device_close_complete(dev, NULL);
 }
