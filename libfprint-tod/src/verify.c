@@ -1,19 +1,17 @@
 #include "data.h"
 #include "ipc.h"
+#include "open.h"
 #include "verify.h"
 
 struct verify_params {
     FpiDeviceTudor *tdev;
-    gulong cancel_listener_id;
 
     RECGUID guid;
     enum tudor_finger finger;
 };
 
 static void free_verify_params(struct verify_params *params) {
-    if(params->cancel_listener_id) {
-        g_cancellable_disconnect(fpi_device_get_cancellable(FP_DEVICE(params->tdev)), params->cancel_listener_id);
-    }
+    unregister_cancel_handler(params->tdev);
     g_slice_free(struct verify_params, params);
 }
 
@@ -90,7 +88,7 @@ static void verify_acked_cb(GObject *src_obj, GAsyncResult *res, gpointer user_d
     fpi_device_report_finger_status_changes(FP_DEVICE(tdev), FP_FINGER_STATUS_NEEDED, FP_FINGER_STATUS_NONE);
 
     //Register cancellation handler
-    params->cancel_listener_id = register_cancel_handler(tdev);
+    register_cancel_handler(tdev);
 
     //Start response listener
     recv_ipc_msg_no_timeout(tdev, verify_recv_cb, user_data);
@@ -123,12 +121,14 @@ static void verify_load_record_cb(GObject *src_obj, GAsyncResult *res, gpointer 
     send_acked_ipc_msg(tdev, tdev->send_msg, verify_acked_cb, params);
 }
 
-void fpi_device_tudor_verify(FpDevice *dev) {
-    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
+static void verify_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
+    FpDevice *dev = FP_DEVICE(tdev);
 
-    //Check if host process is dead
+    //Check for errors
     GError *error = NULL;
-    if(check_host_proc_dead(tdev, &error)) {
+    g_task_propagate_int(G_TASK(res), &error);
+    if(error) {
         fpi_device_verify_complete(dev, error);
         return;
     }
@@ -150,7 +150,6 @@ void fpi_device_tudor_verify(FpDevice *dev) {
     struct verify_params *params = g_slice_new(struct verify_params);
     *params = (struct verify_params) {
         .tdev = tdev,
-        .cancel_listener_id = 0,
         .guid = guid,
         .finger = finger
     };
@@ -160,4 +159,10 @@ void fpi_device_tudor_verify(FpDevice *dev) {
     g_debug("Loading verify print tudor host record...");
     load_record(params->tdev, rec, verify_load_record_cb, params);
     g_object_unref(rec);
+}
+
+void fpi_device_tudor_verify(FpDevice *dev) {
+    //Open the device
+    GUsbDevice *usb_dev = fpi_device_get_usb_device(dev);
+    open_device(FPI_DEVICE_TUDOR(dev), get_usb_device_fd(usb_dev), g_usb_device_get_bus(usb_dev), g_usb_device_get_address(usb_dev), verify_open_cb, NULL);
 }

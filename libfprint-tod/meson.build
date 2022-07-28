@@ -3,6 +3,7 @@ tudor_tod_src = [
     'src/data.c',
     'src/ipc.c',
     'src/open.c',
+    'src/suspend.c',
     'src/enroll.c',
     'src/verify.c',
     'src/identify.c'

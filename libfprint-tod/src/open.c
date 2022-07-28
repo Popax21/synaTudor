@@ -1,7 +1,9 @@
 #include <sys/socket.h>
+#include <tudor/dbus-launcher.h>
 #include "open.h"
 #include "data.h"
 #include "ipc.h"
+#include "suspend.h"
 
 static void dispose_dev(FpiDeviceTudor *tdev) {
     //Kill the host process (even though the process might have died already, we still need to tell the launcher to free the associated resources)
@@ -11,22 +13,39 @@ static void dispose_dev(FpiDeviceTudor *tdev) {
         g_clear_error(&error);
     }
 
+    //Close the sleep inhibitor (if we got one)
+    if(tdev->host_sleep_inhib >= 0) {
+        close_sleep_inhibitor(tdev->host_sleep_inhib);
+        tdev->host_sleep_inhib = -1;
+    }
+
     //Clear DB mirror array
     g_ptr_array_set_size(tdev->db_records, 0);
 
     //Free object references
     g_clear_object(&tdev->ipc_cancel);
     g_clear_object(&tdev->ipc_socket);
-    g_clear_object(&tdev->dbus_con);
     g_clear_pointer(&tdev->sensor_name, g_free);
     g_clear_object(&tdev->close_task);
 
     g_debug("Disposed tudor device resources");
 }
 
-static void host_exit_cb(FpiDeviceTudor *tdev, guint host_id, gint status) {
+static void host_died_signal_cb(GDBusConnection *con, const gchar *sender, const gchar *obj, const gchar *interf, const gchar *signal, GVariant *params, gpointer user_data) {
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(user_data);
+
+    //Check and get parameters
+    if(!g_variant_check_format_string(params, "(ui)", FALSE)) {
+        g_warning("Received invalid parameters from tudor host launcher HostDied signal!");
+        return;
+    }
+
+    guint host_id;
+    gint status;
+    g_variant_get(params, "(ui)", &host_id, &status);
+
     //Check host ID
-    if(tdev->host_dead || tdev->host_id != host_id) return;
+    if(!tdev->host_has_id || tdev->host_dead || tdev->host_id != host_id) return;
 
     //Mark host as dead
     tdev->host_dead = true;
@@ -45,6 +64,15 @@ static void host_exit_cb(FpiDeviceTudor *tdev, guint host_id, gint status) {
         g_task_return_int(tdev->close_task, 0);
         dispose_dev(tdev);
     }
+}
+
+void register_host_process_monitor(FpiDeviceTudor *tdev) {
+    //Register a signal listener
+    g_dbus_connection_signal_subscribe(tdev->dbus_con,
+        TUDOR_HOST_LAUNCHER_SERVICE, TUDOR_HOST_LAUNCHER_INTERF, TUDOR_HOST_LAUNCHER_HOST_DIED_SIGNAL, TUDOR_HOST_LAUNCHER_OBJ,
+        NULL, G_DBUS_SIGNAL_FLAGS_NONE,
+        host_died_signal_cb, tdev, NULL
+    );
 }
 
 static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
@@ -143,29 +171,42 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
 }
 
 void open_device(FpiDeviceTudor *tdev, int usb_fd, uint8_t usb_bus, uint8_t usb_addr, GAsyncReadyCallback callback, gpointer user_data) {
+    GError *error = NULL;
+
     //Create task
     GTask *task = g_task_new(tdev, NULL, callback, user_data);
 
+    //Check if the host process is already running
+    if(tdev->host_has_id) {
+        g_assert_no_errno(close(usb_fd));
+        g_task_return_error(task, NULL);
+        g_object_unref(task);
+        return;
+    }
+
     //Open a DBus connection
-    GError *error = NULL;
-    tdev->dbus_con = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);
-    if(!tdev->dbus_con) {
+    if(!open_dbus_con(tdev, &error)) {
+        g_assert_no_errno(close(usb_fd));
         dispose_dev(tdev);
         g_task_return_error(task, error);
         g_object_unref(task);
         return;
     }
 
-    //Initialize fields
-    tdev->host_has_id = false;
-
-    //Register host process monitor
-    register_host_process_monitor(tdev, host_exit_cb);
+    //Create a sleep inhibitor
+    if(!create_sleep_inhibitor(tdev, &error)) {
+        g_assert_no_errno(close(usb_fd));
+        dispose_dev(tdev);
+        g_task_return_error(task, error);
+        g_object_unref(task);
+        return;
+    }
 
     //Start the host process
     int sock_fd;
     if(!start_host_process(tdev, &sock_fd, &error)) {
         g_warning("Failed to start Tudor host process - is tudor-host-launcher.service running? Error: '%s' (%s code %d)", error->message, g_quark_to_string(error->domain), error->code);
+        g_assert_no_errno(close(usb_fd));
         dispose_dev(tdev);
         g_task_return_error(task, error);
         g_object_unref(task);
@@ -176,6 +217,7 @@ void open_device(FpiDeviceTudor *tdev, int usb_fd, uint8_t usb_bus, uint8_t usb_
     //Create the IPC socket
     tdev->ipc_socket = g_socket_new_from_fd(sock_fd, &error);
     if(!tdev->ipc_socket) {
+        g_assert_no_errno(close(usb_fd));
         dispose_dev(tdev);
         g_task_return_error(task, error);
         g_object_unref(task);
@@ -230,7 +272,7 @@ void close_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer u
     //Create task
     GTask *task = g_task_new(tdev, NULL, callback, user_data);
 
-    if(tdev->host_dead) {
+    if(!tdev->host_has_id || tdev->host_dead) {
         //Dispose the device directly
         dispose_dev(tdev);
         g_task_return_int(task, 0);
@@ -251,13 +293,12 @@ void close_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer u
     }
 
     //Add timeout
-    fpi_device_add_timeout(FP_DEVICE(tdev), IPC_TIMEOUT_SECS * 1000, close_timeout_cb, NULL, NULL);
+    fpi_device_add_timeout(FP_DEVICE(tdev), SHUTDOWN_TIMEOUT_SECS * 1000, close_timeout_cb, NULL, NULL);
 }
 
 static void probe_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
     GTask *task = G_TASK(res);
-
 
     //Check for errors
     GError *error = NULL;
@@ -283,8 +324,7 @@ void fpi_device_tudor_probe(FpDevice *dev) {
     }
 
     //Get a USB device FD, and close the device, as it conflicts with the host's device usage
-    int usb_fd;
-    g_assert_no_errno(usb_fd = dup(((int**) usb_dev->priv)[3][10 + 2 + 4 + 2 + 1 + 1])); //Cursed offset magic
+    int usb_fd = get_usb_device_fd(usb_dev);
     g_usb_device_close(fpi_device_get_usb_device(FP_DEVICE(tdev)), NULL);
 
     //Open the device
@@ -292,19 +332,9 @@ void fpi_device_tudor_probe(FpDevice *dev) {
 }
 
 void fpi_device_tudor_open(FpDevice *dev) {
-    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
-
-    //Check if the host is still alive
-    GError *error = NULL;
-    if(check_host_proc_dead(tdev, &error)) {
-        fpi_device_open_complete(dev, error);
-    }
-
-    //Complete the action
     fpi_device_open_complete(dev, NULL);
 }
 
 void fpi_device_tudor_close(FpDevice *dev) {
-    //Complete the action
     fpi_device_close_complete(dev, NULL);
 }

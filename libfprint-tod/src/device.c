@@ -45,6 +45,14 @@ static void ensure_closed(FpiDeviceTudor *tdev) {
 static GList *dev_list = 0;
 
 static void fpi_device_tudor_init(FpiDeviceTudor *tdev) {
+    tdev->host_has_id = false;
+    tdev->host_sleep_inhib = -1;
+    tdev->ipc_socket = NULL;
+    tdev->ipc_cancel = NULL;
+    tdev->close_task = NULL;
+    tdev->cancel_handler_id = 0;
+    tdev->sensor_name = NULL;
+
     //Allocate data
     tdev->send_msg = ipc_msg_buf_new();
     tdev->db_records = g_ptr_array_new_with_free_func(g_object_unref);
@@ -69,6 +77,9 @@ static void fpi_device_tudor_dispose(GObject *obj) {
 static void fpi_device_tudor_finalize(GObject *obj) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(obj);
 
+    //Close DBus connection
+    g_clear_object(&tdev->dbus_con);
+
     //Free data
     ipc_msg_buf_free(tdev->send_msg);
     g_ptr_array_unref(tdev->db_records);
@@ -78,7 +89,23 @@ static void fpi_device_tudor_finalize(GObject *obj) {
 }
 
 static void cancel_cb(GCancellable *cancel, gpointer user_data) {
-    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(user_data);
+    invoke_cancel_handler(FPI_DEVICE_TUDOR(user_data));
+}
+
+void register_cancel_handler(FpiDeviceTudor *tdev) {
+    tdev->has_canceled = false;
+    tdev->cancel_handler_id = g_cancellable_connect(fpi_device_get_cancellable(FP_DEVICE(tdev)), G_CALLBACK(cancel_cb), tdev, NULL);
+}
+
+void unregister_cancel_handler(FpiDeviceTudor *tdev) {
+    if(tdev->cancel_handler_id != 0) {
+        g_cancellable_disconnect(fpi_device_get_cancellable(FP_DEVICE(tdev)), tdev->cancel_handler_id);
+        tdev->cancel_handler_id = 0;
+    }
+}
+
+void invoke_cancel_handler(FpiDeviceTudor *tdev) {
+    if(tdev->cancel_handler_id == 0 || tdev->has_canceled) return;
 
     //Force timeout back to normal
     g_socket_set_timeout(tdev->ipc_socket, IPC_TIMEOUT_SECS);
@@ -95,12 +122,7 @@ static void cancel_cb(GCancellable *cancel, gpointer user_data) {
     }
     tdev->has_canceled = true;
 
-    g_debug("Sent tudor cancel IPC message");
-}
-
-guint register_cancel_handler(FpiDeviceTudor *tdev) {
-    tdev->has_canceled = false;
-    return g_cancellable_connect(fpi_device_get_cancellable(FP_DEVICE(tdev)), G_CALLBACK(cancel_cb), tdev, NULL);
+    g_debug("Sent tudor host cancel IPC message");
 }
 
 GError *handle_cancel_ack(FpiDeviceTudor *tdev) {

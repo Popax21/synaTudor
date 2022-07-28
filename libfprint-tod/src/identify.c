@@ -1,19 +1,17 @@
 #include "data.h"
 #include "ipc.h"
+#include "open.h"
 #include "identify.h"
 
 struct identify_params {
     FpiDeviceTudor *tdev;
-    gulong cancel_listener_id;
 
     GArray *prints;
     int next_print_idx;
 };
 
 static void free_identify_params(struct identify_params *params) {
-    if(params->cancel_listener_id) {
-        g_cancellable_disconnect(fpi_device_get_cancellable(FP_DEVICE(params->tdev)), params->cancel_listener_id);
-    }
+    unregister_cancel_handler(params->tdev);
     g_array_unref(params->prints);
     g_slice_free(struct identify_params, params);
 }
@@ -134,7 +132,7 @@ static void identify_acked_cb(GObject *src_obj, GAsyncResult *res, gpointer user
     fpi_device_report_finger_status_changes(FP_DEVICE(tdev), FP_FINGER_STATUS_NEEDED, FP_FINGER_STATUS_NONE);
 
     //Register cancellation handler
-    params->cancel_listener_id = register_cancel_handler(tdev);
+    register_cancel_handler(tdev);
 
     //Start response listener
     recv_ipc_msg_no_timeout(tdev, identify_recv_cb, user_data);
@@ -200,12 +198,14 @@ static void load_next_print(struct identify_params *params) {
     g_object_unref(rec);
 }
 
-void fpi_device_tudor_identify(FpDevice *dev) {
-    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
+static void identify_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
+    FpDevice *dev = FP_DEVICE(tdev);
 
-    //Check if host process is dead
+    //Check for errors
     GError *error = NULL;
-    if(check_host_proc_dead(tdev, &error)) {
+    g_task_propagate_int(G_TASK(res), &error);
+    if(error) {
         fpi_device_identify_complete(dev, error);
         return;
     }
@@ -229,11 +229,16 @@ void fpi_device_tudor_identify(FpDevice *dev) {
     struct identify_params *params = g_slice_new(struct identify_params);
     *params = (struct identify_params) {
         .tdev = tdev,
-        .cancel_listener_id = 0,
         .prints = prints,
         .next_print_idx = 0
     };
 
     //Start to load the first print
     load_next_print(params);
+}
+
+void fpi_device_tudor_identify(FpDevice *dev) {
+    //Open the device
+    GUsbDevice *usb_dev = fpi_device_get_usb_device(dev);
+    open_device(FPI_DEVICE_TUDOR(dev), get_usb_device_fd(usb_dev), g_usb_device_get_bus(usb_dev), g_usb_device_get_address(usb_dev), identify_open_cb, NULL);
 }

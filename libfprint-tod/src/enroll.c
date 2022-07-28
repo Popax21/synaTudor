@@ -1,10 +1,10 @@
 #include "data.h"
 #include "ipc.h"
+#include "open.h"
 #include "enroll.h"
 
 struct enroll_params {
     FpiDeviceTudor *tdev;
-    gulong cancel_listener_id;
 
     RECGUID guid;
     enum tudor_finger finger;
@@ -13,9 +13,7 @@ struct enroll_params {
 };
 
 static void free_enroll_params(struct enroll_params *params) {
-    if(params->cancel_listener_id) {
-        g_cancellable_disconnect(fpi_device_get_cancellable(FP_DEVICE(params->tdev)), params->cancel_listener_id);
-    }
+    unregister_cancel_handler(params->tdev);
     g_slice_free(struct enroll_params, params);
 }
 
@@ -128,18 +126,20 @@ static void enroll_start_acked_cb(GObject *src_obj, GAsyncResult *res, gpointer 
     fpi_device_report_finger_status_changes(FP_DEVICE(tdev), FP_FINGER_STATUS_NEEDED, FP_FINGER_STATUS_NONE);
 
     //Register cancellation handler
-    params->cancel_listener_id = register_cancel_handler(tdev);
+    register_cancel_handler(tdev);
 
     //Start response listener
     recv_ipc_msg_no_timeout(tdev, enroll_recv_cb, user_data);
 }
 
-void fpi_device_tudor_enroll(FpDevice *dev) {
-    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
+static void enroll_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
+    FpDevice *dev = FP_DEVICE(tdev);
 
-    //Check if host process is dead
+    //Check for errors
     GError *error = NULL;
-    if(check_host_proc_dead(tdev, &error)) {
+    g_task_propagate_int(G_TASK(res), &error);
+    if(error) {
         fpi_device_enroll_complete(dev, NULL, error);
         return;
     }
@@ -188,7 +188,6 @@ void fpi_device_tudor_enroll(FpDevice *dev) {
     struct enroll_params *params = g_slice_new(struct enroll_params);
     *params = (struct enroll_params) {
         .tdev = tdev,
-        .cancel_listener_id = 0,
         .guid = guid,
         .finger = finger,
         .enroll_stage = 0
@@ -203,4 +202,10 @@ void fpi_device_tudor_enroll(FpDevice *dev) {
         .finger = finger
     };
     send_acked_ipc_msg(tdev, tdev->send_msg, enroll_start_acked_cb, params);
+}
+
+void fpi_device_tudor_enroll(FpDevice *dev) {
+    //Open the device
+    GUsbDevice *usb_dev = fpi_device_get_usb_device(dev);
+    open_device(FPI_DEVICE_TUDOR(dev), get_usb_device_fd(usb_dev), g_usb_device_get_bus(usb_dev), g_usb_device_get_address(usb_dev), enroll_open_cb, NULL);
 }

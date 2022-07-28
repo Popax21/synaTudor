@@ -2,6 +2,8 @@
 #include <tudor/dbus-launcher.h>
 #include "drivers_api.h"
 #include "ipc.h"
+#include "open.h"
+#include "suspend.h"
 
 IPCMessageBuf *ipc_msg_buf_new() {
     IPCMessageBuf *msg = g_new(IPCMessageBuf, 1);
@@ -21,93 +23,7 @@ int ipc_msg_buf_steal_fd(IPCMessageBuf *msg) {
     return fd;
 }
 
-struct host_died_params {
-    FpiDeviceTudor *tdev;
-    HostProcessDiedFunc fnc;
-};
-
-static void host_died_signal_cb(GDBusConnection *con, const gchar *sender, const gchar *obj, const gchar *interf, const gchar *signal, GVariant *params, gpointer user_data) {
-    struct host_died_params *pars = (struct host_died_params*) user_data;
-
-    //Check and get parameters
-    if(!g_variant_check_format_string(params, "(ui)", FALSE)) {
-        g_warning("Received invalid parameters from tudor host launcher HostDied signal!");
-        return;
-    }
-
-    guint host_id;
-    gint status;
-    g_variant_get(params, "(ui)", &host_id, &status);
-
-    //Call callback
-    (*pars->fnc)(pars->tdev, host_id, status);
-}
-
-void register_host_process_monitor(FpiDeviceTudor *tdev, HostProcessDiedFunc fnc) {
-    //Allocate params
-    struct host_died_params *params = g_new(struct host_died_params, 1);
-    params->tdev = tdev;
-    params->fnc = fnc;
-
-    //Register an event listener
-    g_dbus_connection_signal_subscribe(tdev->dbus_con,
-        TUDOR_HOST_LAUNCHER_SERVICE, TUDOR_HOST_LAUNCHER_INTERF, TUDOR_HOST_LAUNCHER_HOST_DIED_SIGNAL, TUDOR_HOST_LAUNCHER_OBJ,
-        NULL, G_DBUS_SIGNAL_FLAGS_NONE,
-        host_died_signal_cb, params, g_free
-    );
-}
-
-bool start_host_process(FpiDeviceTudor *tdev, int *sock_fd, GError **error) {
-    g_assert_false(tdev->host_has_id);
-
-    //Request the host launcher service to launch a host process
-    GUnixFDList *fds;
-    GVariant *rets = g_dbus_connection_call_with_unix_fd_list_sync(tdev->dbus_con,
-        TUDOR_HOST_LAUNCHER_SERVICE, TUDOR_HOST_LAUNCHER_OBJ, TUDOR_HOST_LAUNCHER_INTERF,
-        TUDOR_HOST_LAUNCHER_LAUNCH_METHOD, NULL, G_VARIANT_TYPE("(uh)"), G_DBUS_CALL_FLAGS_NONE,
-        G_MAXINT,
-        NULL, &fds,
-        NULL, error
-    );
-    if(!rets) return false;
-
-    //Get the result host ID and socket FD index
-    int fd_idx;
-    g_variant_get(rets, "(uh)", &tdev->host_id, &fd_idx);
-    g_variant_unref(rets);
-
-    //Get the socket FD from the list
-    if(fd_idx < 0 || g_unix_fd_list_get_length(fds) <= fd_idx) {
-        g_set_error(error, G_DBUS_ERROR, G_DBUS_ERROR_INVALID_ARGS, "Tudor host launcher returned invalid socket FD index");
-        return false;
-    }
-
-    *sock_fd = g_unix_fd_list_get(fds, fd_idx, error);
-    g_object_unref(fds);
-    if(*sock_fd < 0) return false;
-
-    tdev->host_has_id = true;
-    tdev->host_dead = false;
-    return true;
-}
-
-bool kill_host_process(FpiDeviceTudor *tdev, GError **error) {
-    g_assert_true(tdev->host_has_id);
-    tdev->host_has_id = false;
-
-    //Request the host launcher service to kill the host process
-    GVariant *rets = g_dbus_connection_call_sync(tdev->dbus_con,
-        TUDOR_HOST_LAUNCHER_SERVICE, TUDOR_HOST_LAUNCHER_OBJ, TUDOR_HOST_LAUNCHER_INTERF,
-        TUDOR_HOST_LAUNCHER_KILL_METHOD, g_variant_new("(u)", tdev->host_id), NULL, G_DBUS_CALL_FLAGS_NONE,
-        G_MAXINT, NULL, error
-    );
-    if(!rets) return false;
-    g_variant_unref(rets);
-
-    return true;
-}
-
-bool check_host_proc_dead(FpiDeviceTudor *tdev, GError **error) {
+static inline bool check_host_proc_dead(FpiDeviceTudor *tdev, GError **error) {
     if(tdev->host_has_id && !tdev->host_dead) return false;
     g_clear_error(error);
     *error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Tudor host process died");
@@ -302,4 +218,65 @@ void send_acked_ipc_msg(FpiDeviceTudor *tdev, IPCMessageBuf *msg, GAsyncReadyCal
 
     //Receive the ACK
     recv_ipc_msg(tdev, ack_recv_cb, task);
+}
+
+bool open_dbus_con(FpiDeviceTudor *tdev, GError **error) {
+    if(tdev->dbus_con) return true;
+
+    //Open a DBus connection
+    tdev->dbus_con = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, error);
+    if(!tdev->dbus_con) return false;
+
+    //Register host process monitor
+    register_host_process_monitor(tdev);
+
+    //Register suspend monitor
+    register_suspend_monitor(tdev);
+
+    return true;
+}
+
+bool start_host_process(FpiDeviceTudor *tdev, int *sock_fd, GError **error) {
+    g_assert_false(tdev->host_has_id);
+
+    //Request the host launcher service to launch a host process
+    GUnixFDList *fds;
+    GVariant *rets = g_dbus_connection_call_with_unix_fd_list_sync(tdev->dbus_con,
+        TUDOR_HOST_LAUNCHER_SERVICE, TUDOR_HOST_LAUNCHER_OBJ, TUDOR_HOST_LAUNCHER_INTERF,
+        TUDOR_HOST_LAUNCHER_LAUNCH_METHOD, NULL, G_VARIANT_TYPE("(uh)"), G_DBUS_CALL_FLAGS_NONE,
+        G_MAXINT,
+        NULL, &fds,
+        NULL, error
+    );
+    if(!rets) return false;
+
+    //Get the result host ID and socket FD index
+    int fd_idx;
+    g_variant_get(rets, "(uh)", &tdev->host_id, &fd_idx);
+    g_variant_unref(rets);
+
+    //Get the socket FD from the list
+    *sock_fd = g_unix_fd_list_get(fds, fd_idx, error);
+    g_object_unref(fds);
+    if(*sock_fd < 0) return false;
+
+    tdev->host_has_id = true;
+    tdev->host_dead = false;
+    return true;
+}
+
+bool kill_host_process(FpiDeviceTudor *tdev, GError **error) {
+    g_assert_true(tdev->host_has_id);
+    tdev->host_has_id = false;
+
+    //Request the host launcher service to kill the host process
+    GVariant *rets = g_dbus_connection_call_sync(tdev->dbus_con,
+        TUDOR_HOST_LAUNCHER_SERVICE, TUDOR_HOST_LAUNCHER_OBJ, TUDOR_HOST_LAUNCHER_INTERF,
+        TUDOR_HOST_LAUNCHER_KILL_METHOD, g_variant_new("(u)", tdev->host_id), NULL, G_DBUS_CALL_FLAGS_NONE,
+        G_MAXINT, NULL, error
+    );
+    if(!rets) return false;
+    g_variant_unref(rets);
+
+    return true;
 }
