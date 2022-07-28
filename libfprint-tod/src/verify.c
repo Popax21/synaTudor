@@ -163,6 +163,5 @@ static void verify_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_da
 
 void fpi_device_tudor_verify(FpDevice *dev) {
     //Open the device
-    GUsbDevice *usb_dev = fpi_device_get_usb_device(dev);
-    open_device(FPI_DEVICE_TUDOR(dev), get_usb_device_fd(usb_dev), g_usb_device_get_bus(usb_dev), g_usb_device_get_address(usb_dev), verify_open_cb, NULL);
+    open_device(FPI_DEVICE_TUDOR(dev), verify_open_cb, NULL);
 }

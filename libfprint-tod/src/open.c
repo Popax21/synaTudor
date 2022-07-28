@@ -224,7 +224,7 @@ void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer us
     //Open the USB device to get its FD
     GUsbDevice *usb_dev = fpi_device_get_usb_device(FP_DEVICE(tdev));
     if(tdev->usb_fd < 0) {
-        if(!g_usb_device_open(usb_dev, error)) {
+        if(!g_usb_device_open(usb_dev, &error)) {
             dispose_dev(tdev);
             g_task_return_error(task, error);
             g_object_unref(task);
@@ -233,7 +233,7 @@ void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer us
 
         g_assert_no_errno(tdev->usb_fd = dup(((int**) usb_dev->priv)[3][10 + 2 + 4 + 2 + 1 + 1])); //Cursed offset magic
 
-        if(!g_usb_device_close(usb_dev, error)) {
+        if(!g_usb_device_close(usb_dev, &error)) {
             dispose_dev(tdev);
             g_task_return_error(task, error);
             g_object_unref(task);
