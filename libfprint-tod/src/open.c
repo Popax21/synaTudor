@@ -179,7 +179,7 @@ void open_device(FpiDeviceTudor *tdev, int usb_fd, uint8_t usb_bus, uint8_t usb_
     //Check if the host process is already running
     if(tdev->host_has_id) {
         g_assert_no_errno(close(usb_fd));
-        g_task_return_error(task, NULL);
+        g_task_return_int(task, 0);
         g_object_unref(task);
         return;
     }
