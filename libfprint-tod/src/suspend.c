@@ -139,7 +139,7 @@ bool create_sleep_inhibitor(FpiDeviceTudor *tdev, GError **error) {
     GUnixFDList *fds;
     GVariant *rets = g_dbus_connection_call_with_unix_fd_list_sync(tdev->dbus_con,
         LOGIND_SERVICE, LOGIND_OBJ, LOGIND_INTERF,
-        LOGIND_SLEEP_INHIBIT_METHOD, NULL, G_VARIANT_TYPE("(h)"), G_DBUS_CALL_FLAGS_NONE,
+        LOGIND_SLEEP_INHIBIT_METHOD, g_variant_new("(ssss)", "sleep", "net.reactivated.Fprint", "Suspend tudor device", "delay"), G_VARIANT_TYPE("(h)"), G_DBUS_CALL_FLAGS_NONE,
         G_MAXINT,
         NULL, &fds,
         NULL, error
