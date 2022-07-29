@@ -198,14 +198,12 @@ static void load_next_print(struct identify_params *params) {
     g_object_unref(rec);
 }
 
-static void identify_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
-    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
-    FpDevice *dev = FP_DEVICE(tdev);
+void fpi_device_tudor_identify(FpDevice *dev) {
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
 
-    //Check for errors
+    //Check if host process is dead
     GError *error = NULL;
-    g_task_propagate_int(G_TASK(res), &error);
-    if(error) {
+    if(check_host_proc_dead(tdev, &error)) {
         fpi_device_identify_complete(dev, error);
         return;
     }
@@ -235,9 +233,4 @@ static void identify_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_
 
     //Start to load the first print
     load_next_print(params);
-}
-
-void fpi_device_tudor_identify(FpDevice *dev) {
-    //Open the device
-    open_device(FPI_DEVICE_TUDOR(dev), identify_open_cb, NULL);
 }

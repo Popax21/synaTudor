@@ -52,8 +52,11 @@ bool open_dbus_con(FpiDeviceTudor *tdev, GError **error);
 bool start_host_process(FpiDeviceTudor *tdev, int *sock_fd, GError **error);
 bool kill_host_process(FpiDeviceTudor *tdev, GError **error);
 
-static inline bool is_host_proc_alive(FpiDeviceTudor *tdev) {
-    return tdev->host_has_id && !tdev->host_dead;
+static inline bool check_host_proc_dead(FpiDeviceTudor *tdev, GError **error) {
+    if(tdev->host_has_id && !tdev->host_dead) return false;
+    g_clear_error(error);
+    *error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Tudor host process died");
+    return true;
 }
 
 #endif

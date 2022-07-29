@@ -121,14 +121,12 @@ static void verify_load_record_cb(GObject *src_obj, GAsyncResult *res, gpointer 
     send_acked_ipc_msg(tdev, tdev->send_msg, verify_acked_cb, params);
 }
 
-static void verify_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
-    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
-    FpDevice *dev = FP_DEVICE(tdev);
+void fpi_device_tudor_verify(FpDevice *dev) {
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
 
-    //Check for errors
+    //Check if host process is dead
     GError *error = NULL;
-    g_task_propagate_int(G_TASK(res), &error);
-    if(error) {
+    if(check_host_proc_dead(tdev, &error)) {
         fpi_device_verify_complete(dev, error);
         return;
     }
@@ -159,9 +157,4 @@ static void verify_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_da
     g_debug("Loading verify print tudor host record...");
     load_record(params->tdev, rec, verify_load_record_cb, params);
     g_object_unref(rec);
-}
-
-void fpi_device_tudor_verify(FpDevice *dev) {
-    //Open the device
-    open_device(FPI_DEVICE_TUDOR(dev), verify_open_cb, NULL);
 }

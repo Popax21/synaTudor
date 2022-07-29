@@ -132,14 +132,12 @@ static void enroll_start_acked_cb(GObject *src_obj, GAsyncResult *res, gpointer 
     recv_ipc_msg_no_timeout(tdev, enroll_recv_cb, user_data);
 }
 
-static void enroll_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
-    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
-    FpDevice *dev = FP_DEVICE(tdev);
+void fpi_device_tudor_enroll(FpDevice *dev) {
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
 
-    //Check for errors
+    //Check if host process is dead
     GError *error = NULL;
-    g_task_propagate_int(G_TASK(res), &error);
-    if(error) {
+    if(check_host_proc_dead(tdev, &error)) {
         fpi_device_enroll_complete(dev, NULL, error);
         return;
     }
@@ -202,9 +200,4 @@ static void enroll_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_da
         .finger = finger
     };
     send_acked_ipc_msg(tdev, tdev->send_msg, enroll_start_acked_cb, params);
-}
-
-void fpi_device_tudor_enroll(FpDevice *dev) {
-    //Open the device
-    open_device(FPI_DEVICE_TUDOR(dev), enroll_open_cb, NULL);
 }

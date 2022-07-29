@@ -265,7 +265,12 @@ static void delete_acked_cb(GObject *src_obj, GAsyncResult *res, gpointer user_d
 void fpi_device_tudor_delete(FpDevice *dev) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
 
-    if(!is_host_proc_alive(tdev)) return;
+    //Check if host process is dead
+    GError *error = NULL;
+    if(check_host_proc_dead(tdev, &error)) {
+        fpi_device_delete_complete(dev, error);
+        return;
+    }
 
     //Get the print and its GUID / finger
     FpPrint *print;
@@ -313,7 +318,12 @@ static void clear_storage_acked_cb(GObject *src_obj, GAsyncResult *res, gpointer
 void fpi_device_clear_storage(FpDevice *dev) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
 
-    if(!is_host_proc_alive(tdev)) return;
+    //Check if host process is dead
+    GError *error = NULL;
+    if(check_host_proc_dead(tdev, &error)) {
+        fpi_device_clear_storage_complete(dev, error);
+        return;
+    }
 
     //Tell the driver host
     tdev->send_msg->size = sizeof(enum ipc_msg_type);

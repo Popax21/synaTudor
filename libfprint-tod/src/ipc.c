@@ -23,13 +23,6 @@ int ipc_msg_buf_steal_fd(IPCMessageBuf *msg) {
     return fd;
 }
 
-static inline bool check_host_proc_dead(FpiDeviceTudor *tdev, GError **error) {
-    if(tdev->host_has_id && !tdev->host_dead) return false;
-    g_clear_error(error);
-    *error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Tudor host process died");
-    return true;
-}
-
 static gboolean sock_ready(GSocket *sock, GIOCondition cond, gpointer user_data) {
     GTask *task = G_TASK(user_data);
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(g_task_get_source_object(task));

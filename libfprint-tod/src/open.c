@@ -332,6 +332,22 @@ void fpi_device_tudor_probe(FpDevice *dev) {
     open_device(tdev, probe_open_cb, NULL);
 }
 
+static void dev_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
+    GTask *task = G_TASK(res);
+
+    //Check for errors
+    GError *error = NULL;
+    g_task_propagate_int(task, &error);
+    if(error) {
+        fpi_device_open_complete(FP_DEVICE(tdev), error);
+        return;
+    }
+
+    //Complete the action
+    fpi_device_open_complete(FP_DEVICE(tdev), NULL);
+}
+
 void fpi_device_tudor_open(FpDevice *dev) {
     //Close the USB device
     GError *error = NULL;
@@ -340,7 +356,8 @@ void fpi_device_tudor_open(FpDevice *dev) {
         return;
     }
 
-    fpi_device_open_complete(dev, NULL);
+    //Open the device
+    open_device(FPI_DEVICE_TUDOR(dev), dev_open_cb, NULL);
 }
 
 void fpi_device_tudor_close(FpDevice *dev) {
