@@ -1,6 +1,5 @@
 #include "data.h"
 #include "ipc.h"
-#include "open.h"
 #include "enroll.h"
 
 struct enroll_params {

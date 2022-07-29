@@ -1,6 +1,5 @@
 #include "data.h"
 #include "ipc.h"
-#include "open.h"
 #include "verify.h"
 
 struct verify_params {
