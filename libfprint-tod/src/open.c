@@ -1,4 +1,6 @@
 #include <sys/socket.h>
+#include <libusb.h>
+#include <gusb.h>
 #include <tudor/dbus-launcher.h>
 #include "open.h"
 #include "data.h"
@@ -231,7 +233,18 @@ void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer us
             return;
         }
 
-        g_assert_no_errno(tdev->usb_fd = dup(((int**) usb_dev->priv)[3][10 + 2 + 4 + 2 + 1 + 1])); //Cursed offset magic
+        //Get the USB device's private data 
+#if G_USB_CHECK_VERSION(0, 4, 0)
+        //0.4+ uses the glib private class data mechanism
+        void **dev_priv = (void**) g_type_instance_get_private(&usb_dev->parent_instance.g_type_instance, G_USB_TYPE_DEVICE);
+#else
+        void **dev_priv = usb_dev->priv;
+#endif
+
+        //Get the FD using cursed offset magic
+        libusb_device_handle *dev_handle = (libusb_device_handle*) (dev_priv[3]); //(GUsbDevicePrivate*)->handle
+        int dev_fd = ((int*) dev_handle)[10 + 2 + 4 + 2 + 1 + 1]; //(struct linux_device_handle_priv*)->fd
+        g_assert_no_errno(tdev->usb_fd = dup(dev_fd));
 
         if(!g_usb_device_close(usb_dev, &error)) {
             dispose_dev(tdev);
