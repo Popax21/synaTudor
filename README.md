@@ -49,7 +49,8 @@ For the libfprint module to be picked up and work, you'll need to have a
 seperate package which you can install instead of the regular libfprint one
 (e.g. Arch Linux: AUR `libfprint-tod-git`).
 
-**NOTE:** Currently libfprint-tod has a bug which can cause fprintd to lock up.
+~~**NOTE:** Currently libfprint-tod has a bug which can cause fprintd to lock up.
 It's recommended to use [this
 fork](https://gitlab.freedesktop.org/Popax21/libfprint/-/tree/tod) for now, at least
-until it's merged into the base repository.
+until it's merged into the base repository.~~
+The regular upstream libfprint-tod repository should work now
