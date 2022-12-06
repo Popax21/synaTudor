@@ -1,8 +1,10 @@
-#include <openssl/hmac.h>
+#include <assert.h>
+#include <openssl/evp.h>
 #include "crypt.h"
 
 struct hmac_hash {
-    HMAC_CTX *hmac_ctx;
+    EVP_MD_CTX *hmac_ctx;
+    EVP_PKEY *hmac_pkey;
 
     bool has_algo, is_completed, is_dirty;
 
@@ -55,7 +57,8 @@ static BOOL hmac_create_hash(struct crypt_hash_algorithm *algo, struct crypt_key
     memset(hash->outer_data, 0x5c, 64);
 
     //Create the hash context
-    LIBCRYPTO_ERR(hash->hmac_ctx = HMAC_CTX_new());
+    LIBCRYPTO_ERR(hash->hmac_ctx = EVP_MD_CTX_new());
+    hash->hmac_pkey = NULL;
 
     *out = hash;
     return TRUE;
@@ -75,8 +78,10 @@ static BOOL hmac_flush(struct hmac_hash *hash) {
         default: abort();
     }
 
-    LIBCRYPTO_ERR(HMAC_Init_ex(hash->hmac_ctx, hash->key_data, hash->key_size, evp, NULL));
-    if(hash->inner_size > 0) LIBCRYPTO_ERR(HMAC_Update(hash->hmac_ctx, hash->inner_data, hash->inner_size));
+    if(hash->hmac_pkey) EVP_PKEY_free(hash->hmac_pkey);
+    LIBCRYPTO_ERR(hash->hmac_pkey = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, NULL, (const unsigned char*) hash->key_data, hash->key_size));
+    LIBCRYPTO_ERR(EVP_DigestSignInit(hash->hmac_ctx, NULL, evp, NULL, hash->hmac_pkey));
+    if(hash->inner_size > 0) LIBCRYPTO_ERR(EVP_DigestSignUpdate(hash->hmac_ctx, hash->inner_data, hash->inner_size));
 
     hash->is_dirty = false;
     hash->is_completed = false;
@@ -96,9 +101,9 @@ static BOOL hmac_get_hash_param(struct crypt_hash_algorithm *algo, struct hmac_h
             if(!hmac_flush(hash)) return FALSE;
 
             if(data && *data_size >= hash->hash_size) {
-                unsigned int data_size = (unsigned int) hash->hash_size;
-                if(hash->outer_size > 0) LIBCRYPTO_ERR(HMAC_Update(hash->hmac_ctx, hash->outer_data, hash->outer_size));
-                LIBCRYPTO_ERR(HMAC_Final(hash->hmac_ctx, (unsigned char*) data, &data_size));
+                if(hash->outer_size > 0) LIBCRYPTO_ERR(EVP_DigestSignUpdate(hash->hmac_ctx, hash->outer_data, hash->outer_size));
+                LIBCRYPTO_ERR(EVP_DigestSignFinal(hash->hmac_ctx, (unsigned char*) data, data_size));
+                assert(*data_size == hash->hash_size);
                 hash->is_completed = TRUE;
             } else if(data) { winerr_set_code(ERROR_INSUFFICIENT_BUFFER); return FALSE; }
             *data_size = hash->hash_size;
@@ -172,12 +177,13 @@ static BOOL hmac_set_hash_param(struct crypt_hash_algorithm *algo, struct hmac_h
 
 static BOOL hmac_update_hash(struct crypt_hash_algorithm *algo, struct hmac_hash *hash, void *data, size_t data_size) {
     if(!hmac_flush(hash)) return FALSE;
-    LIBCRYPTO_ERR(HMAC_Update(hash->hmac_ctx, (const unsigned char*) data, data_size));
+    LIBCRYPTO_ERR(EVP_DigestSignUpdate(hash->hmac_ctx, (const unsigned char*) data, data_size));
     return TRUE;
 }
 
 static void hmac_destroy_hash(struct crypt_hash_algorithm *algo, struct hmac_hash *hash) {
-    HMAC_CTX_free(hash->hmac_ctx);
+    EVP_MD_CTX_free(hash->hmac_ctx);
+    if(hash->hmac_pkey) EVP_PKEY_free(hash->hmac_pkey);
     free(hash->key_data);
     free(hash->inner_data);
     free(hash->outer_data);

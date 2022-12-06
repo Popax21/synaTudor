@@ -91,7 +91,7 @@ if get_option('DBGWDF')
 endif
 
 thread_dep = dependency('threads')
-libcrypto_dep = dependency('libcrypto')
+libcrypto_dep = dependency('libcrypto', version: '>=3.0.0')
 libusb_dep = dependency('libusb-1.0')
 
 libtudor_inc = include_directories('inc')

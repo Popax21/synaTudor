@@ -1,5 +1,4 @@
 #include <openssl/evp.h>
-#include <openssl/hmac.h>
 #include "bcrypt.h"
 
 typedef struct {
@@ -477,27 +476,34 @@ __winfnc NTSTATUS BCryptDeriveKey(struct bcrypt_secret *secret, const char16_t *
         }
         if(!hmac_key) return WINERR_SET_CODE;
 
+        EVP_PKEY *hmac_pkey;
+        LIBCRYPTO_ERR(hmac_pkey = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, NULL, hmac_key, (int) hmac_key_size));
+
         //Calculate HMAC
-        HMAC_CTX *ctx;
-        LIBCRYPTO_ERR(ctx = HMAC_CTX_new());
-        LIBCRYPTO_ERR(HMAC_Init_ex(ctx, hmac_key, (int) hmac_key_size, hash_md, NULL));
+        EVP_MD_CTX *ctx;
+        LIBCRYPTO_ERR(ctx = EVP_MD_CTX_new());
+        LIBCRYPTO_ERR(EVP_DigestSignInit(ctx, NULL, hash_md, NULL, hmac_pkey));
 
         for(int i = 0; i < params->cBuffers; i++) {
             BCryptBuffer *buf = &params->pBuffers[i];
             if(buf->BufferType != KDF_SECRET_PREPEND) continue;
-            LIBCRYPTO_ERR(HMAC_Update(ctx, buf->pvBuffer, buf->cbBuffer));
+            LIBCRYPTO_ERR(EVP_DigestSignUpdate(ctx, buf->pvBuffer, buf->cbBuffer));
         }
 
-        LIBCRYPTO_ERR(HMAC_Update(ctx, secret->data, secret->data_size));
+        LIBCRYPTO_ERR(EVP_DigestSignUpdate(ctx, secret->data, secret->data_size));
 
         for(int i = 0; i < params->cBuffers; i++) {
             BCryptBuffer *buf = &params->pBuffers[i];
             if(buf->BufferType != KDF_SECRET_APPEND) continue;
-            LIBCRYPTO_ERR(HMAC_Update(ctx, buf->pvBuffer, buf->cbBuffer));
+            LIBCRYPTO_ERR(EVP_DigestSignUpdate(ctx, buf->pvBuffer, buf->cbBuffer));
         }
 
-        LIBCRYPTO_ERR(HMAC_Final(ctx, key, res_size));
-        HMAC_CTX_free(ctx);
+        size_t sz;
+        LIBCRYPTO_ERR(EVP_DigestSignFinal(ctx, key, &sz));
+        *res_size = (ULONG) sz;
+
+        EVP_MD_CTX_free(ctx);
+        EVP_PKEY_free(hmac_pkey);
 
         return STATUS_SUCCESS;
     } else if(strcmp(ckdf, "TLS_PRF") == 0) {
@@ -531,35 +537,41 @@ __winfnc NTSTATUS BCryptDeriveKey(struct bcrypt_secret *secret, const char16_t *
         void *prf_k = malloc(EVP_MD_size(hash_md));
         if(!prf_k) { free(prf_a); return winerr_from_errno(); }
 
-        HMAC_CTX *ctx;
-        LIBCRYPTO_ERR(ctx = HMAC_CTX_new());
+        EVP_MD_CTX *ctx;
+        LIBCRYPTO_ERR(ctx = EVP_MD_CTX_new());
+
+        EVP_PKEY *pkey;
+        LIBCRYPTO_ERR(pkey = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, NULL, secret->data, (int) secret->data_size));
 
         //Initialize A(1)
-        LIBCRYPTO_ERR(HMAC_Init_ex(ctx, secret->data, (int) secret->data_size, hash_md, NULL));
-        LIBCRYPTO_ERR(HMAC_Update(ctx, (const unsigned char*) prf_label, prf_label_len));
-        LIBCRYPTO_ERR(HMAC_Update(ctx, (const unsigned char*) prf_seed, (int) prf_seed_size));
-        LIBCRYPTO_ERR(HMAC_Final(ctx, (unsigned char*) prf_a, NULL));
+        size_t sig_sz = EVP_MD_size(hash_md);
+        LIBCRYPTO_ERR(EVP_DigestSignInit(ctx, NULL, hash_md, NULL, pkey));
+        LIBCRYPTO_ERR(EVP_DigestSignUpdate(ctx, prf_label, prf_label_len));
+        LIBCRYPTO_ERR(EVP_DigestSignUpdate(ctx, prf_seed, prf_seed_size));
+        LIBCRYPTO_ERR(EVP_DigestSignFinal(ctx, (unsigned char*) prf_a, &sig_sz));
 
         //Generate derived key
         for(ssize_t rem_size = key_size; rem_size > 0; rem_size -= EVP_MD_size(hash_md)) {
             //Generate key block
-            LIBCRYPTO_ERR(HMAC_Init_ex(ctx, secret->data, (int) secret->data_size, hash_md, NULL));
-            LIBCRYPTO_ERR(HMAC_Update(ctx, prf_a, EVP_MD_size(hash_md)));
-            LIBCRYPTO_ERR(HMAC_Update(ctx, (const unsigned char*) prf_label, prf_label_len));
-            LIBCRYPTO_ERR(HMAC_Update(ctx, (const unsigned char*) prf_seed, (int) prf_seed_size));
-            LIBCRYPTO_ERR(HMAC_Final(ctx, (unsigned char*) prf_k, NULL));
+            LIBCRYPTO_ERR(EVP_DigestSignInit(ctx, NULL, hash_md, NULL, pkey));
+            LIBCRYPTO_ERR(EVP_DigestSignUpdate(ctx, prf_a, EVP_MD_size(hash_md)));
+            LIBCRYPTO_ERR(EVP_DigestSignUpdate(ctx, prf_label, prf_label_len));
+            LIBCRYPTO_ERR(EVP_DigestSignUpdate(ctx, prf_seed, prf_seed_size));
+            LIBCRYPTO_ERR(EVP_DigestSignFinal(ctx, (unsigned char*) prf_k, &sig_sz));
 
             //Update A(i-1) -> A(i)
-            LIBCRYPTO_ERR(HMAC_Init_ex(ctx, secret->data, (int) secret->data_size, hash_md, NULL));
-            LIBCRYPTO_ERR(HMAC_Update(ctx, (const unsigned char*) prf_a, EVP_MD_size(hash_md)));
-            LIBCRYPTO_ERR(HMAC_Final(ctx, (unsigned char*) prf_a, NULL));
+            LIBCRYPTO_ERR(EVP_DigestSignInit(ctx, NULL, hash_md, NULL, pkey));
+            LIBCRYPTO_ERR(EVP_DigestSignUpdate(ctx, prf_a, EVP_MD_size(hash_md)));
+            LIBCRYPTO_ERR(EVP_DigestSignFinal(ctx, (unsigned char*) prf_a, &sig_sz));
 
             //Append to output key
             size_t copy_sz = (rem_size < EVP_MD_size(hash_md)) ? rem_size : EVP_MD_size(hash_md);
             memcpy(key, prf_k, copy_sz);
             key += copy_sz;
         }
-        HMAC_CTX_free(ctx);
+        EVP_MD_CTX_free(ctx);
+        EVP_PKEY_free(pkey);
+
         free(prf_a);
         free(prf_k);
 

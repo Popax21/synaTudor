@@ -1,6 +1,8 @@
+#include <assert.h>
+#include <openssl/evp.h>
+#include <openssl/core_names.h>
+#include <openssl/param_build.h>
 #include <openssl/ec.h>
-#include <openssl/ecdh.h>
-#include <openssl/ecdsa.h>
 #include "bcrypt.h"
 
 #define BCRYPT_ECDH_PUBLIC_P256_MAGIC 0x314b4345
@@ -16,43 +18,11 @@ typedef struct {
 #define P256_PARAM_SIZE 32
 typedef unsigned char p256_param_t[P256_PARAM_SIZE];
 
-static p256_param_t secp256r1_p  = { 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
-static p256_param_t secp256r1_a  = { 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfc };
-static p256_param_t secp256r1_b  = { 0x5a, 0xc6, 0x35, 0xd8, 0xaa, 0x3a, 0x93, 0xe7, 0xb3, 0xeb, 0xbd, 0x55, 0x76, 0x98, 0x86, 0xbc, 0x65, 0x1d, 0x06, 0xb0, 0xcc, 0x53, 0xb0, 0xf6, 0x3b, 0xce, 0x3c, 0x3e, 0x27, 0xd2, 0x60, 0x4b };
-static p256_param_t secp256r1_Gx = { 0x6b, 0x17, 0xd1, 0xf2, 0xe1, 0x2c, 0x42, 0x47, 0xf8, 0xbc, 0xe6, 0xe5, 0x63, 0xa4, 0x40, 0xf2, 0x77, 0x03, 0x7d, 0x81, 0x2d, 0xeb, 0x33, 0xa0, 0xf4, 0xa1, 0x39, 0x45, 0xd8, 0x98, 0xc2, 0x96 };
-static p256_param_t secp256r1_Gy = { 0x4f, 0xe3, 0x42, 0xe2, 0xfe, 0x1a, 0x7f, 0x9b, 0x8e, 0xe7, 0xeb, 0x4a, 0x7c, 0x0f, 0x9e, 0x16, 0x2b, 0xce, 0x33, 0x57, 0x6b, 0x31, 0x5e, 0xce, 0xcb, 0xb6, 0x40, 0x68, 0x37, 0xbf, 0x51, 0xf5 };
-static p256_param_t secp256r1_n  = { 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x51 };
+#define P256_CURVE_NID NID_X9_62_prime256v1
 
 static const EC_GROUP *p256_get_curve() {
     static EC_GROUP *p256_curve = NULL;
-    if(p256_curve) return p256_curve;
-
-    //Create the curve (secp256r1)
-    BIGNUM *p256_p, *p256_a, *p256_b;
-    LIBCRYPTO_ERR(p256_p  = BN_bin2bn(secp256r1_p,  sizeof(secp256r1_p),  NULL));
-    LIBCRYPTO_ERR(p256_a  = BN_bin2bn(secp256r1_a,  sizeof(secp256r1_a),  NULL));
-    LIBCRYPTO_ERR(p256_b  = BN_bin2bn(secp256r1_b,  sizeof(secp256r1_b),  NULL));
-    LIBCRYPTO_ERR(p256_curve = EC_GROUP_new_curve_GFp(p256_p, p256_a, p256_b, NULL));
-    BN_free(p256_p);
-    BN_free(p256_a);
-    BN_free(p256_b);
-
-    //Set the generator point
-    BIGNUM *p256_Gx, *p256_Gy, *p256_n;
-    LIBCRYPTO_ERR(p256_Gx = BN_bin2bn(secp256r1_Gx, sizeof(secp256r1_Gx), NULL));
-    LIBCRYPTO_ERR(p256_Gy = BN_bin2bn(secp256r1_Gy, sizeof(secp256r1_Gy), NULL));
-    LIBCRYPTO_ERR(p256_n  = BN_bin2bn(secp256r1_n,  sizeof(secp256r1_n),  NULL));
-
-    EC_POINT *gen_point;
-    LIBCRYPTO_ERR(gen_point = EC_POINT_new(p256_curve));
-    LIBCRYPTO_ERR(EC_POINT_set_affine_coordinates_GFp(p256_curve, gen_point, p256_Gx, p256_Gy, NULL));
-    LIBCRYPTO_ERR(EC_GROUP_set_generator(p256_curve, gen_point, p256_n, NULL));
-    EC_POINT_free(gen_point);
-
-    BN_free(p256_Gx);
-    BN_free(p256_Gy);
-    BN_free(p256_n);
-
+    if(!p256_curve) LIBCRYPTO_ERR(p256_curve = EC_GROUP_new_by_curve_name(P256_CURVE_NID));
     return p256_curve;
 }
 
@@ -63,7 +33,7 @@ struct bcrypt_ecc_algorithm {
 
 struct p256_key {
     bool has_public, has_private;
-    EC_KEY *ec_key;
+    EVP_PKEY *ec_key;
     p256_param_t pub_x, pub_y;
     p256_param_t priv_d;
 };
@@ -74,8 +44,7 @@ static NTSTATUS p256_create_key(struct bcrypt_ecc_algorithm *algo, void **out) {
     if(!key) return WINERR_SET_CODE;
     key->has_public = key->has_private = false;
 
-    LIBCRYPTO_ERR(key->ec_key = EC_KEY_new());
-    LIBCRYPTO_ERR(EC_KEY_set_group(key->ec_key, p256_get_curve()));
+    LIBCRYPTO_ERR(key->ec_key = EVP_PKEY_new());
 
     *out = key;
     return STATUS_SUCCESS;
@@ -85,99 +54,128 @@ static NTSTATUS p256_generate_key_pair(struct bcrypt_ecc_algorithm *algo, struct
     if(key_size != 256) return WINERR_SET_CODE;
 
     //Generate key
-    LIBCRYPTO_ERR(EC_KEY_generate_key(key->ec_key));
+    EVP_PKEY_CTX *keygen_ctx;
+    LIBCRYPTO_ERR(keygen_ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL));
+    LIBCRYPTO_ERR(EVP_PKEY_keygen_init(keygen_ctx));
+    LIBCRYPTO_ERR(EVP_PKEY_CTX_set_ec_paramgen_curve_nid(keygen_ctx, P256_CURVE_NID));
+    LIBCRYPTO_ERR(EVP_PKEY_keygen(keygen_ctx, &key->ec_key));
+    EVP_PKEY_CTX_free(keygen_ctx);
 
     //Store key parameters
-    const EC_POINT *pub_point = EC_KEY_get0_public_key(key->ec_key);
-    BIGNUM *pub_x, *pub_y;
-    LIBCRYPTO_ERR(pub_x = BN_new());
-    LIBCRYPTO_ERR(pub_y = BN_new());
-    LIBCRYPTO_ERR(EC_POINT_get_affine_coordinates_GFp(p256_get_curve(), pub_point, pub_x, pub_y, NULL));
+    BIGNUM *pub_x = NULL, *pub_y = NULL;
+    LIBCRYPTO_ERR(EVP_PKEY_get_bn_param(key->ec_key, OSSL_PKEY_PARAM_EC_PUB_X, &pub_x));
+    LIBCRYPTO_ERR(EVP_PKEY_get_bn_param(key->ec_key, OSSL_PKEY_PARAM_EC_PUB_Y, &pub_y));
     LIBCRYPTO_ERR(BN_bn2bin(pub_x, key->pub_x));
     LIBCRYPTO_ERR(BN_bn2bin(pub_y, key->pub_y));
     BN_free(pub_x);
     BN_free(pub_y);
 
-    const BIGNUM *priv_key = EC_KEY_get0_private_key(key->ec_key);
+    BIGNUM *priv_key = NULL;
+    LIBCRYPTO_ERR(EVP_PKEY_get_bn_param(key->ec_key, OSSL_PKEY_PARAM_PRIV_KEY, &priv_key));
     LIBCRYPTO_ERR(BN_bn2bin(priv_key, key->priv_d));
+    BN_free(priv_key);
 
     key->has_public = key->has_private = true;
     return STATUS_SUCCESS;
 }
 
 static NTSTATUS p256_import_key(struct bcrypt_ecc_algorithm *algo, struct p256_key *key, const char *import_type, void *buf, size_t buf_size) {
+    NTSTATUS status;
     BCRYPT_ECCKEY_BLOB *ecc_blob = (BCRYPT_ECCKEY_BLOB*) buf;
     p256_param_t *key_params = (p256_param_t*) (ecc_blob + 1);
 
+    BIGNUM *pub_x, *pub_y, *priv_d;
     if(strcmp(import_type, "ECCPUBLICBLOB") == 0) {
         if(buf_size < sizeof(BCRYPT_ECCKEY_BLOB) + 2*P256_PARAM_SIZE) return STATUS_BUFFER_TOO_SMALL;
         if(ecc_blob->dwMagic != algo->pub_magic || ecc_blob->cbKey != P256_PARAM_SIZE) return WINERR_SET_CODE;
 
-        memcpy(key->pub_x, key_params[0], P256_PARAM_SIZE);
-        memcpy(key->pub_y, key_params[1], P256_PARAM_SIZE);
-
-        BIGNUM *pub_x, *pub_y;
-        LIBCRYPTO_ERR(pub_x = BN_bin2bn(key->pub_x, P256_PARAM_SIZE, NULL));
-        LIBCRYPTO_ERR(pub_y = BN_bin2bn(key->pub_y, P256_PARAM_SIZE, NULL));
-
-        EC_POINT *pub_point;
-        LIBCRYPTO_ERR(pub_point = EC_POINT_new(p256_get_curve()));
-        if(!EC_POINT_set_affine_coordinates_GFp(p256_get_curve(), pub_point, pub_x, pub_y, NULL)) {
-            key->has_public = key->has_private = false;
-            return WINERR_SET_CODE;
-        }
-        LIBCRYPTO_ERR(EC_KEY_set_public_key(key->ec_key, pub_point));
-        EC_POINT_free(pub_point);
-
-        BN_free(pub_x);
-        BN_free(pub_y);
-
-        key->has_public = true;
-        key->has_private = false;
-
-        return STATUS_SUCCESS;
+        //Parse public key parameters
+        LIBCRYPTO_ERR(pub_x = BN_bin2bn(key_params[0], P256_PARAM_SIZE, NULL));
+        LIBCRYPTO_ERR(pub_y = BN_bin2bn(key_params[1], P256_PARAM_SIZE, NULL));
+        priv_d = NULL;
     } else if(strcmp(import_type, "ECCPRIVATEBLOB") == 0) {
         if(buf_size < sizeof(BCRYPT_ECCKEY_BLOB) + 3*P256_PARAM_SIZE) return STATUS_BUFFER_TOO_SMALL;
         if(ecc_blob->dwMagic != algo->priv_magic || ecc_blob->cbKey != P256_PARAM_SIZE) return WINERR_SET_CODE;
 
-        memcpy(key->pub_x, key_params[0], P256_PARAM_SIZE);
-        memcpy(key->pub_y, key_params[1], P256_PARAM_SIZE);
-        memcpy(key->priv_d, key_params[2], P256_PARAM_SIZE);
-
-
-        BIGNUM *pub_x, *pub_y, *priv_d;
-        LIBCRYPTO_ERR(pub_x = BN_bin2bn(key->pub_x, P256_PARAM_SIZE, NULL));
-        LIBCRYPTO_ERR(pub_y = BN_bin2bn(key->pub_y, P256_PARAM_SIZE, NULL));
-        LIBCRYPTO_ERR(priv_d = BN_bin2bn(key->priv_d, P256_PARAM_SIZE, NULL));
+        //Parse private key parameters
+        LIBCRYPTO_ERR(pub_x = BN_bin2bn(key_params[0], P256_PARAM_SIZE, NULL));
+        LIBCRYPTO_ERR(pub_y = BN_bin2bn(key_params[1], P256_PARAM_SIZE, NULL));
+        LIBCRYPTO_ERR(priv_d = BN_bin2bn(key_params[2], P256_PARAM_SIZE, NULL));
     
-        EC_POINT *pub_point;
-        LIBCRYPTO_ERR(pub_point = EC_POINT_new(p256_get_curve()));
+        status = STATUS_SUCCESS;
         if(BN_is_zero(pub_x) && BN_is_zero(pub_y)) {
+            //Derive public key
+            EC_POINT *pub_point;
+            LIBCRYPTO_ERR(pub_point = EC_POINT_new(p256_get_curve()));
             LIBCRYPTO_ERR(EC_POINT_mul(p256_get_curve(), pub_point, priv_d, NULL, NULL, NULL));
-            LIBCRYPTO_ERR(EC_POINT_get_affine_coordinates_GFp(p256_get_curve(), pub_point, pub_x, pub_y, NULL));
-        } else {
-            if(!EC_POINT_set_affine_coordinates_GFp(p256_get_curve(), pub_point, pub_x, pub_y, NULL)) {
-                key->has_public = key->has_private = false;
-                return WINERR_SET_CODE;
-            }
+            LIBCRYPTO_ERR(EC_POINT_get_affine_coordinates(p256_get_curve(), pub_point, pub_x, pub_y, NULL));
+            EC_POINT_free(pub_point);
         }
-        LIBCRYPTO_ERR(EC_KEY_set_public_key(key->ec_key, pub_point));
+    } else return WINERR_SET_CODE;
+
+    //Create the public key point and encode it
+    EC_POINT *pub_point;
+    LIBCRYPTO_ERR(pub_point = EC_POINT_new(p256_get_curve()));
+    if(!EC_POINT_set_affine_coordinates(p256_get_curve(), pub_point, pub_x, pub_y, NULL)) {
         EC_POINT_free(pub_point);
+        status = WINERR_SET_CODE;
+        goto err;
+    }
 
-        if(!EC_KEY_set_private_key(key->ec_key, priv_d)) {
-            key->has_public = key->has_private = false;
-            return WINERR_SET_CODE;
-        }
+    if(EC_POINT_is_on_curve(p256_get_curve(), pub_point, NULL) <= 0) {
+        EC_POINT_free(pub_point);
+        status = WINERR_SET_CODE;
+        goto err;
+    }
 
-        BN_free(pub_x);
-        BN_free(pub_y);
-        BN_free(priv_d);
+    size_t pub_buf_sz;
+    LIBCRYPTO_ERR(pub_buf_sz = EC_POINT_point2oct(p256_get_curve(), pub_point, POINT_CONVERSION_UNCOMPRESSED, NULL, 0, NULL));
+    unsigned char *pub_buf = malloc(pub_buf_sz);
+    if(!pub_buf) abort_perror("Failed to allocate EC public key buffer");
+    LIBCRYPTO_ERR(EC_POINT_point2oct(p256_get_curve(), pub_point, POINT_CONVERSION_UNCOMPRESSED, pub_buf, pub_buf_sz, NULL));
+
+    EC_POINT_free(pub_point);
+
+    //Build parameters
+    OSSL_PARAM_BLD *bld;
+    LIBCRYPTO_ERR(bld = OSSL_PARAM_BLD_new());
+
+    LIBCRYPTO_ERR(OSSL_PARAM_BLD_push_utf8_ptr(bld, OSSL_PKEY_PARAM_GROUP_NAME, SN_X9_62_prime256v1, 0));
+    LIBCRYPTO_ERR(OSSL_PARAM_BLD_push_octet_string(bld, OSSL_PKEY_PARAM_PUB_KEY, pub_buf, pub_buf_sz));
+    LIBCRYPTO_ERR(OSSL_PARAM_BLD_push_utf8_ptr(bld, OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY, OSSL_PKEY_EC_POINT_CONVERSION_FORMAT_UNCOMPRESSED, 0));
+    if(priv_d) LIBCRYPTO_ERR(OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_PRIV_KEY, priv_d));
+
+    OSSL_PARAM *params = OSSL_PARAM_BLD_to_param(bld);
+    free(pub_buf);
+
+    //Create the key from the parameters
+    EVP_PKEY_CTX *ctx;
+    LIBCRYPTO_ERR(ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL));
+    LIBCRYPTO_ERR(EVP_PKEY_fromdata_init(ctx));
+
+    int r;
+    LIBCRYPTO_ERR_NEG(r = EVP_PKEY_fromdata(ctx, &key->ec_key, priv_d ? EVP_PKEY_KEYPAIR : EVP_PKEY_PUBLIC_KEY, params));
+    status = (r > 0) ? STATUS_SUCCESS : WINERR_SET_CODE;
+
+    EVP_PKEY_CTX_free(ctx);
+    OSSL_PARAM_free(params);
+
+    err:;
+    if(status == STATUS_SUCCESS) {
+        //Store key parameters
+        LIBCRYPTO_ERR(BN_bn2binpad(pub_x, key->pub_x, P256_PARAM_SIZE));
+        LIBCRYPTO_ERR(BN_bn2binpad(pub_x, key->pub_y, P256_PARAM_SIZE));
+        if(priv_d) LIBCRYPTO_ERR(BN_bn2binpad(priv_d, key->priv_d, P256_PARAM_SIZE));
 
         key->has_public = true;
-        key->has_private = true;
+        key->has_private = priv_d != NULL;
+    } else key->has_public = key->has_private = false;
 
-        return STATUS_SUCCESS;
-    } else return WINERR_SET_CODE;
+    BN_free(pub_x);
+    BN_free(pub_y);
+    if(priv_d) BN_free(priv_d);
+
+    return status;
 }
 
 static NTSTATUS p256_export_key(struct bcrypt_ecc_algorithm *algo, struct p256_key *key, const char *export_type, void *buf, size_t *buf_size) {
@@ -209,7 +207,7 @@ static NTSTATUS p256_export_key(struct bcrypt_ecc_algorithm *algo, struct p256_k
 }
 
 static void p256_destroy_key(struct bcrypt_ecc_algorithm *algo, struct p256_key *key) {
-    EC_KEY_free(key->ec_key);
+    EVP_PKEY_free(key->ec_key);
     free(key);
 }
 
@@ -217,9 +215,25 @@ static NTSTATUS p256_ecdsa_sign_hash(struct bcrypt_ecc_algorithm *algo, struct p
     if(!key->has_private) return WINERR_SET_CODE;
 
     if(sig && *sig_size >= 2*P256_PARAM_SIZE) {
+        //Setup a signing context
+        EVP_PKEY_CTX *ctx;
+        LIBCRYPTO_ERR(ctx = EVP_PKEY_CTX_new(key->ec_key, NULL));
+        LIBCRYPTO_ERR(EVP_PKEY_sign_init(ctx));
+
         //Sign the hash
+        size_t buf_size;
+        LIBCRYPTO_ERR(EVP_PKEY_sign(ctx, NULL, &buf_size, hash, hash_size));
+
+        unsigned char *buf = malloc(buf_size), *bptr = buf;
+        if(!buf) abort_perror("Failed to allocate ECDSA signature buffer");
+        LIBCRYPTO_ERR(EVP_PKEY_sign(ctx, buf, &buf_size, hash, hash_size));
+
+        EVP_PKEY_CTX_free(ctx);
+
+        //Decode the signature
         ECDSA_SIG *ec_sig;
-        LIBCRYPTO_ERR(ec_sig = ECDSA_do_sign(hash, hash_size, key->ec_key));
+        LIBCRYPTO_ERR(ec_sig = d2i_ECDSA_SIG(NULL, (const unsigned char**) &bptr, buf_size));
+        free(buf);
 
         //Store output 
         const BIGNUM *r = ECDSA_SIG_get0_r(ec_sig), *s = ECDSA_SIG_get0_s(ec_sig);
@@ -250,11 +264,24 @@ static NTSTATUS p256_ecdsa_verify_hash(struct bcrypt_ecc_algorithm *algo, struct
     LIBCRYPTO_ERR(BN_bin2bn(params[1], P256_PARAM_SIZE, sig_s));
     LIBCRYPTO_ERR(ECDSA_SIG_set0(ec_sig, sig_r, sig_s));
 
-    //Verify the signature
-    int ret;
-    LIBCRYPTO_ERR_NEG(ret = ECDSA_do_verify((const unsigned char*) hash, (int) hash_size, ec_sig, key->ec_key));
+    //Encode the signature
+    int buf_size;
+    unsigned char *buf = NULL;
+    LIBCRYPTO_ERR(buf_size = i2d_ECDSA_SIG(ec_sig, &buf));
 
     ECDSA_SIG_free(ec_sig);
+
+    //Create a verification context and verify the signature
+    EVP_PKEY_CTX *ctx;
+    LIBCRYPTO_ERR(ctx = EVP_PKEY_CTX_new(key->ec_key, NULL));
+    LIBCRYPTO_ERR(EVP_PKEY_verify_init(ctx));
+
+    int ret;
+    LIBCRYPTO_ERR_NEG(ret = EVP_PKEY_verify(ctx, buf, buf_size, (const unsigned char*) hash, (int) hash_size));
+
+    EVP_PKEY_CTX_free(ctx);
+    OPENSSL_free(buf);
+
     return ret ? STATUS_SUCCESS : STATUS_INVALID_SIGNATURE;
 }
 
@@ -266,8 +293,18 @@ static NTSTATUS p256_ecdh_exchange_secret(struct bcrypt_ecc_algorithm *algo, str
     secret->data_size = P256_PARAM_SIZE;
     if(!secret->data) return winerr_from_errno();
 
+    //Create a derivation context
+    EVP_PKEY_CTX *ctx;
+    LIBCRYPTO_ERR(ctx = EVP_PKEY_CTX_new(priv_key->ec_key, NULL));
+    LIBCRYPTO_ERR(EVP_PKEY_derive_init(ctx));
+    LIBCRYPTO_ERR(EVP_PKEY_derive_set_peer(ctx, pub_key->ec_key));
+
     //Compute secret
-    LIBCRYPTO_ERR(ECDH_compute_key(secret->data, P256_PARAM_SIZE, EC_KEY_get0_public_key(pub_key->ec_key), priv_key->ec_key, NULL));
+    LIBCRYPTO_ERR(EVP_PKEY_derive(ctx, NULL, &secret->data_size));
+    assert(secret->data_size == P256_PARAM_SIZE);
+    LIBCRYPTO_ERR(EVP_PKEY_derive(ctx, secret->data, &secret->data_size));
+
+    EVP_PKEY_CTX_free(ctx);
 
     return STATUS_SUCCESS;
 }

@@ -12,7 +12,7 @@ static inline void __libcrypto_error(const char *expr) {
     abort();
 }
 
-#define LIBCRYPTO_ERR(expr) { if(!(expr)) __libcrypto_error(#expr); }
+#define LIBCRYPTO_ERR(expr) { if((expr) <= 0) __libcrypto_error(#expr); }
 #define LIBCRYPTO_ERR_NEG(expr) { if((expr) < 0) __libcrypto_error(#expr); }
 
 #endif
