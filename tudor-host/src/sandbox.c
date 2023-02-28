@@ -49,7 +49,7 @@ ssize_t readlink(const char *path, char *buf, size_t size) {
     }
 
     //Return a string immetating a device with the specific bus / address
-    return snprintf(buf, size, "/dev/bus/usb/%hhu/%hhu", sbox_usb_fd, sbox_usb_addr);
+    return snprintf(buf, size, "/dev/bus/usb/%hhu/%hhu", sbox_usb_bus, sbox_usb_addr);
 }
 
 static void write_to(const char *fname, const char *cnts) {
