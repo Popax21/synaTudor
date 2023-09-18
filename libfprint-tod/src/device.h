@@ -22,12 +22,14 @@ struct _FpiDeviceTudor {
     GSocket *ipc_socket;
     GCancellable *ipc_cancel;
     IPCMessageBuf *send_msg;
+
+    gchar *pdata_sensor_name;
     GTask *close_task;
+    GSource *close_timeout_src;
 
     guint cancel_handler_id;
     bool has_canceled;
 
-    gchar *sensor_name;
     GPtrArray *db_records;
 };
 

@@ -31,7 +31,7 @@ static void suspend_dev(FpiDeviceTudor *tdev, gint sleep_inhib) {
         g_info("Closing tudor device on suspend... (host ID %d)", tdev->host_id);
 
         //Close the device
-        close_device(tdev, suspend_close_cb, GINT_TO_POINTER(sleep_inhib));
+        close_device(tdev, false, suspend_close_cb, GINT_TO_POINTER(sleep_inhib));
     } else {
         close_sleep_inhibitor(sleep_inhib);
     }

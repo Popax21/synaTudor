@@ -14,6 +14,7 @@ typedef struct _IPCMessageBuf {
 
         enum ipc_msg_type type;
         struct ipc_msg_init init;
+        struct ipc_msg_resp_probe resp_probe;
 
         struct ipc_msg_load_pdata load_pdata;
         struct ipc_msg_resp_load_pdata resp_load_pdata;
@@ -49,8 +50,10 @@ static inline bool check_ipc_msg_size(IPCMessageBuf *msg, size_t min_size, GErro
 
 bool open_dbus_con(FpiDeviceTudor *tdev, GError **error);
 
-bool start_host_process(FpiDeviceTudor *tdev, int *sock_fd, GError **error);
+bool start_host_process(FpiDeviceTudor *tdev, guint8 usb_bus, guint8 usb_addr, int *sock_fd, GError **error);
 bool kill_host_process(FpiDeviceTudor *tdev, GError **error);
+bool adopt_host_process(FpiDeviceTudor *tdev, guint8 usb_bus, guint8 usb_addr, int *sock_fd, GError **error);
+bool orphan_host_process(FpiDeviceTudor *tdev, GError **error);
 
 static inline bool check_host_proc_dead(FpiDeviceTudor *tdev, GError **error) {
     if(tdev->host_has_id && !tdev->host_dead) return false;

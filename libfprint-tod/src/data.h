@@ -14,8 +14,8 @@ struct _TudorRecord {
 };
 G_DECLARE_FINAL_TYPE(TudorRecord, tudor_record, TUDOR, RECORD, GObject);
 
-bool load_pdata(FpiDeviceTudor *tdev, GByteArray **pdata, GError **error);
-bool store_pdata(FpiDeviceTudor *tdev, GByteArray *pdata, GError **error);
+bool load_pdata(FpiDeviceTudor *tdev, const gchar *sensor_name, GByteArray **pdata, GError **error);
+bool store_pdata(FpiDeviceTudor *tdev, const gchar *sensor_name, GByteArray *pdata, GError **error);
 
 TudorRecord *new_record(RECGUID guid, enum tudor_finger finger, GBytes *data, FpPrint *print);
 void load_record(FpiDeviceTudor *tdev, TudorRecord *rec, GAsyncReadyCallback cb, gpointer user_data);

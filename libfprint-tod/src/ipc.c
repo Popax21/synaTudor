@@ -111,7 +111,7 @@ static void recv_ipc_msg_no_timeout_cb(GObject *src_obj, GAsyncResult *res, gpoi
     GTask *task = G_TASK(user_data);
 
     //Reset timeout
-    g_socket_set_timeout(tdev->ipc_socket, 0);
+    g_socket_set_timeout(tdev->ipc_socket, IPC_TIMEOUT_SECS);
 
     //Forward result
     GError *error = NULL;
@@ -229,14 +229,14 @@ bool open_dbus_con(FpiDeviceTudor *tdev, GError **error) {
     return true;
 }
 
-bool start_host_process(FpiDeviceTudor *tdev, int *sock_fd, GError **error) {
+bool start_host_process(FpiDeviceTudor *tdev, guint8 usb_bus, guint8 usb_addr, int *sock_fd, GError **error) {
     g_assert_false(tdev->host_has_id);
 
     //Request the host launcher service to launch a host process
     GUnixFDList *fds;
     GVariant *rets = g_dbus_connection_call_with_unix_fd_list_sync(tdev->dbus_con,
         TUDOR_HOST_LAUNCHER_SERVICE, TUDOR_HOST_LAUNCHER_OBJ, TUDOR_HOST_LAUNCHER_INTERF,
-        TUDOR_HOST_LAUNCHER_LAUNCH_METHOD, NULL, G_VARIANT_TYPE("(uh)"), G_DBUS_CALL_FLAGS_NONE,
+        TUDOR_HOST_LAUNCHER_LAUNCH_METHOD, g_variant_new("((yy))", usb_bus, usb_addr), G_VARIANT_TYPE("(uh)"), G_DBUS_CALL_FLAGS_NONE,
         G_MAXINT,
         NULL, &fds,
         NULL, error
@@ -260,7 +260,6 @@ bool start_host_process(FpiDeviceTudor *tdev, int *sock_fd, GError **error) {
 
 bool kill_host_process(FpiDeviceTudor *tdev, GError **error) {
     g_assert_true(tdev->host_has_id);
-    tdev->host_has_id = false;
 
     //Request the host launcher service to kill the host process
     GVariant *rets = g_dbus_connection_call_sync(tdev->dbus_con,
@@ -271,5 +270,56 @@ bool kill_host_process(FpiDeviceTudor *tdev, GError **error) {
     if(!rets) return false;
     g_variant_unref(rets);
 
+    tdev->host_has_id = false;
+    return true;
+}
+
+bool adopt_host_process(FpiDeviceTudor *tdev, guint8 usb_bus, guint8 usb_addr, int *sock_fd, GError **error) {
+    g_assert_false(tdev->host_has_id);
+
+    //Request the host launcher service to adopt a host process
+    GUnixFDList *fds;
+    GVariant *rets = g_dbus_connection_call_with_unix_fd_list_sync(tdev->dbus_con,
+        TUDOR_HOST_LAUNCHER_SERVICE, TUDOR_HOST_LAUNCHER_OBJ, TUDOR_HOST_LAUNCHER_INTERF,
+        TUDOR_HOST_LAUNCHER_ADOPT_METHOD, g_variant_new("((yy))", usb_bus, usb_addr), G_VARIANT_TYPE("(uh)"), G_DBUS_CALL_FLAGS_NONE,
+        G_MAXINT,
+        NULL, &fds,
+        NULL, error
+    );
+    if(!rets) return false;
+
+    //Get the result host ID and socket FD index
+    int fd_idx;
+    g_variant_get(rets, "(uh)", &tdev->host_id, &fd_idx);
+    g_variant_unref(rets);
+
+    if(tdev->host_id == 0) {
+        *error = NULL;
+        return false;
+    }
+
+    //Get the socket FD from the list
+    *sock_fd = g_unix_fd_list_get(fds, fd_idx, error);
+    g_object_unref(fds);
+    if(*sock_fd < 0) return false;
+
+    tdev->host_has_id = true;
+    tdev->host_dead = false;
+    return true;
+}
+
+bool orphan_host_process(FpiDeviceTudor *tdev, GError **error) {
+    g_assert_true(tdev->host_has_id);
+
+    //Tell the host launcher service to orphan the process
+    GVariant *rets = g_dbus_connection_call_sync(tdev->dbus_con,
+        TUDOR_HOST_LAUNCHER_SERVICE, TUDOR_HOST_LAUNCHER_OBJ, TUDOR_HOST_LAUNCHER_INTERF,
+        TUDOR_HOST_LAUNCHER_ORPHAN_METHOD, g_variant_new("(u)", tdev->host_id), NULL, G_DBUS_CALL_FLAGS_NONE,
+        G_MAXINT, NULL, error
+    );
+    if(!rets) return false;
+    g_variant_unref(rets);
+
+    tdev->host_has_id = false;
     return true;
 }

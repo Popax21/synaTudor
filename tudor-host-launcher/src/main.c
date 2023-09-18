@@ -9,7 +9,12 @@ GDBusConnection *dbus_con;
 static GDBusInterfaceInfo launcher_interf = {
     .ref_count = -1,
     .name = TUDOR_HOST_LAUNCHER_INTERF,
-    .methods = (GDBusMethodInfo*[]) { &launcher_launch_method, &launcher_kill_method, &launcher_load_pdata_method, &launcher_store_pdata_method, NULL },
+    .methods = (GDBusMethodInfo*[]) {
+        &launcher_launch_method, &launcher_kill_method,
+        &launcher_adopt_method, &launcher_orphan_method,
+        &launcher_load_pdata_method, &launcher_store_pdata_method,
+        NULL
+    },
     .signals = (GDBusSignalInfo*[]) { &launcher_host_died_signal, NULL },
     .properties = (GDBusPropertyInfo*[]) { NULL },
     .annotations = (GDBusAnnotationInfo*[]) { NULL }
@@ -21,6 +26,10 @@ static void launch_method_call(GDBusConnection *con, const gchar *sender, const 
         launch_host_call(invoc, params);
     } else if(strcmp(method_name, TUDOR_HOST_LAUNCHER_KILL_METHOD) == 0) {
         kill_host_call(invoc, params);
+    } else if(strcmp(method_name, TUDOR_HOST_LAUNCHER_ADOPT_METHOD) == 0) {
+        adopt_host_call(invoc, params);
+    } else if(strcmp(method_name, TUDOR_HOST_LAUNCHER_ORPHAN_METHOD) == 0) {
+        orphan_host_call(invoc, params);
     } else if(strcmp(method_name, TUDOR_HOST_LAUNCHER_LOAD_PAIRING_DATA_METHOD) == 0) {
         load_pdata_call(invoc, params);
     } else if(strcmp(method_name, TUDOR_HOST_LAUNCHER_STORE_PAIRING_DATA_METHOD) == 0) {

@@ -21,13 +21,19 @@ static void dispose_dev(FpiDeviceTudor *tdev) {
         tdev->host_sleep_inhib = -1;
     }
 
+    //Cancel pending timeouts
+    if(tdev->close_timeout_src){
+        g_source_destroy(tdev->close_timeout_src);
+        tdev->close_timeout_src = NULL;
+    }
+
     //Clear DB mirror array
     g_ptr_array_set_size(tdev->db_records, 0);
 
     //Free object references
     g_clear_object(&tdev->ipc_cancel);
     g_clear_object(&tdev->ipc_socket);
-    g_clear_pointer(&tdev->sensor_name, g_free);
+    g_clear_pointer(&tdev->pdata_sensor_name, g_free);
     g_clear_object(&tdev->close_task);
 
     g_debug("Disposed tudor device resources");
@@ -77,7 +83,7 @@ void register_host_process_monitor(FpiDeviceTudor *tdev) {
     );
 }
 
-static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
+static void init_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
     GTask *mtask = G_TASK(res);
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
     GTask *task = G_TASK(user_data);
@@ -90,16 +96,19 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
     //Handle message
     switch(msg->type) {
         case IPC_MSG_LOAD_PDATA: {
+            if(!check_ipc_msg_size(msg, sizeof(msg->load_pdata), &error)) goto error;
+
             //Check sensor name
-            if(!tdev->sensor_name) tdev->sensor_name = g_strndup(msg->load_pdata.sensor_name, sizeof(msg->load_pdata.sensor_name));
-            else if(strcmp(tdev->sensor_name, msg->load_pdata.sensor_name) != 0) {
-                error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Disallowed load of sensor pairing data '%.*s'", (int) sizeof(msg->load_pdata.sensor_name), msg->load_pdata.sensor_name);
+            msg->load_pdata.sensor_name[IPC_SENSOR_NAME_SIZE] = 0;
+            if(!tdev->pdata_sensor_name) tdev->pdata_sensor_name = g_strdup(msg->load_pdata.sensor_name);
+            else if(strcmp(tdev->pdata_sensor_name, msg->load_pdata.sensor_name) != 0) {
+                error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Disallowed load of sensor pairing data '%s'", msg->load_pdata.sensor_name);
                 goto error;
             }
 
             //Load pairing data
             GByteArray *pdata = NULL;
-            if(!load_pdata(tdev, &pdata, &error)) goto error;
+            if(!load_pdata(tdev, tdev->pdata_sensor_name, &pdata, &error)) goto error;
 
             if(pdata && pdata->len > IPC_MAX_PDATA_SIZE) {
                 g_error("Stored Tudor pairing data length exceeds maximum! [%d > %d]", pdata->len, IPC_MAX_PDATA_SIZE);
@@ -120,13 +129,16 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
             if(!send_ipc_msg(tdev, tdev->send_msg, &error)) goto error;
 
             //Receive further messages
-            recv_ipc_msg(tdev, open_recv_cb, task);
+            recv_ipc_msg(tdev, init_recv_cb, task);
         } break;
         case IPC_MSG_STORE_PDATA: {
+            if(!check_ipc_msg_size(msg, sizeof(msg->store_pdata), &error)) goto error;
+
             //Check sensor name
-            if(!tdev->sensor_name) tdev->sensor_name = g_strndup(msg->load_pdata.sensor_name, sizeof(msg->load_pdata.sensor_name));
-            else if(strcmp(tdev->sensor_name, msg->load_pdata.sensor_name) != 0) {
-                error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Disallowed store of sensor pairing data '%.*s'", (int) sizeof(msg->load_pdata.sensor_name), msg->load_pdata.sensor_name);
+            msg->store_pdata.sensor_name[IPC_SENSOR_NAME_SIZE] = 0;
+            if(!tdev->pdata_sensor_name) tdev->pdata_sensor_name = g_strdup(msg->store_pdata.sensor_name);
+            else if(strcmp(tdev->pdata_sensor_name, msg->store_pdata.sensor_name) != 0) {
+                error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Disallowed store of sensor pairing data '%s'", msg->store_pdata.sensor_name);
                 goto error;
             }
 
@@ -136,10 +148,13 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
                 error = fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Pairing data exceeds maximum size");
                 goto error;
             }
+
+            if(!check_ipc_msg_size(msg, sizeof(msg->store_pdata) + pdata_len, &error)) goto error;
+
             GByteArray *pdata = g_byte_array_new_take(g_memdup2(msg->store_pdata.pdata, pdata_len), pdata_len);
 
             //Store pairing data
-            if(!store_pdata(tdev, pdata, &error)) {
+            if(!store_pdata(tdev, tdev->pdata_sensor_name, pdata, &error)) {
                 g_byte_array_unref(pdata);
                 goto error;
             }
@@ -151,7 +166,7 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
             if(!send_ipc_msg(tdev, tdev->send_msg, &error)) goto error;
 
             //Receive further messages
-            recv_ipc_msg(tdev, open_recv_cb, task);
+            recv_ipc_msg(tdev, init_recv_cb, task);
         } break;
         case IPC_MSG_READY: {
             //Complete the open procedure
@@ -172,59 +187,10 @@ static void open_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data
     g_object_unref(task);
 }
 
-void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer user_data) {
+static void init_host_proc(FpiDeviceTudor *tdev, GTask *task, GUsbDevice *usb_dev) {
     GError *error = NULL;
 
-    //Create task
-    GTask *task = g_task_new(tdev, NULL, callback, user_data);
-
-    //Check if the host process is already running
-    if(tdev->host_has_id) {
-        g_task_return_int(task, 0);
-        g_object_unref(task);
-        return;
-    }
-
-    //Open a DBus connection
-    if(!open_dbus_con(tdev, &error)) {
-        dispose_dev(tdev);
-        g_task_return_error(task, error);
-        g_object_unref(task);
-        return;
-    }
-
-    //Create a sleep inhibitor
-    if(!create_sleep_inhibitor(tdev, &error)) {
-        dispose_dev(tdev);
-        g_task_return_error(task, error);
-        g_object_unref(task);
-        return;
-    }
-
-    //Start the host process
-    int sock_fd;
-    if(!start_host_process(tdev, &sock_fd, &error)) {
-        g_warning("Failed to start Tudor host process - is tudor-host-launcher.service running? Error: '%s' (%s code %d)", error->message, g_quark_to_string(error->domain), error->code);
-        dispose_dev(tdev);
-        g_task_return_error(task, error);
-        g_object_unref(task);
-        return;
-    }
-    g_info("Started tudor host process ID %u", tdev->host_id);
-
-    //Create the IPC socket
-    tdev->ipc_socket = g_socket_new_from_fd(sock_fd, &error);
-    if(!tdev->ipc_socket) {
-        dispose_dev(tdev);
-        g_task_return_error(task, error);
-        g_object_unref(task);
-        return;
-    }
-    g_socket_set_timeout(tdev->ipc_socket, IPC_TIMEOUT_SECS);
-    tdev->ipc_cancel = g_cancellable_new();
-
     //Open the USB device to get its FD
-    GUsbDevice *usb_dev = fpi_device_get_usb_device(FP_DEVICE(tdev));
     if(tdev->usb_fd < 0) {
         if(!g_usb_device_open(usb_dev, &error)) {
             dispose_dev(tdev);
@@ -277,13 +243,89 @@ void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer us
         g_object_unref(task);
         return;
     }
-    g_debug("Initialized tudor host process ID %d with USB bus 0x%02x addr 0x%02x", tdev->host_id, tdev->send_msg->init.usb_bus, tdev->send_msg->init.usb_addr);
+    g_debug("Initialized tudor host process ID %d", tdev->host_id);
 
     //Receive IPC messages
-    recv_ipc_msg(tdev, open_recv_cb, task);
+    g_clear_pointer(&tdev->pdata_sensor_name, g_free);
+    recv_ipc_msg(tdev, init_recv_cb, task);
 }
 
-static void close_timeout_cb(FpDevice *dev, gpointer user_data) {
+void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer user_data) {
+    GError *error = NULL;
+
+    //Create task
+    GTask *task = g_task_new(tdev, NULL, callback, user_data);
+
+    //Check if the host process is already running
+    if(tdev->host_has_id) {
+        g_task_return_int(task, 0);
+        g_object_unref(task);
+        return;
+    }
+
+    //Open a DBus connection
+    if(!open_dbus_con(tdev, &error)) {
+        dispose_dev(tdev);
+        g_task_return_error(task, error);
+        g_object_unref(task);
+        return;
+    }
+
+    //Create a sleep inhibitor
+    if(!create_sleep_inhibitor(tdev, &error)) {
+        dispose_dev(tdev);
+        g_task_return_error(task, error);
+        g_object_unref(task);
+        return;
+    }
+
+    GUsbDevice *usb_dev = fpi_device_get_usb_device(FP_DEVICE(tdev));
+    int sock_fd;
+
+    //Try to adopt a host process
+    guint8 usb_bus = g_usb_device_get_bus(usb_dev), usb_addr = g_usb_device_get_address(usb_dev);
+
+    bool did_adopt = adopt_host_process(tdev, usb_bus, usb_addr, &sock_fd, &error);
+    if(!did_adopt) {
+        if(error) {
+            g_warning("Failed to adopt Tudor host process - is tudor-host-launcher.service running? Error: '%s' (%s code %d)", error->message, g_quark_to_string(error->domain), error->code);
+            dispose_dev(tdev);
+            g_task_return_error(task, error);
+            g_object_unref(task);
+            return;
+        }
+
+        //Start a host process
+        if(!start_host_process(tdev, usb_bus, usb_addr, &sock_fd, &error)) {
+            g_warning("Failed to start Tudor host process - is tudor-host-launcher.service running? Error: '%s' (%s code %d)", error->message, g_quark_to_string(error->domain), error->code);
+            dispose_dev(tdev);
+            g_task_return_error(task, error);
+            g_object_unref(task);
+            return;
+        }
+        g_info("Started tudor host process ID %u for USB bus 0x%04hx addr 0x%04hx", tdev->host_id, usb_bus, usb_addr);
+    } else g_info("Adopted tudor host process ID %u for USB bus 0x%04hx addr 0x%04hx", tdev->host_id, usb_bus, usb_addr);
+
+    //Create the IPC socket
+    tdev->ipc_socket = g_socket_new_from_fd(sock_fd, &error);
+    if(!tdev->ipc_socket) {
+        dispose_dev(tdev);
+        g_task_return_error(task, error);
+        g_object_unref(task);
+        return;
+    }
+    g_socket_set_timeout(tdev->ipc_socket, IPC_TIMEOUT_SECS);
+    tdev->ipc_cancel = g_cancellable_new();
+
+    //Initialize the host process if we started a new one
+    if(!did_adopt) init_host_proc(tdev, task, usb_dev);
+    else {
+        g_task_return_int(task, 0);
+        g_object_unref(task);
+    }
+}
+
+static void shutdown_timeout_cb(FpDevice *dev, gpointer user_data) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(dev);
 
     //Check if there's a close task
@@ -294,7 +336,52 @@ static void close_timeout_cb(FpDevice *dev, gpointer user_data) {
     }
 }
 
-void close_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer user_data) {
+static void shutdown_host(FpiDeviceTudor *tdev) {
+    //Send shutdown message
+    tdev->send_msg->size = sizeof(enum ipc_msg_type);
+    tdev->send_msg->type = IPC_MSG_SHUTDOWN;
+
+    GError *error = NULL;
+    if(!send_ipc_msg(tdev, tdev->send_msg, &error)) {
+        g_task_return_error(tdev->close_task, error);
+        dispose_dev(tdev);
+        return;
+    }
+
+    //Add timeout
+    g_assert_null(tdev->close_timeout_src);
+    tdev->close_timeout_src = fpi_device_add_timeout(FP_DEVICE(tdev), SHUTDOWN_TIMEOUT_SECS * 1000, shutdown_timeout_cb, NULL, NULL);
+}
+
+static void orphan_clear_acked_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
+    GTask *task = G_TASK(res);
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
+
+    //Check for errors
+    GError *error = NULL;
+    IPCMessageBuf *msg = g_task_propagate_pointer(task, &error);
+    if(!msg) goto error;
+    ipc_msg_buf_free(msg);
+
+    g_debug("Tudor host ACKed record clearing for orphaning");
+
+    //Orphan the host process
+    if(!orphan_host_process(tdev, &error)) goto error;
+
+    g_info("Orphaned Tudor device host ID %u", tdev->host_id);
+
+    g_task_return_int(tdev->close_task, 0);
+    dispose_dev(tdev);
+    return;
+
+    error:;
+    g_warning("Failed to orphan Tudor host process: %s (%s code %d)", error->message, g_quark_to_string(error->domain), error->code);
+    g_clear_error(&error);
+
+    shutdown_host(tdev);
+}
+
+void close_device(FpiDeviceTudor *tdev, bool orphan_host, GAsyncReadyCallback callback, gpointer user_data) {
     //Create task
     GTask *task = g_task_new(tdev, NULL, callback, user_data);
 
@@ -306,20 +393,47 @@ void close_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer u
         return;
     }
 
-    //Send shutdown message
     tdev->close_task = task;
-    tdev->send_msg->size = sizeof(enum ipc_msg_type);
-    tdev->send_msg->type = IPC_MSG_SHUTDOWN;
 
+    if(orphan_host) {
+        //Clear the host prints, then orphan
+        tdev->send_msg->size = sizeof(enum ipc_msg_type);
+        tdev->send_msg->type = IPC_MSG_CLEAR_RECORDS;
+        send_acked_ipc_msg(tdev, tdev->send_msg, orphan_clear_acked_cb, NULL);
+    } else shutdown_host(tdev);
+}
+
+
+static void probe_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
+    GTask *task = G_TASK(res);
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
+
+    //Check for errors
     GError *error = NULL;
-    if(!send_ipc_msg(tdev, tdev->send_msg, &error)) {
-        g_task_return_error(task, error);
-        dispose_dev(tdev);
+    IPCMessageBuf *msg = g_task_propagate_pointer(task, &error);
+    if(!msg) {
+        fpi_device_probe_complete(FP_DEVICE(tdev), NULL, NULL, error);
         return;
     }
 
-    //Add timeout
-    fpi_device_add_timeout(FP_DEVICE(tdev), SHUTDOWN_TIMEOUT_SECS * 1000, close_timeout_cb, NULL, NULL);
+    //Handle the message
+    switch(msg->type) {
+        case IPC_MSG_RESP_PROBE: {
+            if(!check_ipc_msg_size(msg, sizeof(msg->resp_probe), &error)) {
+                fpi_device_probe_complete(FP_DEVICE(tdev), NULL, NULL, error);
+                break;
+            }
+
+            msg->resp_probe.sensor_name[IPC_SENSOR_NAME_SIZE] = 0;
+            g_info("Probed Tudor host process ID %u - sensor name '%s'", tdev->host_id, msg->resp_probe.sensor_name);
+            fpi_device_probe_complete(FP_DEVICE(tdev), msg->resp_probe.sensor_name, NULL, NULL);
+        } break;
+        default: {
+            fpi_device_probe_complete(FP_DEVICE(tdev), NULL, NULL,  fpi_device_error_new_msg(FP_DEVICE_ERROR_PROTO, "Unexpected message in probe sequence: 0x%x", msg->type));
+        } break;
+    }
+
+    ipc_msg_buf_free(msg);
 }
 
 static void probe_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
@@ -334,8 +448,14 @@ static void probe_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_dat
         return;
     }
 
-    //Complete the action
-    fpi_device_probe_complete(FP_DEVICE(tdev), tdev->sensor_name, NULL, NULL);
+    //Send a probe message
+    tdev->send_msg->size = sizeof(enum ipc_msg_type);
+    tdev->send_msg->type = IPC_MSG_PROBE;
+    if(!send_ipc_msg(tdev, tdev->send_msg, &error)) {
+        fpi_device_probe_complete(FP_DEVICE(tdev), NULL, NULL, error);
+        return;
+    }
+    recv_ipc_msg(tdev, probe_recv_cb, NULL);
 }
 
 void fpi_device_tudor_probe(FpDevice *dev) {

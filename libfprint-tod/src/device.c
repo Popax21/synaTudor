@@ -37,8 +37,10 @@ static void ensure_closed(FpiDeviceTudor *tdev) {
         g_info("Closing tudor device host ID %u...", tdev->host_id);
 
         bool cb_called = false;
-        close_device(g_object_ref(tdev), close_cb, &cb_called);
+        close_device(tdev, true, close_cb, &cb_called);
         while(!cb_called) g_main_context_iteration(NULL, TRUE);
+
+        g_debug("Successfully closed tudor device host ID %u", tdev->host_id);
     }
 }
 
@@ -50,9 +52,11 @@ static void fpi_device_tudor_init(FpiDeviceTudor *tdev) {
     tdev->host_sleep_inhib = -1;
     tdev->ipc_socket = NULL;
     tdev->ipc_cancel = NULL;
+    tdev->pdata_sensor_name = NULL;
     tdev->close_task = NULL;
+    tdev->close_timeout_src = NULL;
     tdev->cancel_handler_id = 0;
-    tdev->sensor_name = NULL;
+    tdev->has_canceled = false;
 
     //Allocate data
     tdev->send_msg = ipc_msg_buf_new();

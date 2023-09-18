@@ -1,6 +1,8 @@
 #include <tudor/tudor.h>
 #include "handler.h"
 
+char probe_sensor_name[IPC_SENSOR_NAME_SIZE+1] = {0};
+
 struct handler_state {
     struct tudor_device *dev;
     pthread_mutex_t lock;
@@ -259,6 +261,15 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
             check_in_action(state, type);
             consume_simple_msg(state->ipc_sock, type);
         } return true;
+
+        case IPC_MSG_PROBE: {
+            check_in_action(state, type);
+            consume_simple_msg(state->ipc_sock, type);
+
+            struct ipc_msg_resp_probe resp = { .type = IPC_MSG_RESP_PROBE };
+            strncpy(resp.sensor_name, probe_sensor_name, sizeof(resp.sensor_name));
+            ipc_send_msg(state->ipc_sock, &resp, sizeof(resp));
+        } break;
 
         case IPC_MSG_CANCEL: {
             consume_simple_msg(state->ipc_sock, type);

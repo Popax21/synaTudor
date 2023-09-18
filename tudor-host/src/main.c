@@ -47,14 +47,23 @@ static void recv_init_msg(int sock, int *usb_dev_fd, uint8_t *usb_bus, uint8_t *
     }
 }
 
+static bool has_sensor_name;
 static int pdata_ipc_sock;
 static const struct tudor_pair_data *get_pdata_cb(const char *name) {
     log_info("Getting pairing data for sensor '%s'...", name);
 
     //Send an IPC message to the module
-    struct ipc_msg_load_pdata msg = { .type = IPC_MSG_LOAD_PDATA };
-    strncpy(msg.sensor_name, name, sizeof(msg.sensor_name));
+    struct ipc_msg_load_pdata msg = { .type = IPC_MSG_LOAD_PDATA, .sensor_name = {0} };
+    strncpy(msg.sensor_name, name, IPC_SENSOR_NAME_SIZE);
     ipc_send_msg(pdata_ipc_sock, &msg, sizeof(msg));
+
+    if(has_sensor_name && strcmp(name, probe_sensor_name) == 0){
+        log_error("Attempted multiple different sensor pairing data loads!");
+        abort();
+    } else if(!has_sensor_name) {
+        strncpy(probe_sensor_name, name, IPC_SENSOR_NAME_SIZE);
+        has_sensor_name = true;
+    }
 
     //Receive the response
     struct {
@@ -87,8 +96,8 @@ static void set_pdata_cb(const char *name, const struct tudor_pair_data *data) {
     struct {
         struct ipc_msg_store_pdata msg;
         char buf[IPC_MAX_PDATA_SIZE];
-    } msg = { .msg.type = IPC_MSG_STORE_PDATA };
-    strncpy(msg.msg.sensor_name, name, sizeof(msg.msg.sensor_name));
+    } msg = { .msg.type = IPC_MSG_STORE_PDATA, .msg.sensor_name = {0} };
+    strncpy(msg.msg.sensor_name, name, IPC_SENSOR_NAME_SIZE);
     memcpy(msg.msg.pdata, data->data, data->data_size);
     ipc_send_msg(pdata_ipc_sock, &msg, sizeof(msg.msg) + data->data_size);
 
@@ -181,7 +190,13 @@ int main() {
         log_error("Couldn't open tudor device!");
         return EXIT_FAILURE;
     }
-    log_info("Opend tudor device");
+    log_info("Opened tudor device");
+
+    //Check that we have determined the sensor name
+    if(!has_sensor_name) {
+        log_error("Failed to acquire sensor name!");
+        return EXIT_FAILURE;
+    }
 
     //Send ready message
     enum ipc_msg_type ready_type = IPC_MSG_READY;

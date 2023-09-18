@@ -2,11 +2,11 @@
 #include "data.h"
 #include "ipc.h"
 
-bool load_pdata(FpiDeviceTudor *tdev, GByteArray **pdata, GError **error) {
+bool load_pdata(FpiDeviceTudor *tdev, const gchar *sensor_name, GByteArray **pdata, GError **error) {
     //Tell the host launcher service to load the pairing data
     GVariant *rets = g_dbus_connection_call_sync(tdev->dbus_con,
         TUDOR_HOST_LAUNCHER_SERVICE, TUDOR_HOST_LAUNCHER_OBJ, TUDOR_HOST_LAUNCHER_INTERF,
-        TUDOR_HOST_LAUNCHER_LOAD_PAIRING_DATA_METHOD, g_variant_new("(s)", tdev->sensor_name), G_VARIANT_TYPE("(bay)"), G_DBUS_CALL_FLAGS_NONE,
+        TUDOR_HOST_LAUNCHER_LOAD_PAIRING_DATA_METHOD, g_variant_new("(s)", sensor_name), G_VARIANT_TYPE("(bay)"), G_DBUS_CALL_FLAGS_NONE,
         G_MAXINT, NULL, error
     );
     if(!rets) return false;
@@ -23,20 +23,20 @@ bool load_pdata(FpiDeviceTudor *tdev, GByteArray **pdata, GError **error) {
         const void *pdata_data = g_variant_get_fixed_array(pdata_var, &pdata_len, 1);
         *pdata = g_byte_array_new_take(g_memdup2(pdata_data, pdata_len), pdata_len);
 
-        g_info("Loaded pairing data for tudor sensor '%s' - %lu bytes", tdev->sensor_name, pdata_len);
+        g_info("Loaded pairing data for tudor sensor '%s' - %lu bytes", sensor_name, pdata_len);
     } else {
         *pdata = NULL;
 
-        g_info("Loaded pairing data for tudor sensor '%s' - no stored data", tdev->sensor_name);
+        g_info("Loaded pairing data for tudor sensor '%s' - no stored data", sensor_name);
     }
 
     g_variant_unref(pdata_var);
     return true;
 }
 
-bool store_pdata(FpiDeviceTudor *tdev, GByteArray *pdata, GError **error) {
+bool store_pdata(FpiDeviceTudor *tdev, const gchar *sensor_name, GByteArray *pdata, GError **error) {
     //Tell the host launcher service to store the pairing data
-    GVariant *params = g_variant_new("(s@ay)", tdev->sensor_name, g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, pdata->data, pdata->len, 1));
+    GVariant *params = g_variant_new("(s@ay)", sensor_name, g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, pdata->data, pdata->len, 1));
     GVariant *rets = g_dbus_connection_call_sync(tdev->dbus_con,
         TUDOR_HOST_LAUNCHER_SERVICE, TUDOR_HOST_LAUNCHER_OBJ, TUDOR_HOST_LAUNCHER_INTERF,
         TUDOR_HOST_LAUNCHER_STORE_PAIRING_DATA_METHOD, params, NULL, G_DBUS_CALL_FLAGS_NONE,
@@ -45,7 +45,7 @@ bool store_pdata(FpiDeviceTudor *tdev, GByteArray *pdata, GError **error) {
     if(!rets) return false;
     g_variant_unref(rets);
 
-    g_info("Stored pairing data for tudor sensor '%s' - %u bytes", tdev->sensor_name, pdata->len);
+    g_info("Stored pairing data for tudor sensor '%s' - %u bytes", sensor_name, pdata->len);
     return true;
 }
 

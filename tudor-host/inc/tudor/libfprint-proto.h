@@ -11,6 +11,8 @@
 enum ipc_msg_type {
     IPC_MSG_INIT,
     IPC_MSG_READY,
+    IPC_MSG_PROBE,
+    IPC_MSG_RESP_PROBE,
     IPC_MSG_SHUTDOWN,
     IPC_MSG_ACK,
     IPC_MSG_CANCEL,
@@ -44,10 +46,16 @@ struct ipc_msg_init {
     uint8_t usb_bus, usb_addr;
 };
 
+struct ipc_msg_resp_probe {
+    enum ipc_msg_type type;
+
+    char sensor_name[IPC_SENSOR_NAME_SIZE+1];
+};
+
 struct ipc_msg_load_pdata {
     enum ipc_msg_type type;
 
-    char sensor_name[IPC_SENSOR_NAME_SIZE];
+    char sensor_name[IPC_SENSOR_NAME_SIZE+1];
 };
 
 struct ipc_msg_resp_load_pdata {
@@ -60,7 +68,7 @@ struct ipc_msg_resp_load_pdata {
 struct ipc_msg_store_pdata {
     enum ipc_msg_type type;
 
-    char sensor_name[IPC_SENSOR_NAME_SIZE];
+    char sensor_name[IPC_SENSOR_NAME_SIZE+1];
     uint8_t pdata[];
 };
 
