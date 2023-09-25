@@ -1,4 +1,3 @@
 option('DBGIMPORT', type: 'boolean', value: false, description: 'Enable Windows API import debugging')
 option('DBGWDF', type: 'boolean', value: false, description: 'Enable WDF debugging')
-option('DBGWDF', type: 'boolean', value: false, description: 'Enable WDF debugging')
 option('UNMOUNTFS', type: 'boolean', value: true, description: 'Unmount the file system for the Tudor host process - disable to make GDB work properly')
