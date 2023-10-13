@@ -13,6 +13,7 @@ struct win_thread {
     pthread_mutex_t lock;
     pthread_t thread;
     DWORD thread_id;
+    bool has_detached;
 
     pthread_cond_t suspend_cond;
     int suspend_cntr;
@@ -25,7 +26,7 @@ struct win_thread {
 
 static void thread_destr(struct win_thread *thread) {
     //Free memory
-    pthread_detach(thread->thread);
+    if(!thread->has_detached) cant_fail_ret(pthread_detach(thread->thread));
     cant_fail_ret(pthread_mutex_lock(&thread->lock));
     cant_fail_ret(pthread_mutex_unlock(&thread->lock));
     cant_fail_ret(pthread_mutex_destroy(&thread->lock));
@@ -34,6 +35,8 @@ static void thread_destr(struct win_thread *thread) {
 }
 
 static DWORD thread_wait(struct win_thread *thread, DWORD timeout) {
+    if(thread->has_detached) return 0;
+
     if(timeout == INFINITE) {
         cant_fail_ret(pthread_join(thread->thread, NULL));
     } else {
@@ -44,6 +47,8 @@ static DWORD thread_wait(struct win_thread *thread, DWORD timeout) {
         if(err == ETIMEDOUT) return WAIT_TIMEOUT;
         cant_fail(err);
     }
+
+    thread->has_detached = TRUE;
     return 0;
 }
 
@@ -92,6 +97,7 @@ __winfnc HANDLE CreateThread(void *security_attrs, SIZE_T stack_size, THREAD_STA
     thread->handle = winhandle_create(thread, (winhandle_destr_fnc*) thread_destr);
 
     //Create the actual thread
+    thread->has_detached = FALSE;
     cant_fail_ret(pthread_mutex_lock(&thread->lock));
     cant_fail_ret(pthread_create(&thread->thread, NULL, thread_entry, thread));
     cant_fail_ret(pthread_cond_wait(&thread->start_cond, &thread->lock));
