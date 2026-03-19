@@ -57,6 +57,10 @@ libtudor_src = [
     'src/winapi/wdf/reg.c',
     'src/winapi/wdf/usb.c',
 
+    'src/winapi/v132_shims.c',
+    'src/winapi/winusb.c',
+    'src/winapi/com/com.c',
+
     'src/tudor/async.c',
     'src/tudor/driver.c',
     'src/tudor/device.c',
@@ -65,16 +69,19 @@ libtudor_src = [
 ]
 
 driver_dll_names = [
-    'synaFpAdapter104.dll',
-    'synaWudfBioUsb104.dll'
+    'synaFpAdapter132.dll',
+    'synaWudfBioUsb132.dll'
 ]
 
 add_global_arguments('-Wno-incompatible-pointer-types', language : 'c')
 
-driver_dlls = custom_target('driver-download', 
+# Use local DLLs instead of downloading from Lenovo
+driver_dlls = custom_target('driver-copy',
     output: driver_dll_names,
-    input: ['download_driver.sh', 'installer.sha'],
-    command: [find_program('bash'), '@INPUT0@', '@INPUT1@', '@PRIVATE_DIR@', '@OUTDIR@'] + driver_dll_names
+    command: [
+        find_program('bash'), '-c',
+        'cp "@0@/driver_dlls/"*.dll "@1@/"'.format(meson.current_source_dir(), '@OUTDIR@')
+    ]
 )
 
 driver_dll_blobs = generator(find_program('ld'),

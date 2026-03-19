@@ -13,8 +13,9 @@ GType fpi_tod_shared_driver_get_type() {
 }
 
 static FpIdEntry tudor_ids[] = {
-    { .vid = 0x06cb, .pid = 0x00be },
-//  { .vid = 0x06cb, .pid = 0x00bd }, //TODO Check if it's also supported
+    { .vid = 0x047d, .pid = 0x00f2 },  // Kensington VeriMark Desktop
+    { .vid = 0x06cb, .pid = 0x00be },  // Original Synaptics Tudor
+    { .vid = 0x06cb, .pid = 0x00de },  // Synaptics (same sensor as Kensington)
     { 0 }
 };
 

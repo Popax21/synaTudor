@@ -84,6 +84,14 @@ typedef struct {
     HANDLE hEvent;
 } OVERLAPPED;
 
+typedef union {
+    struct {
+        DWORD LowPart;
+        LONG  HighPart;
+    };
+    LONGLONG QuadPart;
+} LARGE_INTEGER;
+
 typedef struct {
     LONG x;
     LONG y;

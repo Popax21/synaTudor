@@ -334,6 +334,75 @@ __winfnc BOOL FlsSetValue(DWORD idx, void *data) {
 }
 WINAPI(FlsSetValue);
 
+/* Mutex support (v132 driver uses CreateMutexA / ReleaseMutex) */
+struct sync_mutex {
+    struct win_sync_object sync_obj;
+    pthread_mutex_t lock;
+};
+
+static DWORD mutex_wait(struct sync_mutex *mtx, DWORD timeout) {
+    if(timeout == INFINITE) {
+        cant_fail_ret(pthread_mutex_lock(&mtx->lock));
+        return 0;
+    }
+    int err = pthread_mutex_trylock(&mtx->lock);
+    if(err == EBUSY) return WAIT_TIMEOUT;
+    if(err) { log_error("pthread_mutex_trylock failed: %d", err); abort(); }
+    return 0;
+}
+
+static void mutex_destr(struct sync_mutex *mtx) {
+    pthread_mutex_destroy(&mtx->lock);
+    free(mtx);
+}
+
+__winfnc HANDLE CreateMutexA(void *attrs, BOOL initial_owner, const char *name) {
+    struct sync_mutex *mtx = (struct sync_mutex*) malloc(sizeof(struct sync_mutex));
+    if(!mtx) { winerr_set_errno(); return NULL; }
+    mtx->sync_obj.wait_fnc = (win_sync_obj_wait_fnc*) mutex_wait;
+
+    pthread_mutexattr_t attr;
+    cant_fail_ret(pthread_mutexattr_init(&attr));
+    cant_fail_ret(pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE));
+    cant_fail_ret(pthread_mutex_init(&mtx->lock, &attr));
+    cant_fail_ret(pthread_mutexattr_destroy(&attr));
+
+    HANDLE handle = winhandle_create(mtx, (winhandle_destr_fnc*) mutex_destr);
+    if(initial_owner) pthread_mutex_lock(&mtx->lock);
+    return handle;
+}
+WINAPI(CreateMutexA)
+
+__winfnc BOOL ReleaseMutex(HANDLE handle) {
+    if(!handle || handle == INVALID_HANDLE_VALUE) return FALSE;
+    struct sync_mutex *mtx = (struct sync_mutex*) handle->data;
+    cant_fail_ret(pthread_mutex_unlock(&mtx->lock));
+    return TRUE;
+}
+WINAPI(ReleaseMutex)
+
+__winfnc HANDLE OpenEventW(DWORD access, BOOL inherit, const char16_t *name) {
+    if(!name) { winerr_set(); return NULL; }
+    char *cname = winstr_to_str(name);
+
+    cant_fail_ret(pthread_rwlock_rdlock(&events_lock));
+    struct sync_event *evt = NULL;
+    for(struct sync_event *e = events_head; e; e = e->next) {
+        if(e->name && strcmp(e->name, cname) == 0) { evt = e; break; }
+    }
+    cant_fail_ret(pthread_rwlock_unlock(&events_lock));
+    free(cname);
+
+    if(!evt) { winerr_set(); return NULL; }
+    return evt->handle;
+}
+WINAPI(OpenEventW)
+
+__winfnc BOOL InitializeCriticalSectionAndSpinCount(CRITICAL_SECTION *sect, DWORD spinCount) {
+    return InitializeCriticalSectionEx(sect, spinCount, 0);
+}
+WINAPI(InitializeCriticalSectionAndSpinCount)
+
 __winfnc DWORD TlsAlloc() { return FlsAlloc(NULL); }
 WINAPI(TlsAlloc)
 

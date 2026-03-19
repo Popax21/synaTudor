@@ -16,6 +16,10 @@ typedef struct _WINBIO_IDENTITY WINBIO_IDENTITY;
 typedef struct _WINBIO_PIPELINE WINBIO_PIPELINE;
 
 extern bool tudor_log_traces;
+
+/* For UMDF v1 COM path: set the libusb device handle before calling tudor_init() */
+void tudor_set_com_usb_device(libusb_device_handle *dev);
+
 bool tudor_init();
 bool tudor_shutdown();
 

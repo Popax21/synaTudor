@@ -1,26 +1,35 @@
+#include <sys/mman.h>
 #include "internal.h"
+#include "winapi/com/com.h"
 
-extern uint8_t _binary_libtudor_synaFpAdapter104_dll_start, _binary_libtudor_synaFpAdapter104_dll_end;
-extern uint8_t _binary_libtudor_synaWudfBioUsb104_dll_start, _binary_libtudor_synaWudfBioUsb104_dll_end;
+bool tudor_using_com_path = false;
+libusb_device_handle *tudor_com_usb_dev = NULL;
+
+void tudor_set_com_usb_device(libusb_device_handle *dev) {
+    tudor_com_usb_dev = dev;
+}
+
+extern uint8_t _binary_libtudor_synaFpAdapter132_dll_start, _binary_libtudor_synaFpAdapter132_dll_end;
+extern uint8_t _binary_libtudor_synaWudfBioUsb132_dll_start, _binary_libtudor_synaWudfBioUsb132_dll_end;
 
 #define NUM_WINDRV_DLLS 2
 struct windrv_dll tudor_windrv_dlls[] = {
     {
         .module = {
-            .name = "synaFpAdapter104.dll",
-            .cmdline = "synaFpAdapter104.dll",
+            .name = "synaFpAdapter132.dll",
+            .cmdline = "synaFpAdapter132.dll",
             .environ = (const char*[]) { NULL }
         },
-        .pe_image = &_binary_libtudor_synaFpAdapter104_dll_start, .pe_image_end = &_binary_libtudor_synaFpAdapter104_dll_end,
+        .pe_image = &_binary_libtudor_synaFpAdapter132_dll_start, .pe_image_end = &_binary_libtudor_synaFpAdapter132_dll_end,
         .is_adapter = true, .is_driver = false
     },
     {
         .module = {
-            .name = "synaWudfBioUsb104.dll",
-            .cmdline = "synaWudfBioUsb104.dll",
+            .name = "synaWudfBioUsb132.dll",
+            .cmdline = "synaWudfBioUsb132.dll",
             .environ = (const char*[]) { NULL }
         },
-        .pe_image = &_binary_libtudor_synaWudfBioUsb104_dll_start, .pe_image_end = &_binary_libtudor_synaWudfBioUsb104_dll_end,
+        .pe_image = &_binary_libtudor_synaWudfBioUsb132_dll_start, .pe_image_end = &_binary_libtudor_synaWudfBioUsb132_dll_end,
         .is_adapter = false, .is_driver = true
     }
 };
@@ -98,28 +107,57 @@ bool tudor_init() {
         }
     }
 
-    //Call UMDF driver entry function
-    init_winwdf();
+    //Initialize driver — try UMDF v2 (FxDriverEntryUm) first, fall back to UMDF v1 (COM)
     winmodule_set_cur(&tudor_driver_dll->module);
 
-    char16_t *reg_path_wstr = winstr_from_str("HKEY_LOCAL_MACHINE\\Tudor\\Driver");
-    UNICODE_STRING reg_path = {
-        .Length = winstr_len(reg_path_wstr)+1,
-        .MaximumLength = winstr_len(reg_path_wstr)+1,
-        .Buffer = reg_path_wstr
-    };
-
-    NTSTATUS status;
-    if((status = ((api_FxDriverEntryUm) find_dll_export(&tudor_driver_dll->image, "FxDriverEntryUm"))(&wdf_loader, NULL, &umdf_driver, &reg_path)) != 0) {
-        log_error("Error in UMDF driver entry function: 0x%x!", status);
-        return false;
+    bool has_fx_entry = false;
+    for(int i = 0; i < tudor_driver_dll->image.num_exports; i++) {
+        if(strcmp(tudor_driver_dll->image.exports[i].name, "FxDriverEntryUm") == 0) {
+            has_fx_entry = true;
+            break;
+        }
     }
 
-    free(reg_path_wstr);
+    if(has_fx_entry) {
+        //UMDF v2 path (e.g. v104 DLLs)
+        log_info("Using UMDF v2 entry (FxDriverEntryUm)");
+        init_winwdf();
 
-    if(!(tudor_wdf_driver = winwdf_get_driver(&wdf_globals))) {
-        log_error("UMDF entry function didn't create a WDF driver!");
-        return false;
+        char16_t *reg_path_wstr = winstr_from_str("HKEY_LOCAL_MACHINE\\Tudor\\Driver");
+        UNICODE_STRING reg_path = {
+            .Length = winstr_len(reg_path_wstr)+1,
+            .MaximumLength = winstr_len(reg_path_wstr)+1,
+            .Buffer = reg_path_wstr
+        };
+
+        NTSTATUS status;
+        if((status = ((api_FxDriverEntryUm) find_dll_export(&tudor_driver_dll->image, "FxDriverEntryUm"))(&wdf_loader, NULL, &umdf_driver, &reg_path)) != 0) {
+            log_error("Error in UMDF driver entry function: 0x%x!", status);
+            return false;
+        }
+
+        free(reg_path_wstr);
+
+        if(!(tudor_wdf_driver = winwdf_get_driver(&wdf_globals))) {
+            log_error("UMDF entry function didn't create a WDF driver!");
+            return false;
+        }
+    } else {
+        //UMDF v1 COM path (e.g. v132 DLLs with DllGetClassObject)
+        log_info("Using UMDF v1 entry (COM/DllGetClassObject)");
+        tudor_using_com_path = true;
+        if(!tudor_com_usb_dev) {
+            log_warn("No USB device set for COM path");
+        } else {
+            com_set_usb_device(tudor_com_usb_dev);
+        }
+        /* Binary patch disabled — causes strlen(NULL) crash because
+           InitializeNiseCore runs before WBFUsbInitialize sets up USB paths.
+           TODO: Need to ensure WBFUsbInitialize runs first. */
+        if(!com_init_driver(&tudor_driver_dll->image)) {
+            log_error("COM driver initialization failed!");
+            return false;
+        }
     }
 
     //Query WINBIO interfaces

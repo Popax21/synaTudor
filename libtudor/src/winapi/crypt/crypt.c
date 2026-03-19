@@ -265,3 +265,34 @@ __winfnc BOOL CryptGenRandom(HANDLE prov, DWORD len, BYTE *buf) {
     return TRUE;
 }
 WINAPI(CryptGenRandom)
+
+__winfnc BOOL CryptAcquireContextW(struct crypt_provider **prov, const char16_t *cont_name, const char16_t *prov_name, DWORD prov_type, DWORD flags) {
+    switch(prov_type) {
+        case PROV_RSA_AES: *prov = &crypt_prov_rsa_aes; return TRUE;
+        default: {
+            log_warn("CryptAcquireContextW | Couldn't find provider for prov_type 0x%x flags 0x%x", prov_type, flags);
+            return FALSE;
+        }
+    }
+}
+WINAPI(CryptAcquireContextW)
+
+__winfnc BOOL CryptSetKeyParam(struct crypt_key *key, DWORD param, const BYTE *data, DWORD flags) {
+    log_debug("CryptSetKeyParam | param 0x%x flags 0x%x (stub)", param, flags);
+    return TRUE;
+}
+WINAPI(CryptSetKeyParam)
+
+__winfnc BOOL CryptEncrypt(struct crypt_key *key, struct crypt_hash *hash, BOOL final, DWORD flags, BYTE *data, DWORD *data_len, DWORD buf_len) {
+    log_warn("CryptEncrypt | stub called - not implemented");
+    winerr_set();
+    return FALSE;
+}
+WINAPI(CryptEncrypt)
+
+__winfnc BOOL CryptDecrypt(struct crypt_key *key, struct crypt_hash *hash, BOOL final, DWORD flags, BYTE *data, DWORD *data_len) {
+    log_warn("CryptDecrypt | stub called - not implemented");
+    winerr_set();
+    return FALSE;
+}
+WINAPI(CryptDecrypt)

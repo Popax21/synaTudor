@@ -1,1 +1,3 @@
 build
+# Proprietary driver DLLs — not redistributable
+libtudor/driver_dlls/*.dll

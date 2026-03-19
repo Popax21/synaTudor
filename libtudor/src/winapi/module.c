@@ -68,6 +68,17 @@ void winmodule_set_cur(struct winmodule *module) {
     cur_module = module;
 }
 
+__winfnc HANDLE LoadLibraryA(const char *name) {
+    log_debug("LoadLibraryA: '%s'", name ? name : "(null)");
+    struct winmodule *module = (struct winmodule*) malloc(sizeof(struct winmodule));
+    if(!module) { winerr_set_errno(); return NULL; }
+    *module = (struct winmodule) {0};
+    module->name = strdup(name ? name : "");
+    winmodule_register(module);
+    return module->handle;
+}
+WINAPI(LoadLibraryA)
+
 __winfnc HANDLE LoadLibraryExW(const char16_t *name, HANDLE file, DWORD flags) {
     //We don't support loading librarys dynamically, but some stdlib functions have to be loaded that way
     //As such return dummy modules
@@ -103,8 +114,10 @@ WINAPI(GetModuleHandleW)
 #define GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS 0x00000004
 __winfnc BOOL GetModuleHandleExW(DWORD flags, const char16_t *name, HANDLE *out) {
     if(flags & GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS) {
-        log_warn("GetModuleHandleExW called with unsupported flag GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS! [addr=%p]", name);
-        return FALSE;
+        /* Return current module handle — driver uses this for exception handling */
+        struct winmodule *cur = winmodule_get_cur();
+        if(out) *out = cur ? cur->handle : NULL;
+        return cur != NULL;
     }
 
     char *cname = winstr_to_str(name);

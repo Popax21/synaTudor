@@ -11,8 +11,8 @@
 #include "datastore.h"
 #include "cli.h"
 
-#define TUDOR_VID 0x06cb
-#define TUDOR_PID 0x00be
+#define TUDOR_VID 0x047d
+#define TUDOR_PID 0x00f2
 
 static bool drop_root_priv() {
     if(geteuid() == 0 || getegid() == 0) {
@@ -169,6 +169,7 @@ int main(int argc, char **argv) {
     //Initialize tudor driver
     tudor_get_pdata_fnc = get_pair_data;
     tudor_set_pdata_fnc = set_pair_data;
+    tudor_set_com_usb_device(usb_dev); /* For UMDF v1 COM path */
     log_info("Initializing tudor driver...");
     if(!tudor_init()) {
         log_error("Error initializing tudor driver!");

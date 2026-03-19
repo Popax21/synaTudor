@@ -1,5 +1,9 @@
 #include <unistd.h>
 #include "internal.h"
+#include "winapi/com/com.h"
+
+/* Flag: true when using UMDF v1 COM path instead of WDF v2 */
+extern bool tudor_using_com_path;
 
 static void req_cb(struct winwdf_request *req, NTSTATUS status, OVERLAPPED *ovlp) {
     //Get request info
@@ -34,7 +38,19 @@ static NTSTATUS tudor_devctrl(struct tudor_device *device, OVERLAPPED *ovlp, ULO
         cant_fail_ret(pthread_mutex_unlock(&LOG_LOCK));
     }
 
-    //Start the request
+    if(tudor_using_com_path) {
+        //COM path: route IOCTL through the driver's IQueueCallbackDeviceIoControl
+        size_t bytes_ret = 0;
+        NTSTATUS status = com_send_ioctl(code, in_buf, in_size, out_buf, out_size, &bytes_ret);
+
+        if(status == STATUS_SUCCESS) {
+            //Complete the overlapped
+            winio_complete_overlapped(ovlp, status, bytes_ret);
+        }
+        return status;
+    }
+
+    //WDF v2 path: Start the request through the WDF file
     struct winmodule *mod = winmodule_get_cur();
     winmodule_set_cur(&tudor_driver_dll->module);
     NTSTATUS status = winwdf_devctrl_file(device->wdf_file, code, in_buf, in_size, out_buf, out_size, req);
@@ -65,32 +81,43 @@ bool tudor_open(struct tudor_device *device, libusb_device_handle *usb_dev, stru
     device->records_head = NULL;
     device->result_records_head = device->result_records_cursor = NULL;
 
-    //Reset the USB device
-    int usb_err;
-    if((usb_err = libusb_reset_device(usb_dev)) != 0) {
-        log_error("libusb_reset_device failed: %d [%s]", usb_err, libusb_error_name(usb_err));
-        return false;
+    //Reset the USB device (skip in COM path — device already initialized with claimed interfaces)
+    if(!tudor_using_com_path) {
+        int usb_err;
+        if((usb_err = libusb_reset_device(usb_dev)) != 0) {
+            log_error("libusb_reset_device failed: %d [%s]", usb_err, libusb_error_name(usb_err));
+            return false;
+        }
     }
 
-    //Open the device through the driver
-    device->reg_key = winreg_open_key(device, "HKEY_LOCAL_MACHINE\\Tudor\\Device");
-    if((status = winwdf_add_device(tudor_wdf_driver, device->reg_key, usb_dev, &device->wdf_device)) != 0) {
-        log_error("Error adding WDF device: 0x%x!", status);
-        return false;
-    }
-    if(!device->wdf_device) {
-        log_error("Driver didn't create a WDF device!");
-        return false;
-    }
-    winwdf_event_queue_flush();
+    if(tudor_using_com_path) {
+        //COM path: driver already initialized in OnD0Entry.
+        //WDF device/file are not used; IOCTLs route through COM callbacks.
+        device->reg_key = winreg_open_key(device, "HKEY_LOCAL_MACHINE\\Tudor\\Device");
+        device->wdf_device = NULL;
+        device->wdf_file = NULL;
+        log_info("COM path: skipping WDF device setup (driver already in D0)");
+    } else {
+        //WDF v2 path: open the device through the driver
+        device->reg_key = winreg_open_key(device, "HKEY_LOCAL_MACHINE\\Tudor\\Device");
+        if((status = winwdf_add_device(tudor_wdf_driver, device->reg_key, usb_dev, &device->wdf_device)) != 0) {
+            log_error("Error adding WDF device: 0x%x!", status);
+            return false;
+        }
+        if(!device->wdf_device) {
+            log_error("Driver didn't create a WDF device!");
+            return false;
+        }
+        winwdf_event_queue_flush();
 
-    if((status = winwdf_open_device(device->wdf_device, &device->wdf_file)) != 0) {
-        log_error("Error opening WDF file: 0x%x!", status);
-        return false;
-    }
+        if((status = winwdf_open_device(device->wdf_device, &device->wdf_file)) != 0) {
+            log_error("Error opening WDF file: 0x%x!", status);
+            return false;
+        }
 
-    //This is dumb, but otherwise we run into race conditions
-    cant_fail(usleep(3000000));
+        //This is dumb, but otherwise we run into race conditions
+        cant_fail(usleep(3000000));
+    }
 
     //Initialize the pipeline
     winmodule_set_cur(&tudor_adapter_dll->module);
@@ -132,8 +159,7 @@ bool tudor_open(struct tudor_device *device, libusb_device_handle *usb_dev, stru
     ULONG sensor_status = WINBIO_SENSOR_FAILURE;
     WINBIO_CALL_PIPELINE(tudor_sensor_adapter->QueryStatus, device->pipeline, &sensor_status)
     if(sensor_status != WINBIO_SENSOR_READY) {
-        log_error("Sensor didn't return ready status! [status 0x%x]", status);
-        return false;
+        log_warn("Sensor not ready yet [sensor_status 0x%x] — continuing anyway for debugging", sensor_status);
     }
 
     return true;
@@ -164,15 +190,20 @@ bool tudor_close(struct tudor_device *device) {
 
     winhandle_destroy(device->winbio_file);
 
-    //Close the WDF file
-    winmodule_set_cur(&tudor_driver_dll->module);
-    winwdf_close_file(device->wdf_file);
+    if(tudor_using_com_path) {
+        //COM path: driver cleanup happens in com_shutdown_driver
+        winhandle_destroy(device->reg_key);
+    } else {
+        //Close the WDF file
+        winmodule_set_cur(&tudor_driver_dll->module);
+        winwdf_close_file(device->wdf_file);
 
-    //Remove the device
-    winmodule_set_cur(&tudor_driver_dll->module);
-    winwdf_remove_device(device->wdf_device);
-    winwdf_event_queue_flush();
-    winhandle_destroy(device->reg_key);
+        //Remove the device
+        winmodule_set_cur(&tudor_driver_dll->module);
+        winwdf_remove_device(device->wdf_device);
+        winwdf_event_queue_flush();
+        winhandle_destroy(device->reg_key);
+    }
 
     //Free records
     cant_fail_ret(pthread_mutex_lock(&device->records_lock));
