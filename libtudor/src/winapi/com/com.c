@@ -10,13 +10,14 @@
 #include <string.h>
 #include <libusb.h>
 #include <time.h>
-#include <sys/mman.h>
+/* Note: mprotect must NOT be called from this file — causes mysterious crashes */
 #include "com.h"
 #include "winapi/api.h"
 #include "loader.h"
 #include "tudor/internal.h"
 
 com_object *com_driver_callback = NULL;
+void *com_usb_device_obj = NULL;
 com_object *com_pnp_hw_callback = NULL;
 com_object *com_pnp_hw2_callback = NULL;
 com_object *com_pnp_callback = NULL;
@@ -992,15 +993,6 @@ NTSTATUS com_send_ioctl(ULONG code, const void *in_buf, size_t in_size, void *ou
 
 /* ─── COM Host bootstrap ─────────────────────────────────────────── */
 
-/* Patch the driver's PrepareHardware branch to skip the failing internal check.
-   Must be called before OnPrepareHardware but after DLL loading. */
-static void apply_prepare_hardware_patch(struct dll_image *dll) {
-    uint8_t *img = dll->base_addr;
-    if(!img) return;
-    log_info("COM: Checking patch target at 0x929b: %02x %02x", img[0x929b], img[0x929c]);
-    /* Patch will be applied after .text section is made writable — deferred */
-}
-
 bool com_init_driver(struct dll_image *driver_dll) {
     GUID clsid = CLSID_SYNATUDOR;
     GUID iid_cf = IID_ICLASSFACTORY;
@@ -1057,70 +1049,54 @@ bool com_init_driver(struct dll_image *driver_dll) {
     }
     log_info("COM: OnDeviceAdd OK");
 
-    /* Step 4b: Call WBFUsbInitialize to set up WinUSB before NISE core needs it.
-       Then apply binary patch so PrepareHardware skips the failing internal check
-       and proceeds directly to InitializeNiseCore (which now has USB available). */
+    /* Save {1493cd1b...} interface pointer for external access */
     {
         GUID iid_hw_real = COM_GUID(0x1493cd1b,0xc546,0x46bb, 0xbf,0x47, 0xb2,0x74,0x65,0x09,0x33,0x93);
         com_object *base_obj = com_pnp_callback;
         void *hw_iface = NULL;
-
         if(base_obj && base_obj->vtbl->QueryInterface(base_obj, &iid_hw_real, &hw_iface) == S_OK && hw_iface) {
-            /* Call WBFUsbInitialize(this) at RVA 0x16160.
-               this = {1493cd1b...} interface pointer = CBiometricDeviceUSB base */
-            typedef HRESULT __winfnc (*wbf_usb_init_fn)(void *self);
-            wbf_usb_init_fn wbf_init = (wbf_usb_init_fn)(driver_dll->base_addr + 0x16160);
-
-            /* field_0x80 is non-zero (set during OnDeviceAdd), causing WBFUsbInitialize
-               to return early. It's likely the USB target device or WinUSB handle.
-               Log it but don't zero it — that crashes. */
-            uint8_t *obj_bytes = (uint8_t*)hw_iface;
-            void **field_80 = (void**)(obj_bytes + 0x80);
-            log_info("COM: field_0x80 = %p (WBFUsbInitialize will check this)", *field_80);
-
-            struct winmodule *mod = winmodule_get_cur();
-            winmodule_set_cur(&tudor_driver_dll->module);
-            log_info("COM: Calling WBFUsbInitialize at RVA 0x16160...");
-            hr = wbf_init(hw_iface);
-            winmodule_set_cur(mod);
-            log_info("COM: WBFUsbInitialize returned hr=0x%x", hr);
+            com_usb_device_obj = hw_iface;
         }
     }
 
-    /* Step 4c: Apply binary patch */
-    apply_prepare_hardware_patch(driver_dll);
+    /* Step 4b: Call WBFUsbInitialize.
+       field_0x80 is zeroed by tudor_init after this function returns and before
+       it's called again... but we only have one call. Instead, the zeroing happens
+       in tudor_init between com_init_driver and the WINBIO pipeline init.
+       WBFUsbInitialize returns S_FALSE if field_0x80 is non-zero, which is OK —
+       the PrepareHardware binary patch bypasses the internal check anyway. */
+    if(com_usb_device_obj) {
+        typedef HRESULT __winfnc (*wbf_usb_init_fn)(void *self);
+        wbf_usb_init_fn wbf_init = (wbf_usb_init_fn)(driver_dll->base_addr + 0x16160);
 
-    /* Step 5: OnPrepareHardware — call {1493cd1b...} interface (probe[4]). */
-    {
-        GUID iid_hw_real = COM_GUID(0x1493cd1b,0xc546,0x46bb, 0xbf,0x47, 0xb2,0x74,0x65,0x09,0x33,0x93);
-        com_object *base_obj = com_pnp_callback;
-        void *hw_iface = NULL;
+        struct winmodule *mod = winmodule_get_cur();
+        winmodule_set_cur(&tudor_driver_dll->module);
+        log_info("COM: Calling WBFUsbInitialize...");
+        hr = wbf_init(com_usb_device_obj);
+        winmodule_set_cur(mod);
+        log_info("COM: WBFUsbInitialize returned hr=0x%x", hr);
+    }
 
-        if(base_obj && base_obj->vtbl->QueryInterface(base_obj, &iid_hw_real, &hw_iface) == S_OK && hw_iface) {
-            void **vtbl = *(void***)hw_iface;
-            log_info("COM: Calling OnPrepareHardware via {1493cd1b...} (slot3=%p)...", vtbl[3]);
+    /* Step 5: OnPrepareHardware */
+    if(com_usb_device_obj) {
+        void **vtbl = *(void***)com_usb_device_obj;
+        log_info("COM: Calling OnPrepareHardware...");
 
-            typedef HRESULT __winfnc (*prep_hw_fn)(com_object *self, com_object *pDevice);
-            hr = ((prep_hw_fn)vtbl[3])((com_object*)hw_iface, &g_wdf_device);
+        typedef HRESULT __winfnc (*prep_hw_fn)(com_object *self, com_object *pDevice);
+        hr = ((prep_hw_fn)vtbl[3])((com_object*)com_usb_device_obj, &g_wdf_device);
 
-            if((int)hr < 0) {
-                log_error("COM: OnPrepareHardware failed: 0x%x", hr);
-                /* Continue anyway — driver may partially work */
-            } else {
-                log_info("COM: OnPrepareHardware OK (hr=0x%x)", hr);
-            }
+        if((int)hr < 0) {
+            log_error("COM: OnPrepareHardware failed: 0x%x", hr);
         } else {
-            log_warn("COM: Could not find {1493cd1b...} interface for OnPrepareHardware");
+            log_info("COM: OnPrepareHardware OK (hr=0x%x)", hr);
         }
     }
 
-    /* Step 5b: OnD0Entry */
-
-    /* Step 6: OnD0Entry (power up from D3) */
+    /* Step 6: OnD0Entry */
     if(com_pnp_callback) {
         IPnpCallbackVtbl *pnp = (IPnpCallbackVtbl*)com_pnp_callback->vtbl;
         log_info("COM: Calling OnD0Entry (D3→D0)...");
-        hr = pnp->OnD0Entry(com_pnp_callback, &g_wdf_device, 4 /* PowerDeviceD3 */);
+        hr = pnp->OnD0Entry(com_pnp_callback, &g_wdf_device, 4);
         if((int)hr < 0) {
             log_error("COM: OnD0Entry failed: 0x%x", hr);
             return false;

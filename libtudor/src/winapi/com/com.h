@@ -160,13 +160,21 @@ typedef struct {
    Must be called before com_init_driver(). */
 void com_set_usb_device(libusb_device_handle *dev);
 
-/* Initialize the UMDF v1 COM host and bootstrap the driver.
-   driver_dll must be a loaded DLL image that exports DllGetClassObject. */
+/* Phase 1: COM bootstrap through OnDeviceAdd (creates driver object). */
 bool com_init_driver(struct dll_image *driver_dll);
+
+/* Phase 2: WBFUsbInitialize + OnPrepareHardware + OnD0Entry.
+   Call after field_0x80 has been zeroed externally. */
+bool com_finish_init(struct dll_image *driver_dll);
+
 void com_shutdown_driver(void);
 
 /* Route an IOCTL through the COM IQueueCallbackDeviceIoControl path */
 NTSTATUS com_send_ioctl(ULONG code, const void *in_buf, size_t in_size, void *out_buf, size_t out_size, size_t *bytes_returned);
+
+/* The {1493cd1b...} interface = CBiometricDeviceUSB base pointer.
+   Used for WBFUsbInitialize call and driver object field access. */
+extern void *com_usb_device_obj;
 
 /* Access to driver-provided callback interfaces (set during OnDeviceAdd) */
 extern com_object *com_driver_callback;  /* The driver's IDriverEntry */

@@ -151,10 +151,27 @@ bool tudor_init() {
         } else {
             com_set_usb_device(tudor_com_usb_dev);
         }
-        /* Binary patch + WBFUsbInitialize are applied inside com_init_driver */
         if(!com_init_driver(&tudor_driver_dll->image)) {
             log_error("COM driver initialization failed!");
             return false;
+        }
+
+        /* Post-init patches (MUST be in driver.c) */
+        {
+            uint8_t *img = tudor_driver_dll->image.base_addr;
+            if(img && img[0x929b] == 0x74 && img[0x929c] == 0x74) {
+                void *pg = (void*)((uintptr_t)&img[0x929b] & ~(uintptr_t)0xFFF);
+                if(mprotect(pg, 0x1000, PROT_READ | PROT_WRITE | PROT_EXEC) == 0) {
+                    img[0x929b] = 0xEB;
+                    mprotect(pg, 0x1000, PROT_READ | PROT_EXEC);
+                    log_info("Patched PrepareHardware at RVA 0x929b");
+                }
+            }
+            if(com_usb_device_obj) {
+                void **f80 = (void**)((uint8_t*)com_usb_device_obj + 0x80);
+                log_info("field_0x80 = %p → zeroing", *f80);
+                *f80 = NULL;
+            }
         }
     }
 
