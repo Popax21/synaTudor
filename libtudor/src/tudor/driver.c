@@ -156,11 +156,9 @@ bool tudor_init() {
             return false;
         }
 
-        /* Post-init: patch binary, zero field_0x80, re-call WBFUsbInitialize */
+        /* Post-init: binary patch (stays in driver.c) */
         {
             uint8_t *img = tudor_driver_dll->image.base_addr;
-
-            /* Patch PrepareHardware internal check */
             if(img && img[0x929b] == 0x74 && img[0x929c] == 0x74) {
                 void *pg = (void*)((uintptr_t)&img[0x929b] & ~(uintptr_t)0xFFF);
                 if(mprotect(pg, 0x1000, PROT_READ | PROT_WRITE | PROT_EXEC) == 0) {
@@ -169,16 +167,10 @@ bool tudor_init() {
                     log_info("Patched PrepareHardware at RVA 0x929b");
                 }
             }
-
-            /* Zero field_0x80 and re-call WBFUsbInitialize */
-            if(com_usb_device_obj && img) {
-                void **f80 = (void**)((uint8_t*)com_usb_device_obj + 0x80);
-                log_info("field_0x80 = %p → zeroing", *f80);
-                *f80 = NULL;
-
-                log_info("field_0x80 zeroed");
-            }
         }
+        /* TODO: Need to zero field_0x80 and re-call WBFUsbInitialize.
+           Cannot add ANY new symbols/globals to driver.c without crashing
+           (shifts .data layout, breaks PE-loaded DLL relocated pointers). */
     }
 
     //Query WINBIO interfaces
