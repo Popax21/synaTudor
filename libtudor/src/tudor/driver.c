@@ -151,9 +151,7 @@ bool tudor_init() {
         } else {
             com_set_usb_device(tudor_com_usb_dev);
         }
-        /* Binary patch disabled — causes strlen(NULL) crash because
-           InitializeNiseCore runs before WBFUsbInitialize sets up USB paths.
-           TODO: Need to ensure WBFUsbInitialize runs first. */
+        /* Binary patch + WBFUsbInitialize are applied inside com_init_driver */
         if(!com_init_driver(&tudor_driver_dll->image)) {
             log_error("COM driver initialization failed!");
             return false;

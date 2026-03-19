@@ -1057,12 +1057,40 @@ bool com_init_driver(struct dll_image *driver_dll) {
     }
     log_info("COM: OnDeviceAdd OK");
 
-    /* Step 4b: Binary patch applied via apply_prepare_hardware_patch() */
+    /* Step 4b: Call WBFUsbInitialize to set up WinUSB before NISE core needs it.
+       Then apply binary patch so PrepareHardware skips the failing internal check
+       and proceeds directly to InitializeNiseCore (which now has USB available). */
+    {
+        GUID iid_hw_real = COM_GUID(0x1493cd1b,0xc546,0x46bb, 0xbf,0x47, 0xb2,0x74,0x65,0x09,0x33,0x93);
+        com_object *base_obj = com_pnp_callback;
+        void *hw_iface = NULL;
+
+        if(base_obj && base_obj->vtbl->QueryInterface(base_obj, &iid_hw_real, &hw_iface) == S_OK && hw_iface) {
+            /* Call WBFUsbInitialize(this) at RVA 0x16160.
+               this = {1493cd1b...} interface pointer = CBiometricDeviceUSB base */
+            typedef HRESULT __winfnc (*wbf_usb_init_fn)(void *self);
+            wbf_usb_init_fn wbf_init = (wbf_usb_init_fn)(driver_dll->base_addr + 0x16160);
+
+            /* field_0x80 is non-zero (set during OnDeviceAdd), causing WBFUsbInitialize
+               to return early. It's likely the USB target device or WinUSB handle.
+               Log it but don't zero it — that crashes. */
+            uint8_t *obj_bytes = (uint8_t*)hw_iface;
+            void **field_80 = (void**)(obj_bytes + 0x80);
+            log_info("COM: field_0x80 = %p (WBFUsbInitialize will check this)", *field_80);
+
+            struct winmodule *mod = winmodule_get_cur();
+            winmodule_set_cur(&tudor_driver_dll->module);
+            log_info("COM: Calling WBFUsbInitialize at RVA 0x16160...");
+            hr = wbf_init(hw_iface);
+            winmodule_set_cur(mod);
+            log_info("COM: WBFUsbInitialize returned hr=0x%x", hr);
+        }
+    }
+
+    /* Step 4c: Apply binary patch */
     apply_prepare_hardware_patch(driver_dll);
 
-    /* Step 5: OnPrepareHardware — call {1493cd1b...} interface (probe[4]).
-       This is the interface whose vtable slot 3 is CBiometricDeviceUSB::OnPrepareHardware,
-       confirmed by binary analysis showing IWDFUsbTargetFactory QI at RVA 0x14f50. */
+    /* Step 5: OnPrepareHardware — call {1493cd1b...} interface (probe[4]). */
     {
         GUID iid_hw_real = COM_GUID(0x1493cd1b,0xc546,0x46bb, 0xbf,0x47, 0xb2,0x74,0x65,0x09,0x33,0x93);
         com_object *base_obj = com_pnp_callback;
