@@ -1067,7 +1067,7 @@ bool com_init_driver(struct dll_image *driver_dll) {
        field_0x80 is heap junk that causes WBFUsbInitialize to return early.
        Zeroing it makes WBFUsbInitialize take the USB init path. */
     if(com_usb_device_obj) {
-        /* field_0x80 zeroing happens below in the existing code path */
+        log_info("COM: field_0x80 = %p before WBFUsbInitialize", *(void**)((char*)com_usb_device_obj + 0x80));
         typedef HRESULT __winfnc (*wbf_usb_init_fn)(void *self);
         wbf_usb_init_fn wbf_init = (wbf_usb_init_fn)(driver_dll->base_addr + 0x16160);
 

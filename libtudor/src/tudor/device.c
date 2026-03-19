@@ -92,11 +92,13 @@ bool tudor_open(struct tudor_device *device, libusb_device_handle *usb_dev, stru
 
     if(tudor_using_com_path) {
         //COM path: driver already initialized in OnD0Entry.
-        //WDF device/file are not used; IOCTLs route through COM callbacks.
         device->reg_key = winreg_open_key(device, "HKEY_LOCAL_MACHINE\\Tudor\\Device");
         device->wdf_device = NULL;
         device->wdf_file = NULL;
-        log_info("COM path: skipping WDF device setup (driver already in D0)");
+
+        //WBFUsbInitialize will be called by the WINBIO pipeline reset
+        //via the patched code path — no separate call needed
+        log_info("COM path: device setup complete");
     } else {
         //WDF v2 path: open the device through the driver
         device->reg_key = winreg_open_key(device, "HKEY_LOCAL_MACHINE\\Tudor\\Device");

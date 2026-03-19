@@ -18,12 +18,9 @@ __winfnc void *HeapAlloc(HANDLE heap, DWORD flags, SIZE_T size) {
         return NULL;
     }
 
-    //Allocate the memory
-    void *mem = malloc(size);
-    if(mem) {
-        if(flags & HEAP_ZERO_MEMORY) memset(mem, 0, size);
-        return mem;
-    }
+    //Allocate the memory — always zero-init to prevent heap junk in driver objects
+    void *mem = calloc(1, size);
+    if(mem) return mem;
 
     //There was an error allocating the memory
     if(flags & HEAP_GENERATE_EXCEPTIONS) {
