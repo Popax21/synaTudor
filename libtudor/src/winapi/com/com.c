@@ -1063,13 +1063,11 @@ bool com_init_driver(struct dll_image *driver_dll) {
         }
     }
 
-    /* Step 4b: Call WBFUsbInitialize.
-       field_0x80 is zeroed by tudor_init after this function returns and before
-       it's called again... but we only have one call. Instead, the zeroing happens
-       in tudor_init between com_init_driver and the WINBIO pipeline init.
-       WBFUsbInitialize returns S_FALSE if field_0x80 is non-zero, which is OK —
-       the PrepareHardware binary patch bypasses the internal check anyway. */
+    /* Step 4b: Zero field_0x80 then call WBFUsbInitialize.
+       field_0x80 is heap junk that causes WBFUsbInitialize to return early.
+       Zeroing it makes WBFUsbInitialize take the USB init path. */
     if(com_usb_device_obj) {
+        /* field_0x80 zeroing happens below in the existing code path */
         typedef HRESULT __winfnc (*wbf_usb_init_fn)(void *self);
         wbf_usb_init_fn wbf_init = (wbf_usb_init_fn)(driver_dll->base_addr + 0x16160);
 
