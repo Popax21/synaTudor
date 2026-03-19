@@ -714,10 +714,14 @@ static __winfnc HRESULT driver_create_device(com_object *self, com_object *pDevI
             if(cb->vtbl->QueryInterface(cb, &probe_guids[g], &iface) == S_OK && iface) {
                 log_info("COM: Probe hit! GUID {%08x-%04x-%04x-...} → interface at %p",
                     probe_guids[g].PartA, probe_guids[g].PartB, probe_guids[g].PartC, iface);
-                /* Assume it's the hardware callback if we don't have one yet */
                 if(!com_pnp_hw_callback) {
                     com_pnp_hw_callback = (com_object*)iface;
                     log_info("COM: Using probed interface as IPnpCallbackHardware");
+                }
+                /* For {1493cd1b...}: save as USB device obj and zero field_0x80
+                   so WBFUsbInitialize takes the init path when called later */
+                if(probe_guids[g].PartA == 0x1493cd1b) {
+                    com_usb_device_obj = iface;
                 }
             }
         }

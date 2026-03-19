@@ -156,9 +156,11 @@ bool tudor_init() {
             return false;
         }
 
-        /* Post-init patches (MUST be in driver.c) */
+        /* Post-init: patch binary, zero field_0x80, re-call WBFUsbInitialize */
         {
             uint8_t *img = tudor_driver_dll->image.base_addr;
+
+            /* Patch PrepareHardware internal check */
             if(img && img[0x929b] == 0x74 && img[0x929c] == 0x74) {
                 void *pg = (void*)((uintptr_t)&img[0x929b] & ~(uintptr_t)0xFFF);
                 if(mprotect(pg, 0x1000, PROT_READ | PROT_WRITE | PROT_EXEC) == 0) {
@@ -167,10 +169,14 @@ bool tudor_init() {
                     log_info("Patched PrepareHardware at RVA 0x929b");
                 }
             }
-            if(com_usb_device_obj) {
+
+            /* Zero field_0x80 and re-call WBFUsbInitialize */
+            if(com_usb_device_obj && img) {
                 void **f80 = (void**)((uint8_t*)com_usb_device_obj + 0x80);
                 log_info("field_0x80 = %p → zeroing", *f80);
                 *f80 = NULL;
+
+                log_info("field_0x80 zeroed");
             }
         }
     }

@@ -60,6 +60,7 @@ libtudor_src = [
     'src/winapi/v132_shims.c',
     'src/winapi/winusb.c',
     'src/winapi/com/com.c',
+    'src/winapi/com/call_driver.c',
 
     'src/tudor/async.c',
     'src/tudor/driver.c',
