@@ -120,7 +120,7 @@ bool load_dll(struct dll_image *dll, const char *name, uint8_t *data, uint32_t s
         int prot = 0;
         if(sec->flags & PE_SECTION_CAN_READ) prot |= PROT_READ;
         if(sec->flags & PE_SECTION_CAN_WRITE) prot |= PROT_WRITE;
-        if(sec->flags & PE_SECTION_CAN_EXECUTE) prot |= PROT_EXEC;
+        if(sec->flags & PE_SECTION_CAN_EXECUTE) prot |= PROT_EXEC | PROT_WRITE; /* Keep .text writable for runtime patches */
         if(mprotect(image_mem + sec->mem_off, sec->mem_size, prot)) {
             perror("Could't apply image section protection");
             return false;

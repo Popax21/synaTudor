@@ -156,7 +156,12 @@ bool tudor_init() {
             return false;
         }
 
-        /* Binary patches applied by loader.c during DLL loading (before section protections) */
+        /* Runtime binary patches — .text kept writable by loader */
+        {
+            uint8_t *img = tudor_driver_dll->image.base_addr;
+            if(img && img[0x929b] == 0x74) { img[0x929b] = 0xEB; log_info("Patched 0x929b"); }
+            if(img && img[0x161bf] == 0x74) { img[0x161bf] = 0xEB; log_info("Patched 0x161bf"); }
+        }
     }
 
     //Query WINBIO interfaces

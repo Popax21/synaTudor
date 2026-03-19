@@ -172,8 +172,7 @@ void com_shutdown_driver(void);
 /* Route an IOCTL through the COM IQueueCallbackDeviceIoControl path */
 NTSTATUS com_send_ioctl(ULONG code, const void *in_buf, size_t in_size, void *out_buf, size_t out_size, size_t *bytes_returned);
 
-/* The {1493cd1b...} interface = CBiometricDeviceUSB base pointer.
-   Used for WBFUsbInitialize call and driver object field access. */
+/* The {1493cd1b...} interface = CBiometricDeviceUSB base pointer */
 extern void *com_usb_device_obj;
 
 /* Access to driver-provided callback interfaces (set during OnDeviceAdd) */

@@ -96,8 +96,9 @@ bool tudor_open(struct tudor_device *device, libusb_device_handle *usb_dev, stru
         device->wdf_device = NULL;
         device->wdf_file = NULL;
 
-        //WBFUsbInitialize will be called by the WINBIO pipeline reset
-        //via the patched code path — no separate call needed
+        /* WBFUsbInitialize needs to be called from main thread after patches.
+           Cannot add any new function references here without crashing (.data layout).
+           TODO: Use LD_PRELOAD or fix the thread context for call_driver.c's thread. */
         log_info("COM path: device setup complete");
     } else {
         //WDF v2 path: open the device through the driver

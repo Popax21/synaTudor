@@ -1,7 +1,5 @@
 /*
  * Isolated ms_abi trampoline for calling driver functions.
- * ALL ms_abi function pointer code lives here to avoid .data layout
- * shifts in other compilation units.
  */
 #include <stdint.h>
 #include <tudor/log.h>
@@ -9,26 +7,30 @@
 typedef unsigned int HRESULT;
 typedef HRESULT __attribute__((ms_abi)) (*driver_fn_t)(void *self);
 
-/* These are set by other modules */
 extern void *com_usb_device_obj;
-
-/* Image base — set by tudor_set_driver_image_base() */
-static void *driver_image_base = 0;
-
-void tudor_set_driver_image_base(void *base) {
-    driver_image_base = base;
-}
+struct windrv_dll;
+extern struct windrv_dll *tudor_driver_dll;
+struct winmodule;
+extern void winmodule_set_cur(struct winmodule *);
+extern void win_init_tib(void);
 
 void tudor_call_wbf_usb_init(void) {
-    if(!com_usb_device_obj || !driver_image_base) {
-        log_warn("WBF trampoline: missing obj=%p base=%p", com_usb_device_obj, driver_image_base);
+    if(!com_usb_device_obj || !tudor_driver_dll) return;
+
+    /* Get image base: winmodule(48) + pe_image(8) + pe_image_end(8) = offset 64 */
+    void *base_addr = *(void**)((uint8_t*)tudor_driver_dll + 64);
+    if(!base_addr) return;
+
+    uint8_t *img = (uint8_t*)base_addr;
+    if(img[0x929b] != 0xEB || img[0x161bf] != 0xEB) {
+        log_debug("[WBF] Patches not active — skipping");
         return;
     }
 
-    uint8_t *base = (uint8_t*)driver_image_base;
-    driver_fn_t wbf = (driver_fn_t)(base + 0x16160);
+    driver_fn_t wbf_init = (driver_fn_t)(img + 0x16160);
+    winmodule_set_cur((struct winmodule*)tudor_driver_dll);
 
-    log_info("WBFUsbInitialize via trampoline...");
-    HRESULT hr = wbf(com_usb_device_obj);
-    log_info("WBFUsbInitialize returned 0x%x", hr);
+    log_info("[WBF] Calling WBFUsbInitialize (main thread, patches active)...");
+    HRESULT hr = wbf_init(com_usb_device_obj);
+    log_info("[WBF] WBFUsbInitialize returned 0x%x", hr);
 }
