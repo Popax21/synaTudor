@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <pthread.h>
+#include <stddef.h>
 
 typedef unsigned int HRESULT;
 typedef HRESULT __attribute__((ms_abi)) (*driver_fn_t)(void *self);
@@ -91,13 +92,16 @@ static void wbf_sigusr(int sig) {
     n = snprintf(buf, sizeof(buf), "[WBF] WBFUsbInit returned 0x%x\n", hr);
     write(2, buf, n);
 
-    /* Set sensor name at base+0x90 (used by InitializeNiseCore → palUsbDriverOpen) */
+    /* Set device path at base+0x90/0x98 (used by GetDevicePath + palUsbDriverOpen).
+       base+0x90 = DWORD size, base+0x98 = WCHAR* path string */
     void *base_ptr = (uint8_t*)*p_usb_obj - 0x08;
-    char **sensor_name = (char**)((uint8_t*)base_ptr + 0x90);
-    if(!*sensor_name) {
-        static char name[] = "ff82a8343717"; /* Sensor serial from lsusb */
-        *sensor_name = name;
-        write(2, "[WBF] Set sensor name at base+0x90\n", 34);
+    uint32_t *path_size = (uint32_t*)((uint8_t*)base_ptr + 0x90);
+    void **path_ptr = (void**)((uint8_t*)base_ptr + 0x98);
+    if(!*path_ptr) {
+        static wchar_t path[] = L"\\\\?\\USB#VID_047D&PID_00F2#ff82a8343717";
+        *path_ptr = path;
+        *path_size = sizeof(path);
+        write(2, "[WBF] Set device path at base+0x90/0x98\n", 40);
     }
 
     /* Call PrepareHardware → InitializeNiseCore */
@@ -111,17 +115,23 @@ static void wbf_sigusr(int sig) {
 static void *timer_thread(void *arg) {
     for(int i = 0; i < 30; i++) {
         usleep(500000);
-        if(p_usb_obj && *p_usb_obj && p_driver_dll && *p_driver_dll) {
-            void *base = *(void**)((uint8_t*)*p_driver_dll + 64);
-            if(base) {
-                uint8_t *img = (uint8_t*)base;
-                if(img[0x929b] == 0xEB && img[0x161bb] == 0x41) {
-                    kill(getpid(), SIGUSR1);
-                    return NULL;
-                }
-            }
+        if(!p_usb_obj || !*p_usb_obj || !p_driver_dll || !*p_driver_dll) continue;
+        void *base = *(void**)((uint8_t*)*p_driver_dll + 64);
+        if(!base) continue;
+        uint8_t *img = (uint8_t*)base;
+        if(i == 2) { /* After 1 second, log status */
+            char buf[80];
+            int n = snprintf(buf, sizeof(buf), "[WBF-TIMER] check: 0x929b=%02x 0x161bb=%02x\n",
+                img[0x929b], img[0x161bb]);
+            write(2, buf, n);
+        }
+        if(img[0x929b] == 0xEB && img[0x161bb] == 0x41) {
+            write(2, "[WBF-TIMER] Patches active! Sending SIGUSR1\n", 44);
+            kill(getpid(), SIGUSR1);
+            return NULL;
         }
     }
+    write(2, "[WBF-TIMER] Timed out waiting for patches\n", 42);
     return NULL;
 }
 
