@@ -91,11 +91,17 @@ static void wbf_sigusr(int sig) {
     n = snprintf(buf, sizeof(buf), "[WBF] WBFUsbInit returned 0x%x\n", hr);
     write(2, buf, n);
 
-    /* Now call PrepareHardware → InitializeNiseCore with USB available */
-    /* PrepareHardware = CBiometricDevice base method.
-       base = usb_self - 0x08. PrepareHardware at RVA 0x90f4. */
-    driver_fn_t prep_hw = (driver_fn_t)(img + 0x90f4);
+    /* Set sensor name at base+0x90 (used by InitializeNiseCore → palUsbDriverOpen) */
     void *base_ptr = (uint8_t*)*p_usb_obj - 0x08;
+    char **sensor_name = (char**)((uint8_t*)base_ptr + 0x90);
+    if(!*sensor_name) {
+        static char name[] = "ff82a8343717"; /* Sensor serial from lsusb */
+        *sensor_name = name;
+        write(2, "[WBF] Set sensor name at base+0x90\n", 34);
+    }
+
+    /* Call PrepareHardware → InitializeNiseCore */
+    driver_fn_t prep_hw = (driver_fn_t)(img + 0x90f4);
     write(2, "[WBF] >>> PrepareHardware <<<\n", 29);
     hr = prep_hw(base_ptr);
     n = snprintf(buf, sizeof(buf), "[WBF] PrepareHardware returned 0x%x\n", hr);
