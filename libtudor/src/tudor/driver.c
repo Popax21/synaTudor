@@ -162,6 +162,8 @@ bool tudor_init() {
             if(img && img[0x929b] == 0x74) { img[0x929b] = 0xEB; log_info("Patched 0x929b"); }
             if(img && img[0x161bf] == 0x74) { img[0x161bf] = 0xEB; log_info("Patched 0x161bf"); }
         }
+
+        /* WBFUsbInitialize called by delayed thread from call_driver.c */
     }
 
     //Query WINBIO interfaces
