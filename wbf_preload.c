@@ -92,21 +92,28 @@ static void wbf_sigusr(int sig) {
     n = snprintf(buf, sizeof(buf), "[WBF] WBFUsbInit returned 0x%x\n", hr);
     write(2, buf, n);
 
-    /* Set device path at base+0x90/0x98 (used by GetDevicePath + palUsbDriverOpen).
-       base+0x90 = DWORD size, base+0x98 = WCHAR* path string */
+    /* Set all known required fields before calling PrepareHardware */
     void *base_ptr = (uint8_t*)*p_usb_obj - 0x08;
+
+    /* Device path at base+0x90/0x98 */
     uint32_t *path_size = (uint32_t*)((uint8_t*)base_ptr + 0x90);
     void **path_ptr = (void**)((uint8_t*)base_ptr + 0x98);
     if(!*path_ptr) {
         static wchar_t path[] = L"\\\\?\\USB#VID_047D&PID_00F2#ff82a8343717";
         *path_ptr = path;
         *path_size = sizeof(path);
-        write(2, "[WBF] Set device path at base+0x90/0x98\n", 40);
     }
 
-    /* Call PrepareHardware → InitializeNiseCore */
+    /* "Device initialized" flag at base+0x4F1 */
+    *(uint8_t*)((uint8_t*)base_ptr + 0x4F1) = 1;
+
+    /* IUnknown at base+0x50 (QI result) */
+    void **unk_ptr = (void**)((uint8_t*)base_ptr + 0x50);
+    if(!*unk_ptr) *unk_ptr = *dev_at_58; /* Use our device as IUnknown */
+
+    write(2, "[WBF] Set device path + flags. Calling PrepareHardware...\n", 57);
+
     driver_fn_t prep_hw = (driver_fn_t)(img + 0x90f4);
-    write(2, "[WBF] >>> PrepareHardware <<<\n", 29);
     hr = prep_hw(base_ptr);
     n = snprintf(buf, sizeof(buf), "[WBF] PrepareHardware returned 0x%x\n", hr);
     write(2, buf, n);
