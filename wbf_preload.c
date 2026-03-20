@@ -38,9 +38,23 @@ static void wbf_sigusr(int sig) {
         write(2, "[WBF] [self+0x18] is NULL — skipping\n", 37);
         return;
     }
-    char dbg[80];
-    int dlen = snprintf(dbg, sizeof(dbg), "[WBF] [self+0x18] = %p\n", *self18);
+    /* Fix [self+0x18]: needs to be a COM IWDFIoTarget/IWDFUsbTargetDevice.
+       Use the USB target device created by the COM factory. */
+    void **p_usb_target = (void**)dlsym(RTLD_DEFAULT, "g_usb_target_device");
+
+    char dbg[120];
+    int dlen = snprintf(dbg, sizeof(dbg), "[WBF] [self+0x18]=%p, fixing to usb_target=%p\n",
+        *self18, p_usb_target);
     write(2, dbg, dlen);
+
+    /* Use USB target from [self+0x508] (stored by OnPrepareHardware's CreateUsbTargetDevice) */
+    void **self508 = (void**)((uint8_t*)*p_usb_obj + 0x508);
+    if(*self508) {
+        char buf2[80];
+        int n2 = snprintf(buf2, sizeof(buf2), "[WBF] Setting [self+0x18] to [self+0x508]=%p\n", *self508);
+        write(2, buf2, n2);
+        *self18 = *self508;
+    }
 
     driver_fn_t wbf = (driver_fn_t)(img + 0x16160);
     write(2, "[WBF] >>> WBFUsbInitialize <<<\n", 30);
