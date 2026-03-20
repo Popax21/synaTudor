@@ -88,7 +88,17 @@ static void wbf_sigusr(int sig) {
     driver_fn_t wbf = (driver_fn_t)(img + 0x16160);
     write(2, "[WBF] >>> WBFUsbInitialize <<<\n", 30);
     HRESULT hr = wbf(*p_usb_obj);
-    n = snprintf(buf, sizeof(buf), "[WBF] returned 0x%x\n", hr);
+    n = snprintf(buf, sizeof(buf), "[WBF] WBFUsbInit returned 0x%x\n", hr);
+    write(2, buf, n);
+
+    /* Now call PrepareHardware → InitializeNiseCore with USB available */
+    /* PrepareHardware = CBiometricDevice base method.
+       base = usb_self - 0x08. PrepareHardware at RVA 0x90f4. */
+    driver_fn_t prep_hw = (driver_fn_t)(img + 0x90f4);
+    void *base_ptr = (uint8_t*)*p_usb_obj - 0x08;
+    write(2, "[WBF] >>> PrepareHardware <<<\n", 29);
+    hr = prep_hw(base_ptr);
+    n = snprintf(buf, sizeof(buf), "[WBF] PrepareHardware returned 0x%x\n", hr);
     write(2, buf, n);
 }
 
