@@ -1,13 +1,9 @@
 /*
- * LD_PRELOAD shim: calls WBFUsbInitialize after binary patches are applied.
- * Usage: LD_PRELOAD=./wbf_preload.so tudor_cli ...
- *
- * This runs OUTSIDE libtudor.so so it doesn't affect .data layout.
- * It polls for the patches to be applied, then calls WBFUsbInitialize
- * via the function address computed from the DLL image base.
+ * LD_PRELOAD: WBFUsbInitialize via timer thread that sends SIGUSR1 to main.
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <unistd.h>
@@ -16,46 +12,58 @@
 typedef unsigned int HRESULT;
 typedef HRESULT __attribute__((ms_abi)) (*driver_fn_t)(void *self);
 
-static void *wbf_poll(void *arg) {
-    usleep(2000000); /* Wait 2s for tudor_init to complete */
+static void **p_usb_obj;
+static void **p_driver_dll;
+static void (*set_cur)(void*);
+static pid_t main_tid;
 
-    /* Find symbols in libtudor.so */
-    void **p_usb_obj = (void**)dlsym(RTLD_DEFAULT, "com_usb_device_obj");
-    void **p_driver_dll = (void**)dlsym(RTLD_DEFAULT, "tudor_driver_dll");
-    void (*init_tib)(void) = dlsym(RTLD_DEFAULT, "win_init_tib");
-    void (*set_cur)(void*) = dlsym(RTLD_DEFAULT, "winmodule_set_cur");
+static void wbf_sigusr(int sig) {
+    if(!p_usb_obj || !*p_usb_obj || !p_driver_dll || !*p_driver_dll) return;
 
-    if(!p_usb_obj || !p_driver_dll || !*p_usb_obj || !*p_driver_dll) {
-        fprintf(stderr, "[WBF-PRELOAD] Driver not initialized\n");
-        return NULL;
-    }
-
-    /* Get image base from windrv_dll struct (offset 64) */
     void *base = *(void**)((uint8_t*)*p_driver_dll + 64);
-    if(!base) return NULL;
-
+    if(!base) return;
     uint8_t *img = (uint8_t*)base;
-    if(img[0x929b] != 0xEB || img[0x161bf] != 0xEB) {
-        fprintf(stderr, "[WBF-PRELOAD] Patches not active\n");
-        return NULL;
-    }
+    if(img[0x929b] != 0xEB || img[0x161bb] != 0x41) return;
 
-    /* Initialize Windows thread state */
-    if(init_tib) init_tib();
     if(set_cur) set_cur(*p_driver_dll);
-
-    /* Call WBFUsbInitialize */
     driver_fn_t wbf = (driver_fn_t)(img + 0x16160);
-    fprintf(stderr, "[WBF-PRELOAD] Calling WBFUsbInitialize...\n");
+    write(2, "[WBF] >>> WBFUsbInitialize <<<\n", 30);
     HRESULT hr = wbf(*p_usb_obj);
-    fprintf(stderr, "[WBF-PRELOAD] WBFUsbInitialize returned 0x%x\n", hr);
+    char buf[64];
+    int n = snprintf(buf, sizeof(buf), "[WBF] returned 0x%x\n", hr);
+    write(2, buf, n);
+}
 
+static void *timer_thread(void *arg) {
+    for(int i = 0; i < 30; i++) { /* 15 seconds max */
+        usleep(500000);
+        if(p_usb_obj && *p_usb_obj && p_driver_dll && *p_driver_dll) {
+            void *base = *(void**)((uint8_t*)*p_driver_dll + 64);
+            if(base) {
+                uint8_t *img = (uint8_t*)base;
+                if(img[0x929b] == 0xEB && img[0x161bb] == 0x41) {
+                    /* Send signal to main thread */
+                    kill(getpid(), SIGUSR1);
+                    return NULL;
+                }
+            }
+        }
+    }
     return NULL;
 }
 
-__attribute__((constructor))
-static void start_poll(void) {
+__attribute__((constructor(65535)))
+static void setup(void) {
+    p_usb_obj = (void**)dlsym(RTLD_DEFAULT, "com_usb_device_obj");
+    p_driver_dll = (void**)dlsym(RTLD_DEFAULT, "tudor_driver_dll");
+    set_cur = dlsym(RTLD_DEFAULT, "winmodule_set_cur");
+
+    struct sigaction sa = {0};
+    sa.sa_handler = wbf_sigusr;
+    sa.sa_flags = 0;
+    sigaction(SIGUSR1, &sa, NULL);
+
     pthread_t t;
-    pthread_create(&t, NULL, wbf_poll, NULL);
+    pthread_create(&t, NULL, timer_thread, NULL);
     pthread_detach(t);
 }

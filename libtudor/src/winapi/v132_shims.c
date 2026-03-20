@@ -346,3 +346,22 @@ __winfnc LONG RegDeleteValueA(HANDLE key, const char *name) {
     return 0;
 }
 WINAPI(RegDeleteValueA)
+
+/* WBFUsbInitialize caller — invoked via resolve_windows_api after patches active */
+#include "tudor/internal.h"
+extern void *com_usb_device_obj;
+typedef DWORD __winfnc (*wbf_driver_fn)(void *self);
+extern int tudor_wbf_done;
+__winfnc void tudor_call_wbf_usb_init(void) {
+    if(!com_usb_device_obj || !tudor_driver_dll) return;
+    uint8_t *img = tudor_driver_dll->image.base_addr;
+    if(!img) return;
+    /* Only call when patches are active */
+    if(img[0x929b] != 0xEB || img[0x161bb] != 0x41) return;
+    tudor_wbf_done = 1; /* Prevent further calls */
+    winmodule_set_cur(&tudor_driver_dll->module);
+    log_info("Calling WBFUsbInitialize (patches active)...");
+    DWORD hr = ((wbf_driver_fn)(img + 0x16160))(com_usb_device_obj);
+    log_info("WBFUsbInitialize returned 0x%x", hr);
+}
+WINAPI(tudor_call_wbf_usb_init)

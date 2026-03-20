@@ -155,15 +155,12 @@ bool tudor_init() {
             log_error("COM driver initialization failed!");
             return false;
         }
-
-        /* Runtime binary patches — .text kept writable by loader */
+        /* Runtime binary patches */
         {
             uint8_t *img = tudor_driver_dll->image.base_addr;
             if(img && img[0x929b] == 0x74) { img[0x929b] = 0xEB; log_info("Patched 0x929b"); }
-            if(img && img[0x161bf] == 0x74) { img[0x161bf] = 0xEB; log_info("Patched 0x161bf"); }
+            if(img && img[0x161bb] == 0x49) { img[0x161bb] = 0x41; log_info("Patched 0x161bb"); }
         }
-
-        /* WBFUsbInitialize called by delayed thread from call_driver.c */
     }
 
     //Query WINBIO interfaces
