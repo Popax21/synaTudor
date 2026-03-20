@@ -26,6 +26,22 @@ static void wbf_sigusr(int sig) {
     if(img[0x929b] != 0xEB || img[0x161bb] != 0x41) return;
 
     if(set_cur) set_cur(*p_driver_dll);
+
+    /* Fix uninitialized COM object at [self+0x18].
+       The init code at RVA 0x162E8 reads this and calls vtable[15].
+       It should be a device interface file handle. Use com_usb_device_obj
+       as a proxy — not perfect but might prevent the NULL vtable crash. */
+    void **self18 = (void**)((uint8_t*)*p_usb_obj + 0x18);
+    if(!*self18) {
+        /* Try to find g_wdf_device — it's static, not exported.
+           Instead, use the usb_target_factory or device QI result. */
+        write(2, "[WBF] [self+0x18] is NULL — skipping\n", 37);
+        return;
+    }
+    char dbg[80];
+    int dlen = snprintf(dbg, sizeof(dbg), "[WBF] [self+0x18] = %p\n", *self18);
+    write(2, dbg, dlen);
+
     driver_fn_t wbf = (driver_fn_t)(img + 0x16160);
     write(2, "[WBF] >>> WBFUsbInitialize <<<\n", 30);
     HRESULT hr = wbf(*p_usb_obj);
