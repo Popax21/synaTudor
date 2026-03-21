@@ -66,6 +66,156 @@ static void init_fake_obj(void) {
     fake_com_obj.vtbl = fake_vtbl;
 }
 
+/* ─── USB control transfer implementation ─── */
+
+/*
+ * Replace the stubbed FormatRequestForControlTransfer (vtable[16]) with a
+ * real implementation that performs the USB control transfer via libusb.
+ *
+ * In WDF, FormatRequestForControlTransfer just stores the setup packet in the
+ * request. The actual transfer happens on Send(). But since the driver likely
+ * does synchronous Send() right after, we perform the transfer immediately
+ * and store the result in the memory buffer.
+ *
+ * WINUSB_SETUP_PACKET layout (8 bytes):
+ *   uint8_t  RequestType
+ *   uint8_t  Request
+ *   uint16_t Value
+ *   uint16_t Index
+ *   uint16_t Length
+ *
+ * com_memory layout: { com_object obj; void *buffer; size_t size; }
+ * com_object layout: { void *vtbl; uint32_t ref_count; uint32_t _pad; void *impl_data; }
+ */
+
+/* libusb handle from libtudor.so */
+static void **p_libusb_dev = NULL;
+
+typedef void *libusb_dev_handle_t;
+/* libusb_control_transfer from the system libusb */
+static int (*real_libusb_control_transfer)(libusb_dev_handle_t dev,
+    uint8_t bmRequestType, uint8_t bRequest, uint16_t wValue,
+    uint16_t wIndex, unsigned char *data, uint16_t wLength,
+    unsigned int timeout);
+
+static HRESULT __attribute__((ms_abi)) real_format_ctrl_transfer(
+    void *self, void *request, void *setup_packet, void *memory, void *offset)
+{
+    char buf[200];
+    int n;
+
+    write(2, "[USB-CTRL] >>> real_format_ctrl_transfer CALLED <<<\n", 51);
+
+    if(!setup_packet) {
+        write(2, "[USB-CTRL] No setup packet!\n", 27);
+        return 0; /* S_OK — let it proceed */
+    }
+
+    uint8_t *sp = (uint8_t*)setup_packet;
+    uint8_t  bmRequestType = sp[0];
+    uint8_t  bRequest      = sp[1];
+    uint16_t wValue        = *(uint16_t*)(sp + 2);
+    uint16_t wIndex        = *(uint16_t*)(sp + 4);
+    uint16_t wLength       = *(uint16_t*)(sp + 6);
+
+    n = snprintf(buf, sizeof(buf),
+        "[USB-CTRL] bmReqType=0x%02x bReq=0x%02x wVal=0x%04x wIdx=0x%04x wLen=%u\n",
+        bmRequestType, bRequest, wValue, wIndex, wLength);
+    write(2, buf, n);
+
+    /* Get the data buffer from the memory object */
+    unsigned char *data_buf = NULL;
+    size_t data_size = 0;
+    if(memory) {
+        /* com_memory: { com_object(24 bytes), void *buffer, size_t size } */
+        uint8_t *mem = (uint8_t*)memory;
+        data_buf = *(unsigned char**)(mem + 24);   /* buffer pointer */
+        data_size = *(size_t*)(mem + 32);          /* size */
+    }
+
+    /* Perform actual USB control transfer via libusb */
+    if(p_libusb_dev && *p_libusb_dev && real_libusb_control_transfer) {
+        unsigned char xfer_buf[4096];
+        uint16_t xfer_len = (wLength < sizeof(xfer_buf)) ? wLength : sizeof(xfer_buf);
+
+        /* For OUT transfers, copy data from memory to xfer_buf */
+        if(!(bmRequestType & 0x80) && data_buf && xfer_len > 0) {
+            size_t copy_len = (xfer_len < data_size) ? xfer_len : data_size;
+            memcpy(xfer_buf, data_buf, copy_len);
+        }
+
+        int ret = real_libusb_control_transfer(*p_libusb_dev,
+            bmRequestType, bRequest, wValue, wIndex,
+            xfer_buf, xfer_len, 5000);
+
+        n = snprintf(buf, sizeof(buf), "[USB-CTRL] libusb_control_transfer: ret=%d\n", ret);
+        write(2, buf, n);
+
+        /* For IN transfers, copy response to memory buffer */
+        if(ret >= 0 && (bmRequestType & 0x80) && data_buf) {
+            size_t copy_len = (ret < (int)data_size) ? ret : data_size;
+            memcpy(data_buf, xfer_buf, copy_len);
+        }
+    } else {
+        write(2, "[USB-CTRL] No libusb device or function available\n", 50);
+    }
+
+    return 0; /* S_OK */
+}
+
+static void patch_usb_target_vtable(void) {
+    char buf[200];
+    int n;
+
+    if(!p_usb_obj) return;
+
+    /*
+     * g_usb_target_vtbl is at a fixed offset from com_usb_device_obj in libtudor.so.
+     * From nm: g_usb_target_vtbl @ 0x1e37c0, com_usb_device_obj @ 0x1e5288
+     * Offset: 0x1e5288 - 0x1e37c0 = 0x1ac8
+     */
+    /*
+     * g_usb_target_vtbl is at com_usb_device_obj_addr - 0x1ac8
+     * g_usb_target_device is at com_usb_device_obj_addr - 0x1ba8
+     */
+    void **usb_target_vtbl = (void**)((uint8_t*)p_usb_obj - 0x1ac8);
+    void *usb_target_device = (void*)((uint8_t*)p_usb_obj - 0x1ba8);
+
+    /* Verify: g_usb_target_device.vtbl should point to g_usb_target_vtbl */
+    void **dev_vtbl_ptr = *(void***)usb_target_device;
+
+    n = snprintf(buf, sizeof(buf),
+        "[USB-CTRL] p_usb_obj=%p calculated_vtbl=%p dev_at=%p dev->vtbl=%p match=%s\n",
+        (void*)p_usb_obj, (void*)usb_target_vtbl, usb_target_device,
+        (void*)dev_vtbl_ptr, (dev_vtbl_ptr == usb_target_vtbl) ? "YES" : "NO");
+    write(2, buf, n);
+
+    if(dev_vtbl_ptr != usb_target_vtbl) {
+        /* Try to find the actual vtable by reading through the device object */
+        write(2, "[USB-CTRL] Vtable mismatch! Patching via device->vtbl instead\n", 62);
+        usb_target_vtbl = dev_vtbl_ptr;
+    }
+
+    n = snprintf(buf, sizeof(buf),
+        "[USB-CTRL] Patching vtbl at %p, slot[16] was %p\n",
+        (void*)usb_target_vtbl, usb_target_vtbl[16]);
+    write(2, buf, n);
+
+    usb_target_vtbl[16] = (void*)real_format_ctrl_transfer;
+
+    /* Verify the patch by reading the value back */
+    n = snprintf(buf, sizeof(buf),
+        "[USB-CTRL] Patched slot[16] → %p (verify: slot[16]=%p)\n",
+        (void*)real_format_ctrl_transfer, usb_target_vtbl[16]);
+    write(2, buf, n);
+
+    /* Also check nearby slots to understand the vtable layout */
+    for(int i = 14; i <= 20; i++) {
+        n = snprintf(buf, sizeof(buf), "[USB-CTRL] vtbl[%d] = %p\n", i, usb_target_vtbl[i]);
+        write(2, buf, n);
+    }
+}
+
 /* ─── VFM/PAL direct initialization ─── */
 
 static void do_vfm_init(uint8_t *img) {
@@ -88,6 +238,9 @@ static void do_vfm_init(uint8_t *img) {
     int rc = set_dbg_cb(dbg_cb);
     n = snprintf(buf, sizeof(buf), "[VFM] set_debug_callback: %d\n", rc);
     write(2, buf, n);
+
+    /* Step 2.5: Patch USB target vtable BEFORE any VFM calls that use it */
+    patch_usb_target_vtable();
 
     /* Step 2: Create VFM session */
     fn_session_init_t session_init = (fn_session_init_t)(img + 0x2f780);
@@ -197,6 +350,8 @@ static void do_vfm_init(uint8_t *img) {
         write(2, buf, n);
     }
 
+    /* (vtable already patched in Step 2.5 above) */
+
     write(2, "[VFM] === VFM/PAL initialization complete ===\n", 47);
 }
 
@@ -272,6 +427,17 @@ static void setup(void) {
     p_usb_obj = (void**)dlsym(RTLD_DEFAULT, "com_usb_device_obj");
     p_driver_dll = (void**)dlsym(RTLD_DEFAULT, "tudor_driver_dll");
     set_cur = dlsym(RTLD_DEFAULT, "winmodule_set_cur");
+    p_libusb_dev = (void**)dlsym(RTLD_DEFAULT, "tudor_com_usb_dev");
+    real_libusb_control_transfer = dlsym(RTLD_DEFAULT, "libusb_control_transfer");
+
+    /*
+     * Patch the USB target vtable IMMEDIATELY — the driver caches function
+     * pointers from the vtable during OnDeviceAdd/WBFUsbInitialize, so we
+     * must patch BEFORE tudor_init() runs.
+     */
+    if(p_usb_obj) {
+        patch_usb_target_vtable();
+    }
 
     pthread_t t;
     pthread_create(&t, NULL, timer_thread, NULL);
