@@ -484,9 +484,21 @@ static void do_vfm_init(uint8_t *img) {
         typedef int __attribute__((ms_abi)) (*fn_dev_init_t)(void *dev_handle, void *param2);
         fn_dev_init_t dev_init = (fn_dev_init_t)(img + 0x196d0);
 
-        /* Skip vfmDeviceInitialize — crashes at SSI layer (si_addr=0x14c).
-         * The SSI module needs deep internal state we haven't set up.
-         * Session is already established, try capture directly. */
+        /* Binary-patch tudorCaptureStart: change the NAV state check
+         * (MOV [RSP+0x34], 0x68) at RVA 0x58bea to MOV [RSP+0x34], 0.
+         * This forces the NAV check to "succeed" instead of returning 0x68.
+         * The instruction bytes at 0x58bea: C7 44 24 34 68 00 00 00
+         * We change byte at 0x58bee (the 0x68 immediate) to 0x00. */
+        /* Patch ALL 0x68 error returns in the tudor capture chain.
+         * Found 4 locations via Ghidra instruction search. */
+        int patches_68[] = { 0x58bee, 0x5a39a, 0x6537d, 0x68fc4 };
+        for(int i = 0; i < 4; i++) {
+            if(img[patches_68[i]] == 0x68) {
+                img[patches_68[i]] = 0x00;
+                n = snprintf(buf, sizeof(buf), "[VFM] Patched 0x%x (0x68→0x00)\n", patches_68[i]);
+                write(2, buf, n);
+            }
+        }
 
         /*
          * vfmCaptureStart(dev_handle, purpose, options, timeout)
@@ -502,6 +514,23 @@ static void do_vfm_init(uint8_t *img) {
             "[VFM] dev_handle[0..4]: %p %p %p %p %p\n",
             dh[0], dh[1], dh[2], dh[3], dh[4]);
         write(2, buf, n);
+
+        /* dh[0] is the USB device container. Dump its structure. */
+        if(dh[0]) {
+            void **usb_container = (void**)dh[0];
+            n = snprintf(buf, sizeof(buf),
+                "[VFM] dh[0] (USB container): [0]=%p [1]=%p\n",
+                usb_container[0], usb_container[1]);
+            write(2, buf, n);
+            /* Check if dh[0][0] is the PAL USB 0xC0 struct */
+            if(usb_container[0]) {
+                uint8_t *pal_usb = (uint8_t*)usb_container[0];
+                n = snprintf(buf, sizeof(buf),
+                    "[VFM] PAL USB struct? +0xb0=%p +0xb8=%p\n",
+                    *(void**)(pal_usb + 0xb0), *(void**)(pal_usb + 0xb8));
+                write(2, buf, n);
+            }
+        }
 
         /* vfmDeviceInitialize passes **(dev_handle+8) = *dh[1] to tudorInitDevice.
          * The tudor function accesses the sensor struct at large offsets (0xD8, 0xC4, etc.)
@@ -582,6 +611,94 @@ static void do_vfm_init(uint8_t *img) {
             }
         }
 
+        /* PAL session start confirmed working (via vfmDeviceSessionStart).
+         * The PAL struct has only +0xb0 populated; other commands crash.
+         * Skip PAL direct tests — focus on fixing the tudor sensor struct. */
+        if(0) {
+            typedef int __attribute__((ms_abi)) (*fn_pal_ioctl_t)(
+                void *driver_ctx, int cmd, void *data, int data_len,
+                void *resp, int resp_len, void *error);
+            fn_pal_ioctl_t pal_ioctl = (fn_pal_ioctl_t)(img + 0x437c0);
+
+            /* The PAL driver context is **tudor_sensor (proto_ctx[0]).
+             * Tudor layer: sensor → proto_ctx → driver_handle → PAL functions
+             * NOT dh[0] — that's the VFM-level USB device, different from PAL context. */
+            void *tudor_sensor = dh[1] ? *(void**)dh[1] : NULL;
+            void *proto_ctx = tudor_sensor ? *(void**)tudor_sensor : NULL;
+            void *pal_ctx = proto_ctx ? *(void**)proto_ctx : NULL;
+            n = snprintf(buf, sizeof(buf),
+                "[PAL] Chain: tudor_sensor=%p proto_ctx=%p pal_ctx=%p\n",
+                tudor_sensor, proto_ctx, pal_ctx);
+            write(2, buf, n);
+
+            /* Dump pal_ctx contents around offset 0x5F to find the NULL */
+            if(pal_ctx) {
+                uint8_t *pc = (uint8_t*)pal_ctx;
+                n = snprintf(buf, sizeof(buf),
+                    "[PAL] pal_ctx: +0x00=%p +0x08=%p +0x10=%p +0x50=%p +0x58=%p +0x60=%p\n",
+                    *(void**)(pc), *(void**)(pc+8), *(void**)(pc+0x10),
+                    *(void**)(pc+0x50), *(void**)(pc+0x58), *(void**)(pc+0x60));
+                write(2, buf, n);
+            }
+
+            n = snprintf(buf, sizeof(buf), "[PAL] Testing palDriverIoControl(ctx=%p, cmd=2/ReadInfo)\n", pal_ctx);
+            write(2, buf, n);
+
+            /* But wait — maybe the PAL context for palDriverIoControl is NOT pal_ctx
+             * (= proto_ctx[0]) but rather the PAL USB struct from dh[0].
+             * The PAL USB struct has the WinUSB interface at +0xb0.
+             * palDriverIoControl may expect the PAL USB struct directly. */
+            void *pal_usb_struct = dh[0] ? *(void**)dh[0] : NULL;
+            n = snprintf(buf, sizeof(buf),
+                "[PAL] pal_usb_struct=%p (from *dh[0]), pal_ctx=%p SAME=%s\n",
+                pal_usb_struct, pal_ctx,
+                (pal_usb_struct == pal_ctx) ? "YES" : "NO");
+            write(2, buf, n);
+
+            /* Try session start first (uses +0xb0 only) */
+            uint32_t sess_type = 1;
+            uint8_t sess_resp = 0;
+            rc = pal_ioctl(pal_usb_struct, 0x15, &sess_type, 4, &sess_resp, 1, NULL);
+            n = snprintf(buf, sizeof(buf),
+                "[PAL] SessionStart(cmd=0x15): rc=%d resp=%d\n", rc, sess_resp);
+            write(2, buf, n);
+
+            /* Now try Device Reset (cmd=1) — needs +0x00 populated.
+             * The WinUSB interface struct at +0xb0 has the real handles.
+             * Let's set +0x00 to point to the WinUSB interface struct,
+             * since that's where the USB functions live. */
+            if(pal_usb_struct) {
+                uint8_t *pus = (uint8_t*)pal_usb_struct;
+                void *winusb_iface = *(void**)(pus + 0xb0);
+                if(winusb_iface && *(void**)pus == NULL) {
+                    n = snprintf(buf, sizeof(buf),
+                        "[PAL] Populating pal_ctx+0x00 with WinUSB interface %p\n", winusb_iface);
+                    write(2, buf, n);
+                    *(void**)pus = winusb_iface;
+                }
+
+                /* Try device reset (cmd=1) — simplest command */
+                rc = pal_ioctl(pal_usb_struct, 1, NULL, 0, NULL, 0, NULL);
+                n = snprintf(buf, sizeof(buf), "[PAL] DeviceReset(cmd=1): rc=%d\n", rc);
+                write(2, buf, n);
+
+                /* Try bulk read from EP0 (cmd=3) — reads sensor data via control transfer */
+                if(rc == 0) {
+                    uint8_t bulk_resp[64];
+                    memset(bulk_resp, 0, sizeof(bulk_resp));
+                    rc = pal_ioctl(pal_usb_struct, 3, NULL, 0, bulk_resp, 32, NULL);
+                    n = snprintf(buf, sizeof(buf),
+                        "[PAL] BulkReadEP0(cmd=3): rc=%d data=[%02x %02x %02x %02x]\n",
+                        rc, bulk_resp[0], bulk_resp[1], bulk_resp[2], bulk_resp[3]);
+                    write(2, buf, n);
+                }
+            }
+
+            if(rc == 0) {
+                write(2, "[PAL] *** USB COMMUNICATION CONFIRMED! ***\n", 43);
+            }
+        }
+
         /* Call tudorCaptureStart directly via module vtable to bypass VFM wrapper */
         {
             /* Get the module vtable */
@@ -611,18 +728,40 @@ static void do_vfm_init(uint8_t *img) {
                 void *proto = *(void**)tudor_sensor;
                 void *driver_handle = proto ? *(void**)proto : NULL;
 
+                /* Check what function is at sensor+0xD8 (proto IoControl) */
+                void *proto_fn = *(void**)((uint8_t*)tudor_sensor + 0xD8);
+                ptrdiff_t proto_fn_rva = proto_fn ? (uint8_t*)proto_fn - img : -1;
+
                 n = snprintf(buf, sizeof(buf),
-                    "[VFM] tudor_sensor=%p state+0xC4=%u +0xC0=%u proto=%p *proto=%p\n",
-                    tudor_sensor, state_c4, retry_c0, proto, driver_handle);
+                    "[VFM] tudor_sensor=%p state+0xC4=%u proto_fn=%p (RVA 0x%tx)\n",
+                    tudor_sensor, state_c4, proto_fn, proto_fn_rva);
                 write(2, buf, n);
 
-                uint32_t action_info[4] = {0};
+                /* Replace module_vtable+0x80 with a hook that wraps the real function */
+                fn_tudor_cap_t real_tudor_cap = tudor_capture;
+                static fn_tudor_cap_t saved_real_cap = NULL;
+                saved_real_cap = real_tudor_cap;
+
+                /* For now, call directly and check sensor setup return */
+                uint32_t action_info[8] = {0};
+                write(2, "[VFM] Calling tudorCaptureStart...\n", 34);
                 rc = tudor_capture(tudor_sensor, action_info, 2, 0, 5000);
+
+                /* Check sensor state after the call */
+                uint32_t state_after = *(uint32_t*)((uint8_t*)tudor_sensor + 0xC4);
+                uint32_t retry_count = *(uint32_t*)((uint8_t*)tudor_sensor + 0xC0);
+
                 n = snprintf(buf, sizeof(buf),
-                    "[VFM] tudorCaptureStart: rc=%d (0x%x) action=[%u %u %u %u] state_after=%u\n",
-                    rc, rc, action_info[0], action_info[1], action_info[2], action_info[3],
-                    *(uint32_t*)((uint8_t*)tudor_sensor + 0xC4));
+                    "[VFM] tudorCaptureStart: rc=%d (0x%x) state=%u retries=%u action=[%u %u]\n",
+                    rc, rc, state_after, retry_count, action_info[0], action_info[1]);
                 write(2, buf, n);
+
+                /* If rc is from sensor setup, try calling with different parameters */
+                if(rc != 0 && rc != 0x68) {
+                    n = snprintf(buf, sizeof(buf),
+                        "[VFM] Non-0x68 error! rc=%d (0x%x) — this is the REAL error!\n", rc, rc);
+                    write(2, buf, n);
+                }
             }
         }
 
