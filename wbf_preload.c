@@ -409,6 +409,11 @@ static void do_vfm_init(uint8_t *img) {
          * OnGetSensorStatus reads this field for the actual status value. */
         *(uint32_t*)(cpp_obj + 0x84) = 3;  /* WINBIO_SENSOR_READY */
 
+        /* Set session-active flag at +0x4F1.
+         * SessionStart checks this — if 0, tries to re-open session.
+         * Since we already opened the session, set to 1. */
+        *(uint8_t*)(cpp_obj + 0x4F1) = 1;
+
         n = snprintf(buf, sizeof(buf),
             "[VFM] Stored: init@+0x48=1 dev@+0x70=%p session@+0x78=%p degraded@+0xBC=0 status@+0x84=READY\n",
             dev_handle, session);
@@ -452,6 +457,47 @@ static void do_vfm_init(uint8_t *img) {
                 mgr, (void*)mgr_vtbl,
                 mgr_vtbl ? mgr_vtbl[0] : NULL,
                 mgr_vtbl ? mgr_vtbl[1] : NULL);
+            write(2, buf, n);
+        }
+    }
+
+    /* Step 7: Try to start a VFM device session (triggers actual USB communication) */
+    if(dev_handle) {
+        typedef int __attribute__((ms_abi)) (*fn_session_start_vfm_t)(void *dev_handle, uint32_t type, uint32_t *out_flag);
+        fn_session_start_vfm_t vfm_sess_start = (fn_session_start_vfm_t)(img + 0x1bbd0);
+
+        uint32_t out_flag = 0;
+        write(2, "[VFM] Calling vfmDeviceSessionStart...\n", 38);
+        rc = vfm_sess_start(dev_handle, 1, &out_flag);
+        n = snprintf(buf, sizeof(buf), "[VFM] vfmDeviceSessionStart: rc=%d out_flag=%u\n", rc, out_flag);
+        write(2, buf, n);
+    }
+
+    /* Step 8: Query sensor status through VFM session to verify USB communication */
+    if(dev_handle) {
+        /*
+         * FUN_1800437c0 = palDeviceSendReceive(inner_dev, cmd, data, data_len, resp, resp_len, err)
+         * vfmDeviceSessionStart uses cmd=0x15 (session start)
+         * Let's try cmd=0x0C (get info) or just check what the sensor returns
+         */
+        typedef int __attribute__((ms_abi)) (*fn_pal_sendrecv_t)(
+            void *inner_dev, int cmd, void *data, int data_len,
+            void *response, int resp_len, void *error);
+        fn_pal_sendrecv_t pal_sendrecv = (fn_pal_sendrecv_t)(img + 0x437c0);
+
+        /* Get the inner device pointer: dev_handle[0] */
+        void *inner_dev = *(void**)dev_handle;
+
+        if(inner_dev) {
+            uint8_t resp[64];
+            memset(resp, 0, sizeof(resp));
+            uint32_t cmd_data = 0;
+
+            write(2, "[VFM] Sending sensor status query (cmd=0x0C)...\n", 48);
+            rc = pal_sendrecv(inner_dev, 0x0C, &cmd_data, 4, resp, 32, NULL);
+            n = snprintf(buf, sizeof(buf),
+                "[VFM] Sensor query: rc=%d resp=[%02x %02x %02x %02x %02x %02x %02x %02x]\n",
+                rc, resp[0], resp[1], resp[2], resp[3], resp[4], resp[5], resp[6], resp[7]);
             write(2, buf, n);
         }
     }
@@ -504,8 +550,10 @@ NTSTATUS com_send_ioctl(unsigned long code, const void *in_buf, size_t in_size,
         }
     }
 
-    /* Intercept GET_SENSOR_STATUS when VFM is initialized */
-    if(code == IOCTL_BIOMETRIC_GET_SENSOR_STATUS && vfm_init_done && out_buf && out_size >= 12) {
+    /* ALWAYS intercept GET_SENSOR_STATUS — return READY even before VFM init.
+       The adapter latches sensor state during Activate — if it sees FAILURE,
+       it refuses to StartCapture even after VFM init completes later. */
+    if(code == IOCTL_BIOMETRIC_GET_SENSOR_STATUS && out_buf && out_size >= 12) {
         /* Return WINBIO_DIAGNOSTICS with SensorStatus = READY (3) */
         uint32_t *diag = (uint32_t*)out_buf;
         diag[0] = 12;  /* PayloadSize */
@@ -538,14 +586,27 @@ NTSTATUS com_send_ioctl(unsigned long code, const void *in_buf, size_t in_size,
         }
     }
 
-    /* Intercept ALL biometric IOCTLs — the driver's handler crashes because
-       the CBiometricDevice C++ object layout isn't fully reconstructed.
-       Provide proper WINBIO responses directly. */
+    /* Log ALL IOCTLs for diagnostic */
+    n = snprintf(buf, sizeof(buf), "[IOCTL] code=0x%lx in=%zu out=%zu fn=%lu\n",
+        code, in_size, out_size, (code >> 2) & 0xFFF);
+    write(2, buf, n);
+
+    /* Intercept CAPTURE_DATA (0x440014) and related standard IOCTLs that
+       would crash the driver's handler */
+    if(code == 0x440014 || code == 0x440018 || code == 0x44001c ||
+       code == 0x440020 || code == 0x440024) {
+        n = snprintf(buf, sizeof(buf), "[IOCTL] Standard BIOMETRIC code=0x%lx → empty success\n", code);
+        write(2, buf, n);
+        if(out_buf && out_size >= 4) {
+            memset(out_buf, 0, out_size);
+            *(uint32_t*)out_buf = (out_size > 4) ? (uint32_t)out_size : 4;
+        }
+        if(bytes_returned) *bytes_returned = (out_size >= 4) ? 4 : 0;
+        return STATUS_SUCCESS;
+    }
 
     /* Vendor IOCTLs (0x442xxx) — sensor commands */
     if((code & 0xFFFF0000) == 0x00440000 && (code & 0x2000)) {
-        n = snprintf(buf, sizeof(buf), "[IOCTL] VENDOR code=0x%lx out=%zu → empty success\n", code, out_size);
-        write(2, buf, n);
         if(out_buf && out_size >= 4) memset(out_buf, 0, out_size);
         if(bytes_returned) *bytes_returned = (out_size >= 4) ? 4 : 0;
         return STATUS_SUCCESS;
