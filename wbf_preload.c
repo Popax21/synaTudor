@@ -484,21 +484,47 @@ static void do_vfm_init(uint8_t *img) {
         typedef int __attribute__((ms_abi)) (*fn_dev_init_t)(void *dev_handle, void *param2);
         fn_dev_init_t dev_init = (fn_dev_init_t)(img + 0x196d0);
 
+        /* Set degraded flag on tudor sensor to skip device reset in tudorInitDevice.
+         * Without this, the reset cmd (0x12) crashes at PAL layer. */
+        {
+            void **dev_h = (void**)dev_handle;
+            if(dev_h[1]) {
+                void *ts = *(void**)dev_h[1];
+                if(ts) {
+                    *(uint32_t*)((uint8_t*)ts + 0xBC) = 1;
+                    write(2, "[VFM] Set tudor_sensor+0xBC=1 (skip device reset)\n", 50);
+                }
+            }
+        }
+
+        /* Call vfmDeviceInitialize to send FPS_INIT to sensor */
+        {
+            uint8_t init_out[256];
+            memset(init_out, 0, sizeof(init_out));
+            write(2, "[VFM] Calling vfmDeviceInitialize...\n", 36);
+            rc = dev_init(dev_handle, init_out);
+            n = snprintf(buf, sizeof(buf),
+                "[VFM] vfmDeviceInitialize: rc=%d (0x%x) out=[%02x %02x %02x %02x]\n",
+                rc, rc, init_out[0], init_out[1], init_out[2], init_out[3]);
+            write(2, buf, n);
+        }
+
         /* Binary-patch tudorCaptureStart: change the NAV state check
          * (MOV [RSP+0x34], 0x68) at RVA 0x58bea to MOV [RSP+0x34], 0.
          * This forces the NAV check to "succeed" instead of returning 0x68.
          * The instruction bytes at 0x58bea: C7 44 24 34 68 00 00 00
          * We change byte at 0x58bee (the 0x68 immediate) to 0x00. */
-        /* Patch ALL 0x68 error returns in the tudor capture chain.
-         * Found 4 locations via Ghidra instruction search. */
-        int patches_68[] = { 0x58bee, 0x5a39a, 0x6537d, 0x68fc4 };
-        for(int i = 0; i < 4; i++) {
+        /* Patch 3 of 4 error returns (0x68→0x00). Keep 0x68fc4 (TLS/crypto)
+         * unpatched to see the real error from the crypto layer. */
+        int patches_68[] = { 0x58bee, 0x5a39a, 0x6537d };
+        for(int i = 0; i < 3; i++) {
             if(img[patches_68[i]] == 0x68) {
                 img[patches_68[i]] = 0x00;
                 n = snprintf(buf, sizeof(buf), "[VFM] Patched 0x%x (0x68→0x00)\n", patches_68[i]);
                 write(2, buf, n);
             }
         }
+        /* Leave 0x68fc4 UNPATCHED — trace the real crypto error */
 
         /*
          * vfmCaptureStart(dev_handle, purpose, options, timeout)
@@ -772,6 +798,43 @@ static void do_vfm_init(uint8_t *img) {
 
         if(rc == 0) {
             write(2, "[VFM] *** SENSOR CAPTURE STARTED! Place your finger! ***\n", 57);
+
+            /* Poll vfmCaptureProcess for fingerprint data */
+            typedef int __attribute__((ms_abi)) (*fn_capture_proc_t)(
+                void *dev_handle, int *status, int *state, uint32_t *quality);
+            fn_capture_proc_t capture_process = (fn_capture_proc_t)(img + 0x2d340);
+
+            for(int attempt = 0; attempt < 30; attempt++) {
+                int cap_status = 0, cap_state = 0;
+                uint32_t quality = 0;
+
+                /* Small delay between polls */
+                typedef void __attribute__((ms_abi)) (*fn_sleep_t)(uint32_t ms);
+                fn_sleep_t pal_sleep = (fn_sleep_t)(img + 0x3dae0);
+                pal_sleep(500);
+
+                rc = capture_process(dev_handle, &cap_status, &cap_state, &quality);
+                n = snprintf(buf, sizeof(buf),
+                    "[VFM] CaptureProcess[%d]: rc=%d status=%d state=%d quality=%u\n",
+                    attempt, rc, cap_status, cap_state, quality);
+                write(2, buf, n);
+
+                if(rc != 0) break;
+                if(cap_state == 3) {
+                    write(2, "[VFM] *** FINGERPRINT IMAGE CAPTURED! ***\n", 42);
+                    break;
+                }
+                if(cap_state == 2) {
+                    write(2, "[VFM] Waiting for finger...\n", 27);
+                }
+            }
+
+            /* Clean up capture */
+            typedef int __attribute__((ms_abi)) (*fn_capture_fin_t)(void *dev_handle, int mode);
+            fn_capture_fin_t capture_finish = (fn_capture_fin_t)(img + 0x2da40);
+            rc = capture_finish(dev_handle, 1);
+            n = snprintf(buf, sizeof(buf), "[VFM] CaptureFinish: rc=%d\n", rc);
+            write(2, buf, n);
         }
     }
 
