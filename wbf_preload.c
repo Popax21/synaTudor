@@ -234,6 +234,22 @@ static void do_vfm_init(uint8_t *img) {
      *   0x1f0a0 — FUN_18001f0a0: vfmStgModuleInit(handle)
      */
 
+    /* Step 0: USB device reset BEFORE any VFM init.
+     * The sensor needs a USB reset to enter a clean state.
+     * This must happen before TLS session establishment. */
+    if(p_libusb_dev && *p_libusb_dev) {
+        typedef int (*fn_libusb_reset_t)(void *dev);
+        fn_libusb_reset_t libusb_reset = dlsym(RTLD_DEFAULT, "libusb_reset_device");
+        if(libusb_reset) {
+            write(2, "[VFM] USB device reset...\n", 25);
+            int rr = libusb_reset(*p_libusb_dev);
+            n = snprintf(buf, sizeof(buf), "[VFM] libusb_reset_device: rc=%d\n", rr);
+            write(2, buf, n);
+            /* Re-claim USB interfaces after reset */
+            /* (WinUsb_Initialize will re-claim when called by PAL init) */
+        }
+    }
+
     /* Step 1: Set VFM debug callback */
     fn_set_callback_t set_dbg_cb = (fn_set_callback_t)(img + 0x3d740);
     void *dbg_cb = (void*)(img + 0x13ee0);
@@ -484,29 +500,37 @@ static void do_vfm_init(uint8_t *img) {
         typedef int __attribute__((ms_abi)) (*fn_dev_init_t)(void *dev_handle, void *param2);
         fn_dev_init_t dev_init = (fn_dev_init_t)(img + 0x196d0);
 
-        /* Set degraded flag on tudor sensor to skip device reset in tudorInitDevice.
-         * Without this, the reset cmd (0x12) crashes at PAL layer. */
+        /* USB reset already done in Step 0 above */
+
+        /* Set degraded flag to skip PAL device reset in tudorInitDevice */
         {
             void **dev_h = (void**)dev_handle;
             if(dev_h[1]) {
                 void *ts = *(void**)dev_h[1];
-                if(ts) {
-                    *(uint32_t*)((uint8_t*)ts + 0xBC) = 1;
-                    write(2, "[VFM] Set tudor_sensor+0xBC=1 (skip device reset)\n", 50);
-                }
+                if(ts) *(uint32_t*)((uint8_t*)ts + 0xBC) = 1;
             }
         }
 
-        /* Call vfmDeviceInitialize to send FPS_INIT to sensor */
+        /* Try vfmDeviceInitialize (may fail with BMKT_SENSOR_NOT_INIT=204) */
         {
             uint8_t init_out[256];
             memset(init_out, 0, sizeof(init_out));
             write(2, "[VFM] Calling vfmDeviceInitialize...\n", 36);
             rc = dev_init(dev_handle, init_out);
             n = snprintf(buf, sizeof(buf),
-                "[VFM] vfmDeviceInitialize: rc=%d (0x%x) out=[%02x %02x %02x %02x]\n",
-                rc, rc, init_out[0], init_out[1], init_out[2], init_out[3]);
+                "[VFM] vfmDeviceInitialize: rc=%d (0x%x)\n", rc, rc);
             write(2, buf, n);
+
+            /* If init returned SENSOR_NOT_INIT (204), try calling it again.
+             * The first call might set up enough state for the second to work. */
+            if(rc == 204 || rc == 0xCC) {
+                write(2, "[VFM] Sensor says NOT_INIT, retrying...\n", 40);
+                memset(init_out, 0, sizeof(init_out));
+                rc = dev_init(dev_handle, init_out);
+                n = snprintf(buf, sizeof(buf),
+                    "[VFM] vfmDeviceInitialize retry: rc=%d (0x%x)\n", rc, rc);
+                write(2, buf, n);
+            }
         }
 
         /* Binary-patch tudorCaptureStart: change the NAV state check
