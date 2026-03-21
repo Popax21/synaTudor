@@ -165,6 +165,38 @@ static void do_vfm_init(uint8_t *img) {
         write(2, buf, n);
     }
 
+    /*
+     * Step 6: Store VFM session + device handle in the CBiometricDevice object
+     * so the driver's IOCTL handler can find them.
+     *
+     * InitializeNiseCore (FUN_180004de4) stores:
+     *   base + 0x48 = initialized flag (byte, set to 1)
+     *   base + 0x70 = device handle (from vfmUtilSessionGetDeviceHandle)
+     *   base + 0x78 = VFM session pointer
+     *
+     * com_usb_device_obj is the {1493cd1b} interface = base + 0x08
+     * So: base = com_usb_device_obj - 0x08
+     */
+    if(p_usb_obj && *p_usb_obj && session) {
+        uint8_t *base = (uint8_t*)*p_usb_obj - 0x08;
+
+        /* Set initialized flag */
+        *(uint8_t*)(base + 0x48) = 1;
+
+        /* Store VFM session */
+        *(void**)(base + 0x78) = session;
+
+        /* Store device handle */
+        if(dev_handle) {
+            *(void**)(base + 0x70) = dev_handle;
+        }
+
+        n = snprintf(buf, sizeof(buf),
+            "[VFM] Stored in CBiometricDevice: base=%p session@+0x78=%p dev@+0x70=%p init@+0x48=1\n",
+            (void*)base, session, dev_handle);
+        write(2, buf, n);
+    }
+
     write(2, "[VFM] === VFM/PAL initialization complete ===\n", 47);
 }
 
