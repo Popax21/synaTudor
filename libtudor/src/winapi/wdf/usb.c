@@ -193,6 +193,25 @@ __winfnc NTSTATUS WdfUsbTargetDeviceCreate(WDF_DRIVER_GLOBALS *globals, WDFOBJEC
         }
     }
 
+    //Send vendor init sequence to wake the sensor
+    //The sensor needs SET_IDLE + vendor 0x19/0x1a before accepting interrupt transfers
+    {
+        uint8_t resp;
+
+        //SET_IDLE: bmRequestType=0x21 (class, interface, OUT), bRequest=0x0A
+        libusb_control_transfer(usb_dev->libusb_dev, 0x21, 0x0A, 0, 0, NULL, 0, 1000);
+        log_info("Sensor init: SET_IDLE sent");
+
+        //Vendor OUT: bRequest=0x19 (session/reset start)
+        libusb_control_transfer(usb_dev->libusb_dev, 0x40, 0x19, 0, 0, NULL, 0, 1000);
+        log_info("Sensor init: Vendor 0x19 sent");
+
+        //Vendor IN: bRequest=0x1a (session ack, 1 byte)
+        resp = 0;
+        int ret = libusb_control_transfer(usb_dev->libusb_dev, 0xC0, 0x1a, 0, 0, &resp, 1, 1000);
+        log_info("Sensor init: Vendor 0x1a → ret=%d resp=0x%02x", ret, resp);
+    }
+
     wdf_set_usb_device(dev, usb_dev);
     *out = &usb_dev->object;
     return STATUS_SUCCESS;
@@ -384,6 +403,9 @@ static void pipe_transfer_callback(struct libusb_transfer *transfer) {
         return;
     }
 
+    log_info("USB CB: ep=0x%02x status=%d actual=%d/%d",
+        transfer->endpoint, transfer->status, transfer->actual_length, transfer->length);
+
     NTSTATUS status = STATUS_SUCCESS;
     if(transfer->status != LIBUSB_TRANSFER_COMPLETED) {
         log_warn("libusb transfer failed: %d [%s]", transfer->status, libusb_error_name(transfer->status));
@@ -442,6 +464,19 @@ static NTSTATUS usb_transfer_start(struct winwdf_request *req, struct transfer_r
 
     if(ctx->ctrl_buf) {
         memcpy((BYTE*) ctx->ctrl_buf + sizeof(struct libusb_control_setup), ctx->mem->data + ctx->mem_off.BufferOffset, ctx->mem_off.BufferLength);
+    }
+
+    //Log transfer details
+    log_info("USB XFER: ep=0x%02x type=%d len=%d timeout=%d",
+        ctx->transfer->endpoint, ctx->transfer->type,
+        ctx->transfer->length, ctx->transfer->timeout);
+    if(ctx->transfer->length > 0 && ctx->transfer->buffer && (ctx->transfer->endpoint & 0x80) == 0) {
+        BYTE *b = ctx->transfer->buffer;
+        log_info("USB XFER OUT data: [%02x %02x %02x %02x %02x %02x %02x %02x]",
+            b[0], ctx->transfer->length>1?b[1]:0, ctx->transfer->length>2?b[2]:0,
+            ctx->transfer->length>3?b[3]:0, ctx->transfer->length>4?b[4]:0,
+            ctx->transfer->length>5?b[5]:0, ctx->transfer->length>6?b[6]:0,
+            ctx->transfer->length>7?b[7]:0);
     }
 
     //Submit the transfer
