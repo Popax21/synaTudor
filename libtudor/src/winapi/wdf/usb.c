@@ -485,9 +485,10 @@ static NTSTATUS usb_transfer_start(struct winwdf_request *req, struct transfer_r
      * The Kensington VeriMark sends 60-byte packets but the v104 driver
      * may request smaller buffers. We allocate a larger buffer for the USB
      * transfer and truncate on completion. */
-    /* Pad interrupt IN buffers to prevent OVERFLOW from 60-byte sensor packets */
-    if((ctx->transfer->endpoint & 0x80) && ctx->transfer->type == LIBUSB_TRANSFER_TYPE_INTERRUPT
-       && ctx->transfer->length < 64 && !ctx->ctrl_buf) {
+    /* Pad IN buffers to prevent OVERFLOW from 60-byte sensor packets.
+     * Applies to both BULK and INTERRUPT transfers on data endpoints. */
+    if((ctx->transfer->endpoint & 0x80) && !ctx->ctrl_buf
+       && ctx->transfer->length < 64) {
         ctx->padded_buf = malloc(64);
         if(ctx->padded_buf) {
             memset(ctx->padded_buf, 0, 64);
@@ -585,13 +586,21 @@ __winfnc NTSTATUS WdfUsbTargetPipeFormatRequestForRead(WDF_DRIVER_GLOBALS *globa
     }
 
     //Determine the transfer type
+    //NOTE: Synaptics Tudor sensors declare endpoints as INTERRUPT but the actual
+    //protocol uses BULK transfers (confirmed by libfprint synaptics driver).
+    //Force BULK for EP 0x01/0x81 to match the sensor's expectations.
     unsigned char transfer_type;
-    switch(usb_pipe->libusb_ep->bmAttributes & 0b11) {
-        case LIBUSB_ENDPOINT_TRANSFER_TYPE_BULK: transfer_type = LIBUSB_TRANSFER_TYPE_BULK; break;
-        case LIBUSB_ENDPOINT_TRANSFER_TYPE_INTERRUPT: transfer_type = LIBUSB_TRANSFER_TYPE_INTERRUPT; break;
-        default: {
-            log_warn("Attempted USB read request for unsupported endpoint transfer type 0x%x!", usb_pipe->libusb_ep->bmAttributes & 0b11);
-            return WINERR_SET_CODE;
+    unsigned char ep_addr = usb_pipe->libusb_ep->bEndpointAddress & 0x7F;
+    if(ep_addr == 0x01) {
+        transfer_type = LIBUSB_TRANSFER_TYPE_BULK;
+    } else {
+        switch(usb_pipe->libusb_ep->bmAttributes & 0b11) {
+            case LIBUSB_ENDPOINT_TRANSFER_TYPE_BULK: transfer_type = LIBUSB_TRANSFER_TYPE_BULK; break;
+            case LIBUSB_ENDPOINT_TRANSFER_TYPE_INTERRUPT: transfer_type = LIBUSB_TRANSFER_TYPE_INTERRUPT; break;
+            default: {
+                log_warn("Attempted USB read request for unsupported endpoint transfer type 0x%x!", usb_pipe->libusb_ep->bmAttributes & 0b11);
+                return WINERR_SET_CODE;
+            }
         }
     }
 
@@ -631,14 +640,19 @@ __winfnc NTSTATUS WdfUsbTargetPipeFormatRequestForWrite(WDF_DRIVER_GLOBALS *glob
         return WINERR_SET_CODE;
     }
 
-    //Determine the transfer type
+    //Determine the transfer type (force BULK for EP 0x01 — see read function comment)
     unsigned char transfer_type;
-    switch(usb_pipe->libusb_ep->bmAttributes & 0b11) {
-        case LIBUSB_ENDPOINT_TRANSFER_TYPE_BULK: transfer_type = LIBUSB_TRANSFER_TYPE_BULK; break;
-        case LIBUSB_ENDPOINT_TRANSFER_TYPE_INTERRUPT: transfer_type = LIBUSB_TRANSFER_TYPE_INTERRUPT; break;
-        default: {
-            log_warn("Attempted USB write request for unsupported endpoint transfer type 0x%x!", usb_pipe->libusb_ep->bmAttributes & 0b11);
-            return WINERR_SET_CODE;
+    unsigned char ep_addr_w = usb_pipe->libusb_ep->bEndpointAddress & 0x7F;
+    if(ep_addr_w == 0x01) {
+        transfer_type = LIBUSB_TRANSFER_TYPE_BULK;
+    } else {
+        switch(usb_pipe->libusb_ep->bmAttributes & 0b11) {
+            case LIBUSB_ENDPOINT_TRANSFER_TYPE_BULK: transfer_type = LIBUSB_TRANSFER_TYPE_BULK; break;
+            case LIBUSB_ENDPOINT_TRANSFER_TYPE_INTERRUPT: transfer_type = LIBUSB_TRANSFER_TYPE_INTERRUPT; break;
+            default: {
+                log_warn("Attempted USB write request for unsupported endpoint transfer type 0x%x!", usb_pipe->libusb_ep->bmAttributes & 0b11);
+                return WINERR_SET_CODE;
+            }
         }
     }
 
