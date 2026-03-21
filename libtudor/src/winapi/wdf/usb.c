@@ -413,9 +413,16 @@ static void pipe_transfer_callback(struct libusb_transfer *transfer) {
     if(ctx->padded_buf) {
         int copy_len = transfer->actual_length;
         if(copy_len > (int)ctx->mem_off.BufferLength) copy_len = (int)ctx->mem_off.BufferLength;
+        /* Log the actual received data */
+        if(transfer->actual_length > 0) {
+            uint8_t *d = (uint8_t*)ctx->padded_buf;
+            log_info("USB IN DATA (%d bytes): %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+                transfer->actual_length,
+                d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7],
+                d[8], d[9], d[10], d[11], d[12], d[13], d[14], d[15]);
+        }
         if(copy_len > 0) memcpy(ctx->mem->data + ctx->mem_off.BufferOffset, ctx->padded_buf, copy_len);
         transfer->actual_length = copy_len;
-        /* Don't free here — cleanup function handles it */
     }
 
     NTSTATUS status = STATUS_SUCCESS;
