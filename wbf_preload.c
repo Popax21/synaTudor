@@ -486,7 +486,36 @@ static void do_vfm_init(uint8_t *img) {
 
         /* Let _tudorInitDevice fail with 204 — this still completes the TLS handshake.
          * Then we can retry, and the second attempt should find TLS already active. */
-        write(2, "[VFM] First vfmDeviceInitialize (establishes TLS)...\n", 52);
+        /* Binary patch _tudorInitDevice:
+         * 1. NOP the device info read call (CALL [RAX+0xD8] at 0x5668e → XOR EAX,EAX + NOPs)
+         * 2. Pre-fill sensor+0xB8 (= param_1+0x17) = 1 to skip secondary info reads
+         * This lets the function proceed to FPS_INIT with dummy device info. */
+        if(img[0x5668e] == 0xFF && img[0x5668f] == 0x90) {
+            img[0x5668e] = 0x31; img[0x5668f] = 0xC0;  /* XOR EAX, EAX */
+            img[0x56690] = 0x90; img[0x56691] = 0x90;   /* NOP NOP */
+            img[0x56692] = 0x90; img[0x56693] = 0x90;   /* NOP NOP */
+            write(2, "[VFM] Patched: NOP device info read at 0x5668e\n", 47);
+        }
+        /* Also NOP the SECOND device info read at 0x56767 */
+        if(img[0x56767] == 0xFF && img[0x56768] == 0x90) {
+            img[0x56767] = 0x31; img[0x56768] = 0xC0;
+            img[0x56769] = 0x90; img[0x5676a] = 0x90;
+            img[0x5676b] = 0x90; img[0x5676c] = 0x90;
+            write(2, "[VFM] Patched: NOP second call at 0x56767\n", 42);
+        }
+        /* Pre-fill sensor+0xB8 to skip conditional info reads */
+        {
+            void **_dhi2 = (void**)dev_handle;
+            if(_dhi2[1]) {
+                void *ts2 = *(void**)_dhi2[1];
+                if(ts2) {
+                    *(uint32_t*)((uint8_t*)ts2 + 0xB8) = 1;  /* "already have device info" */
+                    /* Set device type to 'B' (required for FPS_INIT path) */
+                    *(uint8_t*)((uint8_t*)ts2 + 0x18) = 'B';
+                }
+            }
+        }
+        write(2, "[VFM] Calling vfmDeviceInitialize (patched, should reach FPS_INIT)...\n", 69);
 
         uint8_t init_out[256];
         memset(init_out, 0, sizeof(init_out));
