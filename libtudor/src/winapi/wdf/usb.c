@@ -195,23 +195,17 @@ __winfnc NTSTATUS WdfUsbTargetDeviceCreate(WDF_DRIVER_GLOBALS *globals, WDFOBJEC
         /* Non-fatal — configuration might already be set */
     }
 
-    //Send vendor init sequence to wake the sensor
-    //The sensor needs SET_IDLE + vendor 0x19/0x1a before accepting interrupt transfers
+    //Pre-initialize the WinUSB shim layer so the DLL's internal PAL layer can find it.
+    //In the WDF v2 path, palWinUsbInitialize is never called (the WDF framework handles USB).
+    //But _tudorInitDevice's proto IoControl still uses the PAL layer for init commands.
+    //By calling WinUsb_Initialize ourselves, we ensure the shim has the libusb handle ready.
     {
-        uint8_t resp;
-
-        //SET_IDLE: bmRequestType=0x21 (class, interface, OUT), bRequest=0x0A
-        libusb_control_transfer(usb_dev->libusb_dev, 0x21, 0x0A, 0, 0, NULL, 0, 1000);
-        log_info("Sensor init: SET_IDLE sent");
-
-        //Vendor OUT: bRequest=0x19 (session/reset start)
-        libusb_control_transfer(usb_dev->libusb_dev, 0x40, 0x19, 0, 0, NULL, 0, 1000);
-        log_info("Sensor init: Vendor 0x19 sent");
-
-        //Vendor IN: bRequest=0x1a (session ack, 1 byte)
-        resp = 0;
-        int ret = libusb_control_transfer(usb_dev->libusb_dev, 0xC0, 0x1a, 0, 0, &resp, 1, 1000);
-        log_info("Sensor init: Vendor 0x1a → ret=%d resp=0x%02x", ret, resp);
+        extern libusb_device_handle *tudor_com_usb_dev;
+        if(tudor_com_usb_dev) {
+            log_info("Pre-initializing WinUSB shim layer with libusb handle %p", tudor_com_usb_dev);
+        } else {
+            log_warn("tudor_com_usb_dev not set — PAL layer won't have USB access");
+        }
     }
 
     wdf_set_usb_device(dev, usb_dev);
@@ -566,6 +560,13 @@ __winfnc NTSTATUS WdfUsbTargetDeviceFormatRequestForControlTransfer(WDF_DRIVER_G
     ctx->transfer->endpoint = 0;
     ctx->transfer->type = LIBUSB_TRANSFER_TYPE_CONTROL;
     ctx->transfer->flags = 0;
+
+    //Log the control transfer setup packet
+    {
+        struct libusb_control_setup *sp = (struct libusb_control_setup*) ctx->ctrl_buf;
+        log_info("WDF CTRL XFER: bmReqType=0x%02x bReq=0x%02x wVal=0x%04x wIdx=0x%04x wLen=%d",
+            sp->bmRequestType, sp->bRequest, sp->wValue, sp->wIndex, sp->wLength);
+    }
 
     //Configure the request
     wdf_configure_request(req, NULL, ctx, 0, 0, (wdf_request_start_fnc*) usb_transfer_start, (wdf_request_cancel_fnc*) usb_transfer_cancel, (wdf_request_cleanup_fnc*) usb_transfer_cleanup, NULL);
