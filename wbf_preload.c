@@ -474,37 +474,25 @@ static void do_vfm_init(uint8_t *img) {
         write(2, buf, n);
     }
 
-    /* Step 7.5: Send FPS_INIT through proto IoControl TLS path */
+    /* Step 8: Initialize device */
     if(dev_handle) {
-        void **_dh = (void**)dev_handle;
-        void *ts = _dh[1] ? *(void**)_dh[1] : NULL;
-        if(ts) {
-            void *proto_ctx = *(void**)ts;
-            typedef int __attribute__((ms_abi)) (*fn_proto_t)(
-                void *ctx, int cmd, void *data, uint32_t dlen,
-                void *resp, uint32_t rlen, int *err);
-            fn_proto_t proto_fn = *(fn_proto_t*)((uint8_t*)ts + 0xD8);
-            if(proto_ctx && proto_fn) {
-                uint8_t fps[] = { 0xFE, 0x01, 0x11, 0x00, 0x00 };
-                uint32_t rdesc[4] = {0}; rdesc[0] = 0x10;
-                int err = 0;
-                write(2, "[VFM] Sending FPS_INIT [FE 01 11 00 00]...\n", 43);
-                rc = proto_fn(proto_ctx, 0x67, fps, 5, rdesc, 0x10, &err);
-                n = snprintf(buf, sizeof(buf), "[VFM] FPS_INIT: rc=%d err=%d\n", rc, err);
-                write(2, buf, n);
-            }
-        }
-    }
-
-    /* Step 8: Initialize device and test capture */
-    if(dev_handle) {
-        /*
-         * vfmDeviceInitialize(dev_handle, output_buffer)
-         * Calls module_vtable+0x48 (ssi initDevice).
-         * param2 is an output buffer, not NULL.
-         */
         typedef int __attribute__((ms_abi)) (*fn_dev_init_t)(void *dev_handle, void *param2);
         fn_dev_init_t dev_init = (fn_dev_init_t)(img + 0x196d0);
+
+        /* Binary-patch the WinUSB reset wrapper (FUN_18004ba90) to return immediately.
+         * It crashes on *(+0x90)(self) because the 0xD0 struct's +0x90 is NULL.
+         * The actual USB reset isn't critical — the sensor just needs a clean state. */
+        img[0x4ba90] = 0xC3;  /* RET — NOP the WinUSB reset wrapper */
+        write(2, "[VFM] Patched WinUSB reset wrapper\n", 34);
+        /* DON'T set degraded flag — let _tudorInitDevice do the full init
+         * including TLS handshake, device info read, and FPS_INIT. */
+
+        uint8_t init_out[256];
+        memset(init_out, 0, sizeof(init_out));
+        write(2, "[VFM] Calling vfmDeviceInitialize (degraded mode)...\n", 52);
+        rc = dev_init(dev_handle, init_out);
+        n = snprintf(buf, sizeof(buf), "[VFM] vfmDeviceInitialize: rc=%d\n", rc);
+        write(2, buf, n);
 
         /* Binary-patch tudorCaptureStart: change the NAV state check
          * (MOV [RSP+0x34], 0x68) at RVA 0x58bea to MOV [RSP+0x34], 0.
