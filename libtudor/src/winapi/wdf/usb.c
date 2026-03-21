@@ -381,6 +381,7 @@ struct transfer_req_ctx {
     WDFMEMORY_OFFSET mem_off;
     struct winwdf_request *request;
     void *ctrl_buf;
+    void *padded_buf;  /* Padded buffer for interrupt IN (prevent overflow) */
 
     struct libusb_transfer *transfer;
 };
@@ -405,6 +406,15 @@ static void pipe_transfer_callback(struct libusb_transfer *transfer) {
 
     log_info("USB CB: ep=0x%02x status=%d actual=%d/%d",
         transfer->endpoint, transfer->status, transfer->actual_length, transfer->length);
+
+    /* If we used a padded buffer, copy received data back to the original buffer */
+    if(ctx->padded_buf) {
+        int copy_len = transfer->actual_length;
+        if(copy_len > (int)ctx->mem_off.BufferLength) copy_len = (int)ctx->mem_off.BufferLength;
+        if(copy_len > 0) memcpy(ctx->mem->data + ctx->mem_off.BufferOffset, ctx->padded_buf, copy_len);
+        transfer->actual_length = copy_len;
+        /* Don't free here — cleanup function handles it */
+    }
 
     NTSTATUS status = STATUS_SUCCESS;
     if(transfer->status != LIBUSB_TRANSFER_COMPLETED) {
@@ -462,6 +472,21 @@ static NTSTATUS usb_transfer_start(struct winwdf_request *req, struct transfer_r
     ctx->transfer->buffer = ctx->ctrl_buf ? ctx->ctrl_buf : (ctx->mem->data + ctx->mem_off.BufferOffset);
     ctx->transfer->length = (ctx->ctrl_buf ? sizeof(struct libusb_control_setup) : 0) + (int) ctx->mem_off.BufferLength;
 
+    /* Pad interrupt IN buffers to 64 bytes to prevent OVERFLOW.
+     * The Kensington VeriMark sends 60-byte packets but the v104 driver
+     * may request smaller buffers. We allocate a larger buffer for the USB
+     * transfer and truncate on completion. */
+    /* Pad interrupt IN buffers to prevent OVERFLOW from 60-byte sensor packets */
+    if((ctx->transfer->endpoint & 0x80) && ctx->transfer->type == LIBUSB_TRANSFER_TYPE_INTERRUPT
+       && ctx->transfer->length < 64 && !ctx->ctrl_buf) {
+        ctx->padded_buf = malloc(64);
+        if(ctx->padded_buf) {
+            memset(ctx->padded_buf, 0, 64);
+            ctx->transfer->buffer = ctx->padded_buf;
+            ctx->transfer->length = 64;
+        }
+    }
+
     if(ctx->ctrl_buf) {
         memcpy((BYTE*) ctx->ctrl_buf + sizeof(struct libusb_control_setup), ctx->mem->data + ctx->mem_off.BufferOffset, ctx->mem_off.BufferLength);
     }
@@ -502,6 +527,7 @@ static void usb_transfer_cleanup(struct winwdf_request *req, struct transfer_req
     //Free memory
     libusb_free_transfer(ctx->transfer);
     free(ctx->ctrl_buf);
+    free(ctx->padded_buf);
     free(ctx);
 }
 
@@ -517,6 +543,7 @@ __winfnc NTSTATUS WdfUsbTargetDeviceFormatRequestForControlTransfer(WDF_DRIVER_G
     ctx->mem = mem;
     ctx->mem_off = mem_off ? *mem_off : ((WDFMEMORY_OFFSET) { .BufferOffset = 0, .BufferLength = mem->data_size });
     ctx->request = req;
+    ctx->padded_buf = NULL;
 
     ctx->ctrl_buf = malloc(sizeof(struct libusb_control_setup) + ctx->mem_off.BufferLength);
     if(!ctx->ctrl_buf) { free(ctx); return winerr_from_errno(); }
@@ -567,7 +594,8 @@ __winfnc NTSTATUS WdfUsbTargetPipeFormatRequestForRead(WDF_DRIVER_GLOBALS *globa
     ctx->mem_off = mem_off ? *mem_off : ((WDFMEMORY_OFFSET) { .BufferOffset = 0, .BufferLength = mem->data_size });
     ctx->request = req;
     ctx->ctrl_buf = NULL;
-    
+    ctx->padded_buf = NULL;
+
     ctx->transfer = libusb_alloc_transfer(0);
     if(!ctx->transfer) { return winerr_from_errno(); }
 
@@ -613,7 +641,8 @@ __winfnc NTSTATUS WdfUsbTargetPipeFormatRequestForWrite(WDF_DRIVER_GLOBALS *glob
     ctx->mem_off = mem_off ? *mem_off : ((WDFMEMORY_OFFSET) { .BufferOffset = 0, .BufferLength = mem->data_size });
     ctx->request = req;
     ctx->ctrl_buf = NULL;
-    
+    ctx->padded_buf = NULL;
+
     ctx->transfer = libusb_alloc_transfer(0);
     if(!ctx->transfer) { return winerr_from_errno(); }
 
