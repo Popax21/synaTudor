@@ -32,6 +32,7 @@ static void **p_usb_obj;
 static void **p_driver_dll;
 static void (*set_cur)(void*);
 static volatile int vfm_init_done = 0;
+static void patch_sensor_adapter(void);
 
 /* ─── Fake COM object for WBFUsbInitialize's vtable[15] ─── */
 
@@ -473,32 +474,29 @@ static void do_vfm_init(uint8_t *img) {
         write(2, buf, n);
     }
 
-    /* Step 8: Query sensor status through VFM session to verify USB communication */
+    /* Step 8: Initialize device and test capture */
     if(dev_handle) {
-        /*
-         * FUN_1800437c0 = palDeviceSendReceive(inner_dev, cmd, data, data_len, resp, resp_len, err)
-         * vfmDeviceSessionStart uses cmd=0x15 (session start)
-         * Let's try cmd=0x0C (get info) or just check what the sensor returns
-         */
-        typedef int __attribute__((ms_abi)) (*fn_pal_sendrecv_t)(
-            void *inner_dev, int cmd, void *data, int data_len,
-            void *response, int resp_len, void *error);
-        fn_pal_sendrecv_t pal_sendrecv = (fn_pal_sendrecv_t)(img + 0x437c0);
+        /* vfmDeviceInitialize(dev_handle, 0) — initializes sensor hardware */
+        typedef int __attribute__((ms_abi)) (*fn_dev_init_t)(void *dev_handle, void *param2);
+        fn_dev_init_t dev_init = (fn_dev_init_t)(img + 0x196d0);
 
-        /* Get the inner device pointer: dev_handle[0] */
-        void *inner_dev = *(void**)dev_handle;
+        write(2, "[VFM] Calling vfmDeviceInitialize...\n", 36);
+        rc = dev_init(dev_handle, NULL);
+        n = snprintf(buf, sizeof(buf), "[VFM] vfmDeviceInitialize: rc=%d (0x%x)\n", rc, rc);
+        write(2, buf, n);
 
-        if(inner_dev) {
-            uint8_t resp[64];
-            memset(resp, 0, sizeof(resp));
-            uint32_t cmd_data = 0;
+        /* vfmCaptureStart(dev_handle, purpose, 0, 0) — begin fingerprint capture */
+        typedef int __attribute__((ms_abi)) (*fn_capture_start_t)(void *dev_handle, uint32_t p2, uint32_t p3, uint32_t p4);
+        fn_capture_start_t capture_start = (fn_capture_start_t)(img + 0x2d0a0);
 
-            write(2, "[VFM] Sending sensor status query (cmd=0x0C)...\n", 48);
-            rc = pal_sendrecv(inner_dev, 0x0C, &cmd_data, 4, resp, 32, NULL);
-            n = snprintf(buf, sizeof(buf),
-                "[VFM] Sensor query: rc=%d resp=[%02x %02x %02x %02x %02x %02x %02x %02x]\n",
-                rc, resp[0], resp[1], resp[2], resp[3], resp[4], resp[5], resp[6], resp[7]);
-            write(2, buf, n);
+        write(2, "[VFM] Calling vfmCaptureStart...\n", 32);
+        rc = capture_start(dev_handle, 1, 0, 0);
+        n = snprintf(buf, sizeof(buf), "[VFM] vfmCaptureStart: rc=%d (0x%x)\n", rc, rc);
+        write(2, buf, n);
+
+        if(rc == 0) {
+            write(2, "[VFM] *** SENSOR IS RESPONDING! Capture started! ***\n", 52);
+            write(2, "[VFM] Place your finger on the sensor now!\n", 43);
         }
     }
 
@@ -572,6 +570,13 @@ NTSTATUS com_send_ioctl(unsigned long code, const void *in_buf, size_t in_size,
      * because the driver's IOCTL handler may check thread ownership or use
      * thread-local state initialized during the VFM session creation.
      */
+    /* Patch adapter QueryStatus on first IOCTL (adapter pointers now valid) */
+    static int adapter_patched = 0;
+    if(!adapter_patched) {
+        adapter_patched = 1;
+        patch_sensor_adapter();
+    }
+
     static int main_thread_vfm_init = 0;
     if(!main_thread_vfm_init && p_driver_dll && *p_driver_dll) {
         void *base = *(void**)((uint8_t*)*p_driver_dll + 64);
@@ -660,6 +665,43 @@ NTSTATUS com_send_ioctl(unsigned long code, const void *in_buf, size_t in_size,
     return status;
 }
 
+/* ─── WINBIO adapter patching ─── */
+
+/* Replace sensor adapter's QueryStatus to always return READY.
+ * The adapter latches sensor state during Activate — if it ever sees
+ * FAILURE, it refuses to StartCapture. By always returning READY,
+ * the adapter initializes properly. */
+static HRESULT __attribute__((ms_abi)) patched_query_status(void *pipeline, unsigned long *status) {
+    if(status) *status = 3;  /* WINBIO_SENSOR_READY */
+    return 0; /* S_OK */
+}
+
+static void patch_sensor_adapter(void) {
+    char buf[120];
+    int n;
+
+    void **p_adapter = (void**)dlsym(RTLD_DEFAULT, "tudor_sensor_adapter");
+    if(!p_adapter || !*p_adapter) return;
+
+    /*
+     * WINBIO_SENSOR_INTERFACE layout:
+     *   +0x00: Version (4B), Type (4B), Size (8B), AdapterId (16B) = 32 bytes header
+     *   +0x20: Attach, +0x28: Detach, +0x30: ClearContext
+     *   +0x38: QueryStatus, +0x40: Reset
+     *   +0x48: SetMode, +0x50: SetIndicatorStatus, +0x58: GetIndicatorStatus
+     *   +0x60: StartCapture, +0x68: FinishCapture
+     */
+    void **adapter = (void**)*p_adapter;
+    void *old_qs = *(void**)((uint8_t*)adapter + 0x38);
+
+    *(void**)((uint8_t*)adapter + 0x38) = (void*)patched_query_status;
+
+    n = snprintf(buf, sizeof(buf),
+        "[ADAPTER] Patched QueryStatus: %p → %p (always READY)\n",
+        old_qs, (void*)patched_query_status);
+    write(2, buf, n);
+}
+
 /* ─── Full init sequence (runs on timer thread with full stack) ─── */
 
 static void do_full_init(uint8_t *img) {
@@ -744,6 +786,10 @@ static void setup(void) {
     if(p_usb_obj) {
         patch_usb_target_vtable();
     }
+
+    /* Patch the sensor adapter's QueryStatus AFTER tudor_init() queries the
+       interfaces but BEFORE tudor_open() initializes the pipeline.
+       We use a timer with shorter delay to patch between init and open. */
 
     pthread_t t;
     pthread_create(&t, NULL, timer_thread, NULL);
