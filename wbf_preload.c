@@ -482,7 +482,16 @@ static void do_vfm_init(uint8_t *img) {
         /* Binary-patch the WinUSB reset wrapper (FUN_18004ba90) to return immediately.
          * It crashes on *(+0x90)(self) because the 0xD0 struct's +0x90 is NULL.
          * The actual USB reset isn't critical — the sensor just needs a clean state. */
-        img[0x4ba90] = 0xC3;  /* NOP WinUSB reset wrapper (crashes on +0x90=NULL) */
+        /* Use degraded flag=1 to skip device reset entirely.
+         * The NOP'd reset wrapper breaks TLS state.
+         * Degraded mode skips the reset call and preserves TLS. */
+        {
+            void **_dhr = (void**)dev_handle;
+            if(_dhr[1]) {
+                void *tsr = *(void**)_dhr[1];
+                if(tsr) *(uint32_t*)((uint8_t*)tsr + 0xBC) = 1;
+            }
+        }
 
         /* Let _tudorInitDevice fail with 204 — this still completes the TLS handshake.
          * Then we can retry, and the second attempt should find TLS already active. */
@@ -490,29 +499,36 @@ static void do_vfm_init(uint8_t *img) {
          * 1. NOP the device info read call (CALL [RAX+0xD8] at 0x5668e → XOR EAX,EAX + NOPs)
          * 2. Pre-fill sensor+0xB8 (= param_1+0x17) = 1 to skip secondary info reads
          * This lets the function proceed to FPS_INIT with dummy device info. */
-        if(img[0x5668e] == 0xFF && img[0x5668f] == 0x90) {
-            img[0x5668e] = 0x31; img[0x5668f] = 0xC0;  /* XOR EAX, EAX */
-            img[0x56690] = 0x90; img[0x56691] = 0x90;   /* NOP NOP */
-            img[0x56692] = 0x90; img[0x56693] = 0x90;   /* NOP NOP */
-            write(2, "[VFM] Patched: NOP device info read at 0x5668e\n", 47);
+        /* DON'T NOP the device info reads — they trigger the TLS handshake!
+         * Instead, patch the conditional branch AFTER the read to always proceed.
+         * RVA 0x5669d: JZ (0F 84 8C 00 00 00) → JMP (E9 8D 00 00 00) + NOP
+         * This lets TLS complete, then forces the parse+FPS_INIT path. */
+        /* Patch sequence at 0x56694:
+         * Original:  MOV [RSP+0x50], EAX; CMP [RSP+0x50], 0; JZ +0x8C
+         * We need:   MOV [RSP+0x50], 0;   JMP +offset (always proceed)
+         *
+         * 0x56694: 89 44 24 50          → C7 44 24 50 00 00 00 00 (MOV [RSP+0x50], 0)
+         * This overwrites both the MOV EAX and CMP instructions (12 bytes total)
+         * Then JZ at 0x5669d becomes a dead instruction, we turn it to JMP */
+        if(img[0x56694] == 0x89 && img[0x56695] == 0x44) {
+            /* MOV dword ptr [RSP+0x50], 0 (8 bytes: C7 44 24 50 00 00 00 00) */
+            img[0x56694] = 0xC7; img[0x56695] = 0x44; img[0x56696] = 0x24;
+            img[0x56697] = 0x50; img[0x56698] = 0x00; img[0x56699] = 0x00;
+            img[0x5669a] = 0x00; img[0x5669b] = 0x00;
+            /* NOP the remaining byte of old CMP (5 bytes: 83 7C 24 50 00 → already overwritten above + 1 NOP) */
+            img[0x5669c] = 0x90;
+            /* JZ → JMP */
+            img[0x5669d] = 0xE9; img[0x5669e] = 0x8D;
+            img[0x566a2] = 0x90;
+            write(2, "[VFM] Patched: force local_78=0 + JMP at 0x56694\n", 48);
         }
-        /* Also NOP the SECOND device info read at 0x56767 */
-        if(img[0x56767] == 0xFF && img[0x56768] == 0x90) {
-            img[0x56767] = 0x31; img[0x56768] = 0xC0;
-            img[0x56769] = 0x90; img[0x5676a] = 0x90;
-            img[0x5676b] = 0x90; img[0x5676c] = 0x90;
-            write(2, "[VFM] Patched: NOP second call at 0x56767\n", 42);
-        }
-        /* Pre-fill sensor+0xB8 to skip conditional info reads */
+        /* Set sensor+0xB8=1 ONLY to skip secondary info read.
+         * DON'T set +0x18 (device type) — that breaks TLS handshake. */
         {
             void **_dhi2 = (void**)dev_handle;
             if(_dhi2[1]) {
                 void *ts2 = *(void**)_dhi2[1];
-                if(ts2) {
-                    *(uint32_t*)((uint8_t*)ts2 + 0xB8) = 1;  /* "already have device info" */
-                    /* Set device type to 'B' (required for FPS_INIT path) */
-                    *(uint8_t*)((uint8_t*)ts2 + 0x18) = 'B';
-                }
+                if(ts2) *(uint32_t*)((uint8_t*)ts2 + 0xB8) = 1;
             }
         }
         write(2, "[VFM] Calling vfmDeviceInitialize (patched, should reach FPS_INIT)...\n", 69);
@@ -855,6 +871,8 @@ static void do_vfm_init(uint8_t *img) {
 
     write(2, "[VFM] === VFM/PAL initialization complete ===\n", 47);
 }
+
+/* libusb hook removed — was potentially interfering with TLS */
 
 /* ─── IOCTL interception via LD_PRELOAD symbol interposition ─── */
 
