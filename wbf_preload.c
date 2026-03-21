@@ -499,18 +499,134 @@ static void do_vfm_init(uint8_t *img) {
         /* Check device handle internal state */
         void **dh = (void**)dev_handle;
         n = snprintf(buf, sizeof(buf),
-            "[VFM] dev_handle internals: [0]=%p [1]=%p [2]=%p [3]=%p [4]=%p\n",
+            "[VFM] dev_handle[0..4]: %p %p %p %p %p\n",
             dh[0], dh[1], dh[2], dh[3], dh[4]);
         write(2, buf, n);
 
-        /* Clear the capture context at dev_handle[3] so CaptureStart accepts */
-        if(dh[3]) {
-            n = snprintf(buf, sizeof(buf), "[VFM] Clearing existing capture context at [3]=%p\n", dh[3]);
+        /* vfmDeviceInitialize passes **(dev_handle+8) = *dh[1] to tudorInitDevice.
+         * The tudor function accesses the sensor struct at large offsets (0xD8, 0xC4, etc.)
+         * and calls function pointers within it. Let me dump it. */
+        if(dh[1]) {
+            void **inner = (void**)dh[1];
+            void *sensor = inner[0];
+            n = snprintf(buf, sizeof(buf),
+                "[VFM] dh[1]=%p → *dh[1]=%p (sensor struct for tudorInitDevice)\n",
+                (void*)inner, sensor);
             write(2, buf, n);
-            dh[3] = NULL;
+
+            if(sensor) {
+                uint8_t *s = (uint8_t*)sensor;
+                /* _tudorInitDevice calls: func(*param_1, 0x12, 0, 0)
+                 * where func = param_1[0x1b] and *param_1 = sensor[0]
+                 * If sensor[0] is a struct and func accesses it at +0x14C,
+                 * a NULL sub-pointer causes SIGSEGV at 0x14C.
+                 * Dump sensor[0] and the struct it points to. */
+                void *sensor0 = *(void**)s;
+                n = snprintf(buf, sizeof(buf),
+                    "[VFM] sensor[0]=%p (passed to tudorProtoIoControl)\n", sensor0);
+                write(2, buf, n);
+
+                if(sensor0) {
+                    uint8_t *s0 = (uint8_t*)sensor0;
+                    /* Dump around 0x14C */
+                    n = snprintf(buf, sizeof(buf),
+                        "[VFM] sensor[0]+0x140=%p +0x148=%p +0x150=%p\n",
+                        *(void**)(s0 + 0x140), *(void**)(s0 + 0x148), *(void**)(s0 + 0x150));
+                    write(2, buf, n);
+                    /* Dump ALL non-NULL fields to understand what IS initialized */
+                    for(int off = 0; off <= 0x160; off += 8) {
+                        void *val = *(void**)(s0 + off);
+                        if(val != NULL) {
+                            n = snprintf(buf, sizeof(buf), "[VFM] sensor[0]+0x%x = %p\n", off, val);
+                            write(2, buf, n);
+                        }
+                    }
+                }
+
+                /* Key fields used by _tudorInitDevice */
+                n = snprintf(buf, sizeof(buf),
+                    "[VFM] sensor+0xBC=%08x +0xC4=%08x +0xD8=%p\n",
+                    *(uint32_t*)(s + 0xBC), *(uint32_t*)(s + 0xC4), *(void**)(s + 0xD8));
+                write(2, buf, n);
+            }
         }
 
-        write(2, "[VFM] Calling vfmCaptureStart(purpose=2/enroll)...\n", 50);
+        /*
+         * The tudor sensor struct (at *dh[1]) has a proto context (at sensor[0]).
+         * The proto context needs a USB connection handle at offset +0x8.
+         * Without it, tudorUsbProtoIoControl crashes trying to send commands.
+         *
+         * Let's populate it with the PAL inner device pointer (dh[0]).
+         */
+        if(dh[1]) {
+            void **inner = (void**)dh[1];
+            void *tudor_sensor = inner[0];
+            if(tudor_sensor) {
+                void **proto_ctx = *(void***)tudor_sensor; /* proto = sensor[0][0] */
+                n = snprintf(buf, sizeof(buf),
+                    "[VFM] tudor_sensor=%p proto_ctx=%p proto[0]=%p proto[1]=%p\n",
+                    tudor_sensor, proto_ctx,
+                    proto_ctx ? proto_ctx[0] : NULL,
+                    proto_ctx ? proto_ctx[1] : NULL);
+                write(2, buf, n);
+
+                /* Try setting proto_ctx+0x8 (the USB context) to the PAL device */
+                uint8_t *ts = (uint8_t*)tudor_sensor;
+                void *usb_ctx_field = *(void**)(ts + 0x8);
+                if(!usb_ctx_field && dh[0]) {
+                    n = snprintf(buf, sizeof(buf),
+                        "[VFM] sensor+0x8 is NULL — populating with PAL device %p\n", dh[0]);
+                    write(2, buf, n);
+                    *(void**)(ts + 0x8) = dh[0];
+                }
+            }
+        }
+
+        /* Call tudorCaptureStart directly via module vtable to bypass VFM wrapper */
+        {
+            /* Get the module vtable */
+            void **p_vfm_ctx = (void**)dlsym(RTLD_DEFAULT, "DAT_18014c008");
+            /* The global is at a fixed offset. Let me use the DLL image to find it. */
+            void **vfm_ctx_ptr = (void**)(img + (0x14c008 - 0));  /* RVA in .data section */
+
+            /* Actually, the global DAT_18014c008 is at the DLL's data section.
+             * img = base_addr of the DLL image. RVA 0x14c008 → img + 0x14c008 */
+            void *vfm_ctx = *(void**)(img + 0x14c008);
+            void *module_vtable = vfm_ctx ? *(void**)vfm_ctx : NULL;
+
+            n = snprintf(buf, sizeof(buf),
+                "[VFM] DAT_18014c008=%p *=%p module_vtable=%p\n",
+                (void*)(img + 0x14c008), vfm_ctx, module_vtable);
+            write(2, buf, n);
+
+            if(module_vtable && dh[1]) {
+                void *tudor_sensor = *(void**)dh[1];
+                typedef int __attribute__((ms_abi)) (*fn_tudor_cap_t)(
+                    void *sensor, void *action_info, uint32_t purpose, uint32_t options, int timeout);
+                fn_tudor_cap_t tudor_capture = *(fn_tudor_cap_t*)((uint8_t*)module_vtable + 0x80);
+
+                /* Dump the sensor state that tudorCaptureStart will check */
+                uint32_t state_c4 = *(uint32_t*)((uint8_t*)tudor_sensor + 0xC4);
+                uint32_t retry_c0 = *(uint32_t*)((uint8_t*)tudor_sensor + 0xC0);
+                void *proto = *(void**)tudor_sensor;
+                void *driver_handle = proto ? *(void**)proto : NULL;
+
+                n = snprintf(buf, sizeof(buf),
+                    "[VFM] tudor_sensor=%p state+0xC4=%u +0xC0=%u proto=%p *proto=%p\n",
+                    tudor_sensor, state_c4, retry_c0, proto, driver_handle);
+                write(2, buf, n);
+
+                uint32_t action_info[4] = {0};
+                rc = tudor_capture(tudor_sensor, action_info, 2, 0, 5000);
+                n = snprintf(buf, sizeof(buf),
+                    "[VFM] tudorCaptureStart: rc=%d (0x%x) action=[%u %u %u %u] state_after=%u\n",
+                    rc, rc, action_info[0], action_info[1], action_info[2], action_info[3],
+                    *(uint32_t*)((uint8_t*)tudor_sensor + 0xC4));
+                write(2, buf, n);
+            }
+        }
+
+        write(2, "[VFM] Also trying vfmCaptureStart wrapper...\n", 45);
         rc = capture_start(dev_handle, 2, 0, 5000);
         n = snprintf(buf, sizeof(buf), "[VFM] vfmCaptureStart: rc=%d (0x%x)\n", rc, rc);
         write(2, buf, n);
