@@ -169,20 +169,12 @@ __winfnc NTSTATUS WdfUsbTargetDeviceCreate(WDF_DRIVER_GLOBALS *globals, WDFOBJEC
 
     //Initialize device
     int usb_err;
-    if((usb_err = libusb_reset_device(usb_dev->libusb_dev)) != 0) {
-        log_error("libusb_reset_device failed: %d [%s]", usb_err, libusb_error_name(usb_err));
-        return WINERR_SET_CODE;
-    }
     if((usb_err = libusb_get_config_descriptor(libusb_get_device(usb_dev->libusb_dev), 0, &usb_dev->cfg_descr)) != 0) {
         log_error("libusb_get_config_descriptor failed: %d [%s]", usb_err, libusb_error_name(usb_err));
         return WINERR_SET_CODE;
     }
-    if((usb_err = libusb_set_configuration(usb_dev->libusb_dev, usb_dev->cfg_descr->bConfigurationValue)) != 0) {
-        log_error("libusb_set_configuration failed: %d [%s]", usb_err, libusb_error_name(usb_err));
-        return WINERR_SET_CODE;
-    }
 
-    //Detach kernel drivers
+    //Detach kernel drivers FIRST (before set_configuration, which fails with BUSY otherwise)
     for(int i = 0; i < usb_dev->cfg_descr->bNumInterfaces; i++) {
         if(libusb_kernel_driver_active(usb_dev->libusb_dev, i)) {
             log_debug("Detaching USB kernel driver from interface %d...", i);
@@ -191,6 +183,16 @@ __winfnc NTSTATUS WdfUsbTargetDeviceCreate(WDF_DRIVER_GLOBALS *globals, WDFOBJEC
                 return WINERR_SET_CODE;
             }
         }
+    }
+
+    //Now reset and set configuration
+    if((usb_err = libusb_reset_device(usb_dev->libusb_dev)) != 0) {
+        log_error("libusb_reset_device failed: %d [%s]", usb_err, libusb_error_name(usb_err));
+        return WINERR_SET_CODE;
+    }
+    if((usb_err = libusb_set_configuration(usb_dev->libusb_dev, usb_dev->cfg_descr->bConfigurationValue)) != 0) {
+        log_warn("libusb_set_configuration: %d [%s] (non-fatal)", usb_err, libusb_error_name(usb_err));
+        /* Non-fatal — configuration might already be set */
     }
 
     //Send vendor init sequence to wake the sensor
