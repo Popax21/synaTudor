@@ -396,9 +396,22 @@ static void do_vfm_init(uint8_t *img) {
         /* Store VFM session: cpp_obj + 0x78 */
         *(void**)(cpp_obj + 0x78) = session;
 
+        /*
+         * CRITICAL: Clear the "degraded mode" flag at +0xBC.
+         * OnGetSensorStatus checks this flag — if set to 1, it forces
+         * sensor status to 6 (NOT_CALIBRATED). PrepareHardware sets it
+         * to 1 when vtable[0x40] fails. Since we skip PrepareHardware,
+         * we must ensure it's 0.
+         */
+        *(uint8_t*)(cpp_obj + 0xBC) = 0;
+
+        /* Set sensor status to READY (3) at +0x84.
+         * OnGetSensorStatus reads this field for the actual status value. */
+        *(uint32_t*)(cpp_obj + 0x84) = 3;  /* WINBIO_SENSOR_READY */
+
         n = snprintf(buf, sizeof(buf),
-            "[VFM] Stored: cpp=%p init@+0x48=1 dev@+0x70=%p session@+0x78=%p\n",
-            (void*)cpp_obj, dev_handle, session);
+            "[VFM] Stored: init@+0x48=1 dev@+0x70=%p session@+0x78=%p degraded@+0xBC=0 status@+0x84=READY\n",
+            dev_handle, session);
         write(2, buf, n);
     }
 
@@ -432,7 +445,13 @@ static void do_vfm_init(uint8_t *img) {
             /* Store at cpp_obj + 0x428 */
             *(void**)(cpp_obj + 0x428) = mgr;
 
-            n = snprintf(buf, sizeof(buf), "[VFM] Created sensor data manager: %p → cpp+0x428\n", mgr);
+            /* Verify manager vtable */
+            void **mgr_vtbl = mgr ? *(void***)mgr : NULL;
+            n = snprintf(buf, sizeof(buf),
+                "[VFM] Created sensor data mgr: %p vtbl=%p vtbl[0]=%p vtbl[1]=%p\n",
+                mgr, (void*)mgr_vtbl,
+                mgr_vtbl ? mgr_vtbl[0] : NULL,
+                mgr_vtbl ? mgr_vtbl[1] : NULL);
             write(2, buf, n);
         }
     }
@@ -519,24 +538,50 @@ NTSTATUS com_send_ioctl(unsigned long code, const void *in_buf, size_t in_size,
         }
     }
 
-    /* Intercept vendor IOCTLs (0x442xxx) — the driver's handler crashes on these
-       because the CBiometricDevice object layout isn't fully set up.
-       Return success with empty/default responses for now. */
+    /* Intercept ALL biometric IOCTLs — the driver's handler crashes because
+       the CBiometricDevice C++ object layout isn't fully reconstructed.
+       Provide proper WINBIO responses directly. */
+
+    /* Vendor IOCTLs (0x442xxx) — sensor commands */
     if((code & 0xFFFF0000) == 0x00440000 && (code & 0x2000)) {
-        /* Vendor-specific biometric IOCTL */
-        n = snprintf(buf, sizeof(buf), "[IOCTL] VENDOR code=0x%lx → returning empty success\n", code);
+        n = snprintf(buf, sizeof(buf), "[IOCTL] VENDOR code=0x%lx out=%zu → empty success\n", code, out_size);
         write(2, buf, n);
-        if(out_buf && out_size >= 4) {
-            memset(out_buf, 0, out_size);
-        }
+        if(out_buf && out_size >= 4) memset(out_buf, 0, out_size);
         if(bytes_returned) *bytes_returned = (out_size >= 4) ? 4 : 0;
         return STATUS_SUCCESS;
     }
 
-    /* Standard biometric IOCTLs — also return defaults since driver handler
-       isn't properly connected to VFM session for these either */
-    if(code == IOCTL_BIOMETRIC_RESET) {
-        if(bytes_returned) *bytes_returned = 0;
+    /* BIOMETRIC_RESET (0x440008) */
+    if(code == IOCTL_BIOMETRIC_RESET && out_buf && out_size >= 8) {
+        /* WINBIO_BLANK_PAYLOAD: { PayloadSize=8, WinBioHresult=0 } */
+        uint32_t *p = (uint32_t*)out_buf;
+        p[0] = 8; p[1] = 0;
+        if(bytes_returned) *bytes_returned = 8;
+        n = snprintf(buf, sizeof(buf), "[IOCTL] RESET → success\n");
+        write(2, buf, n);
+        return STATUS_SUCCESS;
+    }
+
+    /* BIOMETRIC_GET_ATTRIBUTES (0x440004) */
+    if(code == IOCTL_BIOMETRIC_GET_ATTRIBUTES && out_buf && out_size >= 0x62C) {
+        /* Return WINBIO_SENSOR_ATTRIBUTES with Synaptics info */
+        memset(out_buf, 0, out_size);
+        uint32_t *p = (uint32_t*)out_buf;
+        p[0] = 0x62C;      /* PayloadSize */
+        p[1] = 0;           /* WinBioHresult = S_OK */
+        p[2] = 8;           /* SensorType = WINBIO_TYPE_FINGERPRINT */
+        p[3] = 2;           /* SensorSubType */
+        p[4] = 0x4041F;     /* Capabilities */
+        /* Manufacturer string at offset 0x14 (wide char) */
+        uint16_t *mfr = (uint16_t*)((uint8_t*)out_buf + 0x14);
+        const char *s = "Synaptics";
+        for(int i = 0; s[i]; i++) mfr[i] = s[i];
+        /* Model string at offset 0x214 */
+        uint16_t *mdl = (uint16_t*)((uint8_t*)out_buf + 0x214);
+        const char *m = "Synaptics WBF Tudor";
+        for(int i = 0; m[i]; i++) mdl[i] = m[i];
+        if(bytes_returned) *bytes_returned = 0x62C;
+        write(2, "[IOCTL] GET_ATTRIBUTES → Synaptics WBF Tudor\n", 46);
         return STATUS_SUCCESS;
     }
 
