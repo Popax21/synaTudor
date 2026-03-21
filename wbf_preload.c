@@ -234,21 +234,7 @@ static void do_vfm_init(uint8_t *img) {
      *   0x1f0a0 — FUN_18001f0a0: vfmStgModuleInit(handle)
      */
 
-    /* Step 0: USB device reset BEFORE any VFM init.
-     * The sensor needs a USB reset to enter a clean state.
-     * This must happen before TLS session establishment. */
-    if(p_libusb_dev && *p_libusb_dev) {
-        typedef int (*fn_libusb_reset_t)(void *dev);
-        fn_libusb_reset_t libusb_reset = dlsym(RTLD_DEFAULT, "libusb_reset_device");
-        if(libusb_reset) {
-            write(2, "[VFM] USB device reset...\n", 25);
-            int rr = libusb_reset(*p_libusb_dev);
-            n = snprintf(buf, sizeof(buf), "[VFM] libusb_reset_device: rc=%d\n", rr);
-            write(2, buf, n);
-            /* Re-claim USB interfaces after reset */
-            /* (WinUsb_Initialize will re-claim when called by PAL init) */
-        }
-    }
+    /* No USB reset — it invalidates the interface claims and breaks TLS later */
 
     /* Step 1: Set VFM debug callback */
     fn_set_callback_t set_dbg_cb = (fn_set_callback_t)(img + 0x3d740);
@@ -437,7 +423,8 @@ static void do_vfm_init(uint8_t *img) {
         write(2, buf, n);
     }
 
-    /* Step 6.5: Create sensor data manager at +0x428
+    /* Step 6.5: SKIP sensor data manager — it might corrupt the proto context
+     * DISABLED for debugging: Create sensor data manager at +0x428
      * FUN_180002ce0(param_1):
      *   puVar1 = operator_new(0x138);
      *   puVar2 = FUN_18000e2e4(puVar1, *(param_1 + 0x78));  // session
@@ -453,9 +440,9 @@ static void do_vfm_init(uint8_t *img) {
         typedef void* __attribute__((ms_abi)) (*fn_alloc_t)(size_t size);
         /* Use the DLL's allocator at FUN_18003dc80 */
         fn_alloc_t palloc = (fn_alloc_t)(img + 0x3dc80);
-        void *mgr_buf = palloc(0x138);
+        void *mgr_buf = NULL; /* palloc(0x138); DISABLED */
 
-        if(mgr_buf) {
+        if(0 && mgr_buf) {
             /* Zero it */
             memset(mgr_buf, 0, 0x138);
 
@@ -500,16 +487,62 @@ static void do_vfm_init(uint8_t *img) {
         typedef int __attribute__((ms_abi)) (*fn_dev_init_t)(void *dev_handle, void *param2);
         fn_dev_init_t dev_init = (fn_dev_init_t)(img + 0x196d0);
 
-        /* USB reset already done in Step 0 above */
+        /* Send FPS_INIT directly through proto IoControl TLS path.
+         * Bypass the command sender (crashes on uninitialized tudor fields).
+         * Proto cmd 0x67 → case 0x66 → TLS send (FUN_18005ef80)
+         *
+         * The proto IoControl function is at tudor_sensor+0xD8.
+         * It takes: (proto_ctx, cmd, data, data_len, resp, resp_len, error)
+         */
+        if(dev_handle) {
+            void **_dh = (void**)dev_handle;
+            void *ts = _dh[1] ? *(void**)_dh[1] : NULL;
+            if(ts) {
+                void *proto_ctx = *(void**)ts;  /* tudor_sensor[0] = proto context */
+                void *proto_fn_ptr = *(void**)((uint8_t*)ts + 0xD8);
 
-        /* Set degraded flag to skip PAL device reset in tudorInitDevice */
-        {
-            void **dev_h = (void**)dev_handle;
-            if(dev_h[1]) {
-                void *ts = *(void**)dev_h[1];
-                if(ts) *(uint32_t*)((uint8_t*)ts + 0xBC) = 1;
+                typedef int __attribute__((ms_abi)) (*fn_proto_ioctl_t)(
+                    void *proto_ctx, int cmd, void *data, uint32_t data_len,
+                    void *resp, uint32_t resp_len, int *error);
+                fn_proto_ioctl_t proto_ioctl = (fn_proto_ioctl_t)proto_fn_ptr;
+
+                if(proto_ctx && proto_ioctl) {
+                    /* Send raw BMKT FPS_INIT (0x11) through TLS.
+                     * BMKT format: [sync=0xFE] [seq] [msg_id] [payload_len_hi] [payload_len_lo]
+                     * For FPS_INIT: no payload, just the 5-byte header. */
+                    uint8_t fps_init[] = { 0xFE, 0x01, 0x11, 0x00, 0x00 };
+                    uint32_t resp_desc[4] = {0};
+                    resp_desc[0] = 0x10;
+                    int error = 0;
+
+                    write(2, "[VFM] Sending BMKT FPS_INIT [FE 01 11 00 00] via TLS...\n", 56);
+                    rc = proto_ioctl(proto_ctx, 0x67, fps_init, 5, resp_desc, 0x10, &error);
+                    n = snprintf(buf, sizeof(buf), "[VFM] FPS_INIT: rc=%d err=%d\n", rc, error);
+                    write(2, buf, n);
+
+                    if(rc == 0) {
+                        /* Try reading the sensor's response */
+                        uint8_t resp_data[64];
+                        memset(resp_data, 0, sizeof(resp_data));
+                        rc = proto_ioctl(proto_ctx, 0x66, NULL, 0, resp_data, 32, &error);
+                        n = snprintf(buf, sizeof(buf),
+                            "[VFM] FPS_INIT resp: rc=%d [%02x %02x %02x %02x %02x %02x %02x %02x]\n",
+                            rc, resp_data[0], resp_data[1], resp_data[2], resp_data[3],
+                            resp_data[4], resp_data[5], resp_data[6], resp_data[7]);
+                        write(2, buf, n);
+                    }
+                }
             }
         }
+
+        /* Skip degraded flag for now — test pure FPS_INIT */
+
+        /* Binary-patch _tudorInitDevice: NOP the device info read (proto cmd=4)
+         * at RVA 0x5668e: CALL [RAX+0xD8] → XOR EAX,EAX + 4x NOP
+         * This forces the device info read to "succeed" (rc=0) with empty data,
+         * allowing the function to proceed to the FPS_INIT code path.
+         * Encoding: FF 90 D8 00 00 00 → 31 C0 90 90 90 90 */
+        /* Minimal setup: just degraded flag, no other struct modifications */
 
         /* Try vfmDeviceInitialize (may fail with BMKT_SENSOR_NOT_INIT=204) */
         {
