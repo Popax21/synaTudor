@@ -476,27 +476,47 @@ static void do_vfm_init(uint8_t *img) {
 
     /* Step 8: Initialize device and test capture */
     if(dev_handle) {
-        /* vfmDeviceInitialize(dev_handle, 0) — initializes sensor hardware */
+        /*
+         * vfmDeviceInitialize(dev_handle, output_buffer)
+         * Calls module_vtable+0x48 (ssi initDevice).
+         * param2 is an output buffer, not NULL.
+         */
         typedef int __attribute__((ms_abi)) (*fn_dev_init_t)(void *dev_handle, void *param2);
         fn_dev_init_t dev_init = (fn_dev_init_t)(img + 0x196d0);
 
-        write(2, "[VFM] Calling vfmDeviceInitialize...\n", 36);
-        rc = dev_init(dev_handle, NULL);
-        n = snprintf(buf, sizeof(buf), "[VFM] vfmDeviceInitialize: rc=%d (0x%x)\n", rc, rc);
-        write(2, buf, n);
+        /* Skip vfmDeviceInitialize — crashes at SSI layer (si_addr=0x14c).
+         * The SSI module needs deep internal state we haven't set up.
+         * Session is already established, try capture directly. */
 
-        /* vfmCaptureStart(dev_handle, purpose, 0, 0) — begin fingerprint capture */
+        /*
+         * vfmCaptureStart(dev_handle, purpose, options, timeout)
+         * Calls module_vtable+0x80 → tudorCaptureStart
+         * purpose: 1=verify, 2=enroll, 8=low-power
+         */
         typedef int __attribute__((ms_abi)) (*fn_capture_start_t)(void *dev_handle, uint32_t p2, uint32_t p3, uint32_t p4);
         fn_capture_start_t capture_start = (fn_capture_start_t)(img + 0x2d0a0);
 
-        write(2, "[VFM] Calling vfmCaptureStart...\n", 32);
-        rc = capture_start(dev_handle, 1, 0, 0);
+        /* Check device handle internal state */
+        void **dh = (void**)dev_handle;
+        n = snprintf(buf, sizeof(buf),
+            "[VFM] dev_handle internals: [0]=%p [1]=%p [2]=%p [3]=%p [4]=%p\n",
+            dh[0], dh[1], dh[2], dh[3], dh[4]);
+        write(2, buf, n);
+
+        /* Clear the capture context at dev_handle[3] so CaptureStart accepts */
+        if(dh[3]) {
+            n = snprintf(buf, sizeof(buf), "[VFM] Clearing existing capture context at [3]=%p\n", dh[3]);
+            write(2, buf, n);
+            dh[3] = NULL;
+        }
+
+        write(2, "[VFM] Calling vfmCaptureStart(purpose=2/enroll)...\n", 50);
+        rc = capture_start(dev_handle, 2, 0, 5000);
         n = snprintf(buf, sizeof(buf), "[VFM] vfmCaptureStart: rc=%d (0x%x)\n", rc, rc);
         write(2, buf, n);
 
         if(rc == 0) {
-            write(2, "[VFM] *** SENSOR IS RESPONDING! Capture started! ***\n", 52);
-            write(2, "[VFM] Place your finger on the sensor now!\n", 43);
+            write(2, "[VFM] *** SENSOR CAPTURE STARTED! Place your finger! ***\n", 57);
         }
     }
 
