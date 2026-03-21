@@ -376,23 +376,65 @@ static void do_vfm_init(uint8_t *img) {
          * The IOCTL handler (self = com_ioctl_callback = cpp_obj + 0x28)
          * adjusts back to the base and accesses these same fields.
          */
-        uint8_t *cpp_obj = (uint8_t*)*p_usb_obj;  /* com_usb_device_obj IS cpp_obj */
+        /*
+         * Corrected offsets — confirmed by IOCTL handler decompilation:
+         *   OnDeviceIoControl thunk adjusts this by +0x08 before the handler
+         *   Handler does: plVar3 = param_1 - 0x30
+         *   So plVar3 = (com_ioctl_callback + 0x08) - 0x30 = com_usb_device_obj
+         *   All field offsets are relative to com_usb_device_obj directly.
+         */
+        uint8_t *cpp_obj = (uint8_t*)*p_usb_obj;  /* com_usb_device_obj */
 
-        /* Set initialized flag: cpp_obj + 0x50 */
-        *(uint8_t*)(cpp_obj + 0x50) = 1;
+        /* Set initialized flag: cpp_obj + 0x48 */
+        *(uint8_t*)(cpp_obj + 0x48) = 1;
 
-        /* Store VFM session: cpp_obj + 0x80 */
-        *(void**)(cpp_obj + 0x80) = session;
-
-        /* Store device handle: cpp_obj + 0x78 */
+        /* Store device handle: cpp_obj + 0x70 */
         if(dev_handle) {
-            *(void**)(cpp_obj + 0x78) = dev_handle;
+            *(void**)(cpp_obj + 0x70) = dev_handle;
         }
 
+        /* Store VFM session: cpp_obj + 0x78 */
+        *(void**)(cpp_obj + 0x78) = session;
+
         n = snprintf(buf, sizeof(buf),
-            "[VFM] Stored in CBiometricDevice: cpp=%p session@+0x80=%p dev@+0x78=%p init@+0x50=1\n",
-            (void*)cpp_obj, session, dev_handle);
+            "[VFM] Stored: cpp=%p init@+0x48=1 dev@+0x70=%p session@+0x78=%p\n",
+            (void*)cpp_obj, dev_handle, session);
         write(2, buf, n);
+    }
+
+    /* Step 6.5: Create sensor data manager at +0x428
+     * FUN_180002ce0(param_1):
+     *   puVar1 = operator_new(0x138);
+     *   puVar2 = FUN_18000e2e4(puVar1, *(param_1 + 0x78));  // session
+     *   *(param_1 + 0x428) = puVar2;
+     *
+     * We need to call FUN_18000e2e4 with the allocated 0x138 buffer and session,
+     * then store the result at cpp_obj + 0x428.
+     */
+    if(p_usb_obj && *p_usb_obj && session) {
+        uint8_t *cpp_obj = (uint8_t*)*p_usb_obj;
+
+        /* Allocate 0x138 bytes (operator new) */
+        typedef void* __attribute__((ms_abi)) (*fn_alloc_t)(size_t size);
+        /* Use the DLL's allocator at FUN_18003dc80 */
+        fn_alloc_t palloc = (fn_alloc_t)(img + 0x3dc80);
+        void *mgr_buf = palloc(0x138);
+
+        if(mgr_buf) {
+            /* Zero it */
+            memset(mgr_buf, 0, 0x138);
+
+            /* Call FUN_18000e2e4(buffer, session) to initialize */
+            typedef void* __attribute__((ms_abi)) (*fn_mgr_init_t)(void *buf, void *session);
+            fn_mgr_init_t mgr_init = (fn_mgr_init_t)(img + 0xe2e4);
+            void *mgr = mgr_init(mgr_buf, session);
+
+            /* Store at cpp_obj + 0x428 */
+            *(void**)(cpp_obj + 0x428) = mgr;
+
+            n = snprintf(buf, sizeof(buf), "[VFM] Created sensor data manager: %p → cpp+0x428\n", mgr);
+            write(2, buf, n);
+        }
     }
 
     /* Mark VFM as initialized for IOCTL interception */
@@ -477,11 +519,32 @@ NTSTATUS com_send_ioctl(unsigned long code, const void *in_buf, size_t in_size,
         }
     }
 
+    /* Intercept vendor IOCTLs (0x442xxx) — the driver's handler crashes on these
+       because the CBiometricDevice object layout isn't fully set up.
+       Return success with empty/default responses for now. */
+    if((code & 0xFFFF0000) == 0x00440000 && (code & 0x2000)) {
+        /* Vendor-specific biometric IOCTL */
+        n = snprintf(buf, sizeof(buf), "[IOCTL] VENDOR code=0x%lx → returning empty success\n", code);
+        write(2, buf, n);
+        if(out_buf && out_size >= 4) {
+            memset(out_buf, 0, out_size);
+        }
+        if(bytes_returned) *bytes_returned = (out_size >= 4) ? 4 : 0;
+        return STATUS_SUCCESS;
+    }
+
+    /* Standard biometric IOCTLs — also return defaults since driver handler
+       isn't properly connected to VFM session for these either */
+    if(code == IOCTL_BIOMETRIC_RESET) {
+        if(bytes_returned) *bytes_returned = 0;
+        return STATUS_SUCCESS;
+    }
+
     n = snprintf(buf, sizeof(buf), "[IOCTL] code=0x%lx in=%zu out=%zu → forwarding to driver\n",
         code, in_size, out_size);
     write(2, buf, n);
 
-    /* Forward all other IOCTLs to the real driver */
+    /* Forward remaining IOCTLs to the real driver */
     NTSTATUS status = orig_com_send_ioctl(code, in_buf, in_size, out_buf, out_size, bytes_returned);
 
     n = snprintf(buf, sizeof(buf), "[IOCTL] code=0x%lx → status=%d info=%zu\n",
