@@ -31,6 +31,7 @@ typedef int __attribute__((ms_abi)) (*fn_stg_init_t)(void *dev_handle);
 static void **p_usb_obj;
 static void **p_driver_dll;
 static void (*set_cur)(void*);
+static volatile int vfm_init_done = 0;
 
 /* ─── Fake COM object for WBFUsbInitialize's vtable[15] ─── */
 
@@ -242,6 +243,35 @@ static void do_vfm_init(uint8_t *img) {
     /* Step 2.5: Patch USB target vtable BEFORE any VFM calls that use it */
     patch_usb_target_vtable();
 
+    /* Dump COM interface pointers to find CBiometricDevice base offset */
+    {
+        void **p_ioctl_cb = (void**)dlsym(RTLD_DEFAULT, "com_ioctl_callback");
+        void **p_pnp_hw = (void**)dlsym(RTLD_DEFAULT, "com_pnp_hw_callback");
+        void **p_drv_cb = (void**)dlsym(RTLD_DEFAULT, "com_driver_callback");
+        void *usb_obj = p_usb_obj ? *p_usb_obj : NULL;
+        void *ioctl_obj = p_ioctl_cb ? *p_ioctl_cb : NULL;
+        void *pnp_obj = p_pnp_hw ? *p_pnp_hw : NULL;
+        void *drv_obj = p_drv_cb ? *p_drv_cb : NULL;
+
+        n = snprintf(buf, sizeof(buf),
+            "[VFM-DBG] COM ptrs: usb=%p ioctl=%p pnp_hw=%p drv=%p\n",
+            usb_obj, ioctl_obj, pnp_obj, drv_obj);
+        write(2, buf, n);
+
+        if(usb_obj && ioctl_obj) {
+            ptrdiff_t diff = (uint8_t*)ioctl_obj - (uint8_t*)usb_obj;
+            n = snprintf(buf, sizeof(buf),
+                "[VFM-DBG] ioctl_cb - usb_obj = %td (0x%tx)\n", diff, diff);
+            write(2, buf, n);
+        }
+        if(usb_obj && pnp_obj) {
+            ptrdiff_t diff = (uint8_t*)pnp_obj - (uint8_t*)usb_obj;
+            n = snprintf(buf, sizeof(buf),
+                "[VFM-DBG] pnp_hw - usb_obj = %td (0x%tx)\n", diff, diff);
+            write(2, buf, n);
+        }
+    }
+
     /* Step 2: Create VFM session */
     fn_session_init_t session_init = (fn_session_init_t)(img + 0x2f780);
     void *session = NULL;
@@ -331,28 +361,134 @@ static void do_vfm_init(uint8_t *img) {
      * So: base = com_usb_device_obj - 0x08
      */
     if(p_usb_obj && *p_usb_obj && session) {
-        uint8_t *base = (uint8_t*)*p_usb_obj - 0x08;
+        /*
+         * CBiometricDevice C++ object layout (from runtime pointer analysis):
+         *   com_usb_device_obj  = cpp_obj + 0x00  ({1493cd1b} interface)
+         *   com_pnp_hw_callback = cpp_obj + 0x08  (IPnpCallbackHardware)
+         *   com_ioctl_callback  = cpp_obj + 0x28  (IQueueCallbackDeviceIoControl)
+         *
+         * PrepareHardware is called on IPnpCallbackHardware = cpp_obj + 0x08
+         * InitializeNiseCore stores fields relative to PrepareHardware's self:
+         *   self + 0x48 = init flag    → cpp_obj + 0x50
+         *   self + 0x70 = dev handle   → cpp_obj + 0x78
+         *   self + 0x78 = VFM session  → cpp_obj + 0x80
+         *
+         * The IOCTL handler (self = com_ioctl_callback = cpp_obj + 0x28)
+         * adjusts back to the base and accesses these same fields.
+         */
+        uint8_t *cpp_obj = (uint8_t*)*p_usb_obj;  /* com_usb_device_obj IS cpp_obj */
 
-        /* Set initialized flag */
-        *(uint8_t*)(base + 0x48) = 1;
+        /* Set initialized flag: cpp_obj + 0x50 */
+        *(uint8_t*)(cpp_obj + 0x50) = 1;
 
-        /* Store VFM session */
-        *(void**)(base + 0x78) = session;
+        /* Store VFM session: cpp_obj + 0x80 */
+        *(void**)(cpp_obj + 0x80) = session;
 
-        /* Store device handle */
+        /* Store device handle: cpp_obj + 0x78 */
         if(dev_handle) {
-            *(void**)(base + 0x70) = dev_handle;
+            *(void**)(cpp_obj + 0x78) = dev_handle;
         }
 
         n = snprintf(buf, sizeof(buf),
-            "[VFM] Stored in CBiometricDevice: base=%p session@+0x78=%p dev@+0x70=%p init@+0x48=1\n",
-            (void*)base, session, dev_handle);
+            "[VFM] Stored in CBiometricDevice: cpp=%p session@+0x80=%p dev@+0x78=%p init@+0x50=1\n",
+            (void*)cpp_obj, session, dev_handle);
         write(2, buf, n);
     }
 
-    /* (vtable already patched in Step 2.5 above) */
+    /* Mark VFM as initialized for IOCTL interception */
+    vfm_init_done = 1;
 
     write(2, "[VFM] === VFM/PAL initialization complete ===\n", 47);
+}
+
+/* ─── IOCTL interception via LD_PRELOAD symbol interposition ─── */
+
+/*
+ * WINBIO IOCTL codes:
+ *   0x440004 = IOCTL_BIOMETRIC_GET_ATTRIBUTES    (function 1)
+ *   0x440008 = IOCTL_BIOMETRIC_RESET             (function 2)
+ *   0x44000C = IOCTL_BIOMETRIC_CALIBRATE          (function 3)
+ *   0x440010 = IOCTL_BIOMETRIC_GET_SENSOR_STATUS  (function 4)
+ *   0x440014 = IOCTL_BIOMETRIC_CAPTURE_DATA       (function 5)
+ *
+ * WINBIO_SENSOR_STATUS values: READY=3, BUSY=4, NOT_CALIBRATED=5, FAILURE=6
+ *
+ * WINBIO_DIAGNOSTICS (output of GET_SENSOR_STATUS):
+ *   uint32_t PayloadSize;      +0x00
+ *   HRESULT  WinBioHresult;    +0x04
+ *   uint32_t SensorStatus;     +0x08
+ */
+#define IOCTL_BIOMETRIC_GET_SENSOR_STATUS 0x440010
+#define IOCTL_BIOMETRIC_RESET             0x440008
+#define IOCTL_BIOMETRIC_GET_ATTRIBUTES    0x440004
+
+typedef int NTSTATUS;
+#define STATUS_SUCCESS 0
+
+/* Original com_send_ioctl — resolved at first call */
+static NTSTATUS (*orig_com_send_ioctl)(unsigned long code, const void *in_buf,
+    size_t in_size, void *out_buf, size_t out_size, size_t *bytes_returned) = NULL;
+
+/* Interposed com_send_ioctl — intercepts specific IOCTLs */
+NTSTATUS com_send_ioctl(unsigned long code, const void *in_buf, size_t in_size,
+                        void *out_buf, size_t out_size, size_t *bytes_returned) {
+    char buf[120];
+    int n;
+
+    if(!orig_com_send_ioctl) {
+        orig_com_send_ioctl = dlsym(RTLD_NEXT, "com_send_ioctl");
+        if(!orig_com_send_ioctl) {
+            write(2, "[IOCTL] FATAL: Cannot find original com_send_ioctl!\n", 51);
+            return -1;
+        }
+    }
+
+    /* Intercept GET_SENSOR_STATUS when VFM is initialized */
+    if(code == IOCTL_BIOMETRIC_GET_SENSOR_STATUS && vfm_init_done && out_buf && out_size >= 12) {
+        /* Return WINBIO_DIAGNOSTICS with SensorStatus = READY (3) */
+        uint32_t *diag = (uint32_t*)out_buf;
+        diag[0] = 12;  /* PayloadSize */
+        diag[1] = 0;   /* WinBioHresult = S_OK */
+        diag[2] = 3;   /* SensorStatus = WINBIO_SENSOR_READY */
+        if(bytes_returned) *bytes_returned = 12;
+
+        n = snprintf(buf, sizeof(buf), "[IOCTL] GET_SENSOR_STATUS → READY (intercepted)\n");
+        write(2, buf, n);
+        return STATUS_SUCCESS;
+    }
+
+    /*
+     * Lazy VFM init on first IOCTL from the main thread.
+     * The VFM session MUST be created on the same thread that processes IOCTLs,
+     * because the driver's IOCTL handler may check thread ownership or use
+     * thread-local state initialized during the VFM session creation.
+     */
+    static int main_thread_vfm_init = 0;
+    if(!main_thread_vfm_init && p_driver_dll && *p_driver_dll) {
+        void *base = *(void**)((uint8_t*)*p_driver_dll + 64);
+        if(base) {
+            uint8_t *img = (uint8_t*)base;
+            if(img[0x929b] == 0xEB && img[0x161bb] == 0x41) {
+                main_thread_vfm_init = 1;
+                write(2, "[IOCTL] Triggering VFM init on main thread (first IOCTL)...\n", 60);
+                if(set_cur) set_cur(*p_driver_dll);
+                do_vfm_init(img);
+            }
+        }
+    }
+
+    n = snprintf(buf, sizeof(buf), "[IOCTL] code=0x%lx in=%zu out=%zu → forwarding to driver\n",
+        code, in_size, out_size);
+    write(2, buf, n);
+
+    /* Forward all other IOCTLs to the real driver */
+    NTSTATUS status = orig_com_send_ioctl(code, in_buf, in_size, out_buf, out_size, bytes_returned);
+
+    n = snprintf(buf, sizeof(buf), "[IOCTL] code=0x%lx → status=%d info=%zu\n",
+        code, status, bytes_returned ? *bytes_returned : 0);
+    write(2, buf, n);
+
+    return status;
 }
 
 /* ─── Full init sequence (runs on timer thread with full stack) ─── */
@@ -392,9 +528,10 @@ static void do_full_init(uint8_t *img) {
     n = snprintf(buf, sizeof(buf), "[WBF] WBFUsbInit returned 0x%x\n", hr);
     write(2, buf, n);
 
-    /* Now call VFM/PAL directly (we have a full thread stack here) */
-    write(2, "[WBF] Calling VFM/PAL init (on timer thread w/ full stack)...\n", 62);
-    do_vfm_init(img);
+    /* VFM init will happen on the main thread (via IOCTL interceptor)
+       to ensure thread ownership is correct for the VFM session.
+       The timer thread just does WBFUsbInitialize. */
+    write(2, "[WBF] WBF init done. VFM init will trigger on first IOCTL.\n", 59);
 }
 
 /* ─── Timer thread + constructor ─── */
