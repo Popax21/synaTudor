@@ -9,27 +9,27 @@ void tudor_set_com_usb_device(libusb_device_handle *dev) {
     tudor_com_usb_dev = dev;
 }
 
-extern uint8_t _binary_libtudor_synaFpAdapter132_dll_start, _binary_libtudor_synaFpAdapter132_dll_end;
-extern uint8_t _binary_libtudor_synaWudfBioUsb132_dll_start, _binary_libtudor_synaWudfBioUsb132_dll_end;
+extern uint8_t _binary_libtudor_synaFpAdapter104_dll_start, _binary_libtudor_synaFpAdapter104_dll_end;
+extern uint8_t _binary_libtudor_synaWudfBioUsb104_dll_start, _binary_libtudor_synaWudfBioUsb104_dll_end;
 
 #define NUM_WINDRV_DLLS 2
 struct windrv_dll tudor_windrv_dlls[] = {
     {
         .module = {
-            .name = "synaFpAdapter132.dll",
-            .cmdline = "synaFpAdapter132.dll",
+            .name = "synaFpAdapter104.dll",
+            .cmdline = "synaFpAdapter104.dll",
             .environ = (const char*[]) { NULL }
         },
-        .pe_image = &_binary_libtudor_synaFpAdapter132_dll_start, .pe_image_end = &_binary_libtudor_synaFpAdapter132_dll_end,
+        .pe_image = &_binary_libtudor_synaFpAdapter104_dll_start, .pe_image_end = &_binary_libtudor_synaFpAdapter104_dll_end,
         .is_adapter = true, .is_driver = false
     },
     {
         .module = {
-            .name = "synaWudfBioUsb132.dll",
-            .cmdline = "synaWudfBioUsb132.dll",
+            .name = "synaWudfBioUsb104.dll",
+            .cmdline = "synaWudfBioUsb104.dll",
             .environ = (const char*[]) { NULL }
         },
-        .pe_image = &_binary_libtudor_synaWudfBioUsb132_dll_start, .pe_image_end = &_binary_libtudor_synaWudfBioUsb132_dll_end,
+        .pe_image = &_binary_libtudor_synaWudfBioUsb104_dll_start, .pe_image_end = &_binary_libtudor_synaWudfBioUsb104_dll_end,
         .is_adapter = false, .is_driver = true
     }
 };
