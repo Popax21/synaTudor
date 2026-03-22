@@ -193,6 +193,7 @@ __winfnc BOOL DisableThreadLibraryCalls(HANDLE handle) {
 WINAPI(DisableThreadLibraryCalls)
 
 __winfnc void *GetProcAddress(HANDLE handle, const char *name) {
+    log_info("GetProcAddress(%p, '%s')", (void*)handle, name ? name : "(ordinal)");
     struct winmodule *module = (struct winmodule*) handle->data;
 
     //Check if it's an ordinal import
