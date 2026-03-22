@@ -69,7 +69,7 @@ void winmodule_set_cur(struct winmodule *module) {
 }
 
 __winfnc HANDLE LoadLibraryA(const char *name) {
-    log_debug("LoadLibraryA: '%s'", name ? name : "(null)");
+    log_info("LoadLibraryA: '%s'", name ? name : "(null)");
     struct winmodule *module = (struct winmodule*) malloc(sizeof(struct winmodule));
     if(!module) { winerr_set_errno(); return NULL; }
     *module = (struct winmodule) {0};
@@ -78,6 +78,18 @@ __winfnc HANDLE LoadLibraryA(const char *name) {
     return module->handle;
 }
 WINAPI(LoadLibraryA)
+
+__winfnc HANDLE LoadLibraryW(const char16_t *name) {
+    char *cname = name ? winstr_to_str(name) : NULL;
+    log_debug("LoadLibraryW: '%s'", cname ? cname : "(null)");
+    struct winmodule *module = (struct winmodule*) malloc(sizeof(struct winmodule));
+    if(!module) { winerr_set_errno(); free(cname); return NULL; }
+    *module = (struct winmodule) {0};
+    module->name = cname ? cname : strdup("");
+    winmodule_register(module);
+    return module->handle;
+}
+WINAPI(LoadLibraryW)
 
 __winfnc HANDLE LoadLibraryExW(const char16_t *name, HANDLE file, DWORD flags) {
     //We don't support loading librarys dynamically, but some stdlib functions have to be loaded that way

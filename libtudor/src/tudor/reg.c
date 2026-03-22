@@ -18,7 +18,7 @@ bool tudor_reg_handler(void *ctx, void *ctx_obj, const char *key_name, const cha
         }
         if(strcmp(val_name, "useWbf") == 0) {
             if(buf && *buf_size >= 4) {
-                *((uint32_t*) buf) = TRUE;
+                *((uint32_t*) buf) = FALSE;  /* Force WinUSB mode, not WBF */
             } else if(buf) return false;
             *buf_size = 4;
             *val_type = WINREG_DWORD;
