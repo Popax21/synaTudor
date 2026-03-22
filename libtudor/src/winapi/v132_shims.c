@@ -236,7 +236,7 @@ __winfnc HANDLE CreateFileA(const char *name, DWORD access, DWORD share, void *s
 WINAPI(CreateFileA)
 
 __winfnc HANDLE CreateFileW(const char16_t *name, DWORD access, DWORD share, void *sec, DWORD disp, DWORD flags, HANDLE tmpl) {
-    log_debug("CreateFileW(...)");
+    log_info("CreateFileW(access=0x%x, flags=0x%x)", access, flags);
     return winhandle_create(NULL, NULL);
 }
 WINAPI(CreateFileW)
