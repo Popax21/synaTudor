@@ -51,7 +51,17 @@ MAKE_NUMBERED_IFACE(4)
 MAKE_NUMBERED_IFACE(5)
 MAKE_NUMBERED_IFACE(6)
 MAKE_NUMBERED_IFACE(7)
-MAKE_NUMBERED_IFACE(8)
+/* vtable[7]=0x38 and [8]=0x40: called by wrapper[0x48] and wrapper[0x50].
+   These are the actual WinUsb_WritePipe/ReadPipe via wrapper layer.
+   Params from wrapper: (interface, pipe_byte, data_len, data_len2, stack_5th_arg)
+   The wrapper repackages: edx=pipe_byte, r8d=len1, r9d=len2, [rsp+0x20]=5th */
+static __winfnc int64_t fake_iface_wrapper_io(void *self, uint8_t pipe, uint32_t param1, uint32_t param2, void *extra) {
+    log_info("fake_iface WRAPPER_IO: pipe=0x%02x p1=%u p2=%u extra=%p", pipe, param1, param2, extra);
+    /* This is called via the wrapper path for BulkWrite/BulkRead.
+       For now return success — the actual I/O goes through direct [0x48]/[0x50] calls. */
+    return 1;
+}
+
 MAKE_NUMBERED_IFACE(11)
 MAKE_NUMBERED_IFACE(12)
 MAKE_NUMBERED_IFACE(13)
@@ -65,10 +75,12 @@ MAKE_NUMBERED_IFACE(19)
 /* vtable[9]=0x48: BulkWrite (38-byte Tudor frames)
    vtable[10]=0x50: BulkWrite (1-byte GET_VERSION)
    Params: (self, pipe_idx(nil), buffer, length, &transferred) */
-static __winfnc int64_t fake_iface_bulkwrite(void *self, void *pipe, uint8_t *buf, uint32_t len, uint32_t *transferred) {
-    log_info("fake_iface WRITE: buf=%p len=%u (first bytes: %02x %02x %02x %02x)",
-        buf, len, buf ? buf[0] : 0, (buf && len > 1) ? buf[1] : 0,
+static __winfnc int64_t fake_iface_bulkwrite(void *self, void *pipe, uint8_t *buf, uint32_t len, void *p5, void *p6) {
+    log_info("fake_iface WRITE: buf=%p len=%u p5=%p p6=%p (first: %02x %02x %02x %02x)",
+        buf, len, p5, p6,
+        buf ? buf[0] : 0, (buf && len > 1) ? buf[1] : 0,
         (buf && len > 2) ? buf[2] : 0, (buf && len > 3) ? buf[3] : 0);
+    uint32_t *transferred = (uint32_t*)p5;  /* p5 might be &transferred */
     if(!tudor_com_usb_dev || !buf) return 0;
     /* Skip all-zeros frames (TLS not initialized → empty encrypted frame) */
     int all_zero = 1;
@@ -87,6 +99,10 @@ static __winfnc int64_t fake_iface_bulkwrite(void *self, void *pipe, uint8_t *bu
     if(transferred) *transferred = xfr;
     log_info("fake_iface WRITE: sent %d/%d bytes OK", xfr, len);
     _last_write_done = 1;
+
+    /* The response should go to the transferred_ptr area or a separate read buffer.
+       p5 (transferred ptr) might point to a larger struct with response buffer.
+       For now, just do the read so the endpoint is drained for the next [0x30] call. */
     return 1;
 }
 
@@ -107,11 +123,16 @@ static __winfnc int64_t fake_iface_querypipe_or_read(void *self, void *pipe, voi
     log_info("fake_iface[0x30]: pipe=%p p3=0x%lx p4=%p p5=%p (last_write=%d)",
         pipe, (long)p3v, p4, p5, _last_write_done);
 
+    /* Dump the transfer info structure at p4 to understand the I/O layout */
+    if(p4v > 0x10000) {
+        uint64_t *info = (uint64_t*)p4;
+        log_info("fake_iface[0x30] info@%p: [0]=0x%lx [1]=0x%lx [2]=0x%lx",
+            p4, info[0], info[1], info[2]);
+    }
+
     /* If we just did a write and this is pipe 1 (IN), do a bulk read */
-    if(_last_write_done && p3v <= 1 && p4v > 0x10000 && tudor_com_usb_dev) {
+    if(_last_write_done && p3v == 1 && p4v > 0x10000 && tudor_com_usb_dev) {
         _last_write_done = 0;
-        /* p4 might be the output buffer for read data, or p5 might be.
-           Let's try reading into a temp buffer and see the response. */
         uint8_t resp[64] = {0};
         int resp_len = 0;
         int err = libusb_bulk_transfer(tudor_com_usb_dev, 0x81, resp, sizeof(resp), &resp_len, 2000);
@@ -121,6 +142,13 @@ static __winfnc int64_t fake_iface_querypipe_or_read(void *self, void *pipe, voi
             for(int i = 0; i < resp_len && i < 32 && pos < 190; i++)
                 pos += snprintf(hex+pos, sizeof(hex)-pos, "%02x ", resp[i]);
             log_info("fake_iface[0x30] READ: %d bytes: %s", resp_len, hex);
+            /* Also try writing response to p5 or p4 — the DLL's expected output */
+            uint64_t p5v = (uint64_t)p5;
+            if(p5v > 0x10000) {
+                /* p5 might be a transfer result struct — write actual_length there */
+                *(uint32_t*)p5 = resp_len;
+                log_info("  → wrote resp_len=%d to p5=%p", resp_len, p5);
+            }
         } else {
             log_info("fake_iface[0x30] READ: %s", err ? libusb_error_name(err) : "0 bytes");
         }
@@ -210,8 +238,8 @@ static void *fake_synusb_vtable[20] = {
     /* [4]  0x20 */ (void*)fake_iface_4,             /* Close? */
     /* [5]  0x28 */ (void*)fake_iface_5,             /* ? */
     /* [6]  0x30 */ (void*)fake_iface_querypipe_or_read, /* QueryPipe + pipe info */
-    /* [7]  0x38 */ (void*)fake_iface_7,             /* SetPipePolicy */
-    /* [8]  0x40 */ (void*)fake_iface_8,             /* ? */
+    /* [7]  0x38 */ (void*)fake_iface_wrapper_io,     /* wrapper[0x48] → write/read */
+    /* [8]  0x40 */ (void*)fake_iface_wrapper_io,     /* wrapper[0x50] → write/read */
     /* [9]  0x48 */ (void*)fake_iface_bulkwrite,     /* BulkWrite (38-byte frames) */
     /* [10] 0x50 */ (void*)fake_iface_bulkwrite,     /* BulkWrite (1-byte cmds) */
     /* [11] 0x58 */ (void*)fake_iface_11,
