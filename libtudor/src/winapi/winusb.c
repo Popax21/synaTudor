@@ -39,10 +39,94 @@ static __winfnc int64_t fake_iface_queryinterface(void *self, void *riid, void *
 static __winfnc uint32_t fake_iface_addref(void *self) { return 1; }
 static __winfnc uint32_t fake_iface_release(void *self) { return 1; }
 
-/* Generic debug wrapper — dump first 6 params for all interface methods */
-static __winfnc int64_t fake_iface_generic(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6) {
-    log_info("fake_iface GENERIC: p1=%p p2=%p p3=%p p4=%p p5=%p p6=%p", p1, p2, p3, p4, p5, p6);
-    return 1;  /* TRUE / success */
+/* Numbered debug wrappers to identify which vtable offset is called */
+#define MAKE_NUMBERED_IFACE(N) \
+static __winfnc int64_t fake_iface_##N(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6) { \
+    log_info("fake_iface[0x%02x]: p1=%p p2=%p p3=%p p4=%p p5=%p p6=%p", N*8, p1, p2, p3, p4, p5, p6); \
+    return 1; \
+}
+MAKE_NUMBERED_IFACE(4)
+MAKE_NUMBERED_IFACE(5)
+MAKE_NUMBERED_IFACE(6)
+MAKE_NUMBERED_IFACE(7)
+MAKE_NUMBERED_IFACE(8)
+MAKE_NUMBERED_IFACE(11)
+MAKE_NUMBERED_IFACE(12)
+MAKE_NUMBERED_IFACE(13)
+MAKE_NUMBERED_IFACE(14)
+MAKE_NUMBERED_IFACE(15)
+MAKE_NUMBERED_IFACE(17)
+MAKE_NUMBERED_IFACE(18)
+MAKE_NUMBERED_IFACE(19)
+#undef MAKE_NUMBERED_IFACE
+
+/* vtable[9]=0x48: BulkWrite (38-byte Tudor frames)
+   vtable[10]=0x50: BulkWrite (1-byte GET_VERSION)
+   Params: (self, pipe_idx(nil), buffer, length, &transferred) */
+static __winfnc int64_t fake_iface_bulkwrite(void *self, void *pipe, uint8_t *buf, uint32_t len, uint32_t *transferred) {
+    log_info("fake_iface WRITE: buf=%p len=%u (first bytes: %02x %02x %02x %02x)",
+        buf, len, buf ? buf[0] : 0, (buf && len > 1) ? buf[1] : 0,
+        (buf && len > 2) ? buf[2] : 0, (buf && len > 3) ? buf[3] : 0);
+    if(!tudor_com_usb_dev || !buf) return 0;
+    int xfr = 0;
+    int err = libusb_bulk_transfer(tudor_com_usb_dev, 0x01, buf, len, &xfr, 5000);
+    if(err != 0) {
+        log_warn("fake_iface WRITE: error %s", libusb_error_name(err));
+        return 0;
+    }
+    if(transferred) *transferred = xfr;
+    log_info("fake_iface WRITE: sent %d/%d bytes OK", xfr, len);
+
+    /* Auto-read: after writing, immediately read the sensor's response.
+       The DLL may expect async reads, but we do sync here. */
+    uint8_t resp[64] = {0};
+    int resp_len = 0;
+    err = libusb_bulk_transfer(tudor_com_usb_dev, 0x81, resp, sizeof(resp), &resp_len, 2000);
+    if(err == 0 && resp_len > 0) {
+        char hex[200] = {0};
+        int pos = 0;
+        for(int i = 0; i < resp_len && pos < 190; i++)
+            pos += snprintf(hex+pos, sizeof(hex)-pos, "%02x ", resp[i]);
+        log_info("fake_iface AUTO-READ: %d bytes: %s", resp_len, hex);
+    } else if(err != 0) {
+        log_info("fake_iface AUTO-READ: %s (no response)", libusb_error_name(err));
+    }
+
+    return 1;
+}
+
+/* vtable[6]=0x30: QueryPipe / BulkRead
+   During PrepareHardware: pipe query (p3=pipe_idx, p4=info_ptr)
+   During init loop: bulk read (p3=length?, p4=output?)
+   For now: if p3 looks like a buffer ptr → read, else query */
+static __winfnc int64_t fake_iface_querypipe_or_read(void *self, void *pipe, void *p3, void *p4, void *p5, void *p6) {
+    uint64_t p3v = (uint64_t)p3;
+    if(p3v > 0x10000 && tudor_com_usb_dev) {
+        /* p3 is a buffer pointer — treat as BulkRead(self, pipe, buf, len, &transferred) */
+        /* But we don't know the length... Let me check p4 */
+        log_info("fake_iface READ?: buf=%p p4=%p", p3, p4);
+        /* Not enough info to do a read yet — return success with 0 bytes */
+    } else {
+        /* p3 is a small value — pipe query */
+        log_info("fake_iface QUERY: pipe_idx=%ld output=%p", (long)p3v, p4);
+        /* Fill in pipe info if p4 looks like a valid pointer */
+        if(p4 && (uint64_t)p4 > 0x10000) {
+            /* Minimal WINUSB_PIPE_INFORMATION: PipeType=Bulk(3), PipeId=0x01, MaxPacket=60 */
+            uint8_t *info = (uint8_t*)p4;
+            if(p3v == 0) {
+                /* Pipe 0: OUT bulk */
+                info[0] = 3; /* PipeType = Bulk */
+                info[1] = 0x01; /* PipeId = EP OUT */
+                *(uint16_t*)(info + 2) = 60; /* MaxPacketSize */
+            } else if(p3v == 1) {
+                /* Pipe 1: IN bulk */
+                info[0] = 3;
+                info[1] = 0x81; /* PipeId = EP IN */
+                *(uint16_t*)(info + 2) = 60;
+            }
+        }
+    }
+    return 1;
 }
 
 /* vtable[3] = offset 0x18: device open (CreateFile equivalent)
@@ -108,29 +192,28 @@ static __winfnc int64_t fake_iface_initialize(void *p1, void *p2, void *p3, void
     return 1;
 }
 
-/* Build the vtable — 20 entries covering offsets 0x00-0x98.
-   All entries use generic debug handlers that log params. */
+/* Build the vtable — identified from runtime tracing */
 static void *fake_synusb_vtable[20] = {
     /* [0]  0x00 */ (void*)fake_iface_queryinterface,
     /* [1]  0x08 */ (void*)fake_iface_addref,
     /* [2]  0x10 */ (void*)fake_iface_release,
-    /* [3]  0x18 */ (void*)fake_iface_open,
-    /* [4]  0x20 */ (void*)fake_iface_generic,  /* close */
-    /* [5]  0x28 */ (void*)fake_iface_generic,  /* setPipePolicy */
-    /* [6]  0x30 */ (void*)fake_iface_generic,  /* write */
-    /* [7]  0x38 */ (void*)fake_iface_generic,  /* read */
-    /* [8]  0x40 */ (void*)fake_iface_generic,
-    /* [9]  0x48 */ (void*)fake_iface_generic,
-    /* [10] 0x50 */ (void*)fake_iface_generic,
-    /* [11] 0x58 */ (void*)fake_iface_generic,
-    /* [12] 0x60 */ (void*)fake_iface_generic,
-    /* [13] 0x68 */ (void*)fake_iface_generic,
-    /* [14] 0x70 */ (void*)fake_iface_generic,
-    /* [15] 0x78 */ (void*)fake_iface_generic,
-    /* [16] 0x80 */ (void*)fake_iface_initialize,
-    /* [17] 0x88 */ (void*)fake_iface_generic,
-    /* [18] 0x90 */ (void*)fake_iface_generic,
-    /* [19] 0x98 */ (void*)fake_iface_generic,
+    /* [3]  0x18 */ (void*)fake_iface_open,          /* CreateFile equiv */
+    /* [4]  0x20 */ (void*)fake_iface_4,             /* Close? */
+    /* [5]  0x28 */ (void*)fake_iface_5,             /* ? */
+    /* [6]  0x30 */ (void*)fake_iface_querypipe_or_read, /* QueryPipe + pipe info */
+    /* [7]  0x38 */ (void*)fake_iface_7,             /* SetPipePolicy */
+    /* [8]  0x40 */ (void*)fake_iface_8,             /* ? */
+    /* [9]  0x48 */ (void*)fake_iface_bulkwrite,     /* BulkWrite (38-byte frames) */
+    /* [10] 0x50 */ (void*)fake_iface_bulkwrite,     /* BulkWrite (1-byte cmds) */
+    /* [11] 0x58 */ (void*)fake_iface_11,
+    /* [12] 0x60 */ (void*)fake_iface_12,
+    /* [13] 0x68 */ (void*)fake_iface_13,
+    /* [14] 0x70 */ (void*)fake_iface_14,
+    /* [15] 0x78 */ (void*)fake_iface_15,
+    /* [16] 0x80 */ (void*)fake_iface_initialize,    /* WinUsb_Initialize */
+    /* [17] 0x88 */ (void*)fake_iface_17,            /* Reset/reopen */
+    /* [18] 0x90 */ (void*)fake_iface_18,
+    /* [19] 0x98 */ (void*)fake_iface_19,
 };
 
 /* The fake COM interface object — just a vtable pointer */
