@@ -41,6 +41,16 @@ static __winfnc uint32_t fake_iface_release(void *self) { return 1; }
 
 static int _last_write_done = 0;  /* Track write→read sequencing for fake interface */
 
+/* The sensor context's response buffer at offset +8.
+   Module vtable[11] copies 96 bytes from sensor_ctx+8 to output.
+   We write the USB response here after each write so the DLL can read it. */
+static uint8_t *_sensor_response_buf = NULL;
+
+void synusb_set_sensor_response_buf(void *buf) {
+    _sensor_response_buf = (uint8_t*)buf;
+    log_info("Set sensor response buffer at %p", buf);
+}
+
 /* Numbered debug wrappers to identify which vtable offset is called */
 #define MAKE_NUMBERED_IFACE(N) \
 static __winfnc int64_t fake_iface_##N(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6) { \
@@ -80,7 +90,21 @@ static __winfnc int64_t fake_iface_bulkwrite(void *self, void *pipe, uint8_t *bu
         buf, len, p5, p6,
         buf ? buf[0] : 0, (buf && len > 1) ? buf[1] : 0,
         (buf && len > 2) ? buf[2] : 0, (buf && len > 3) ? buf[3] : 0);
-    uint32_t *transferred = (uint32_t*)p5;  /* p5 might be &transferred */
+    uint32_t *transferred = (uint32_t*)p5;
+
+    /* One-shot: dump CBiometricDevice context fields to find VFM device handle */
+    static int _ctx_dumped = 0;
+    if(!_ctx_dumped) {
+        _ctx_dumped = 1;
+        extern void *_tudor_biodev_ctx;
+        if(_tudor_biodev_ctx) {
+            uint64_t *b = (uint64_t*)_tudor_biodev_ctx;
+            log_info("PROBE: biodev ctx=%p — dumping fields [0x0a-0x14]:", _tudor_biodev_ctx);
+            for(int i = 0x0a; i <= 0x14; i++) {
+                log_info("  biodev[0x%02x] (off 0x%03x) = 0x%016lx", i, i*8, b[i]);
+            }
+        }
+    }
     if(!tudor_com_usb_dev || !buf) return 0;
     /* Skip all-zeros frames (TLS not initialized → empty encrypted frame) */
     int all_zero = 1;
@@ -100,9 +124,20 @@ static __winfnc int64_t fake_iface_bulkwrite(void *self, void *pipe, uint8_t *bu
     log_info("fake_iface WRITE: sent %d/%d bytes OK", xfr, len);
     _last_write_done = 1;
 
-    /* The response should go to the transferred_ptr area or a separate read buffer.
-       p5 (transferred ptr) might point to a larger struct with response buffer.
-       For now, just do the read so the endpoint is drained for the next [0x30] call. */
+    /* Read response and store at sensor_context + 8 for the DLL to find */
+    if(_sensor_response_buf) {
+        int resp_len = 0;
+        int rerr = libusb_bulk_transfer(tudor_com_usb_dev, 0x81, _sensor_response_buf, 96, &resp_len, 2000);
+        if(rerr == 0 && resp_len > 0) {
+            log_info("fake_iface WRITE→READ: %d bytes into sensor_ctx+8: %02x %02x %02x %02x %02x %02x %02x %02x",
+                resp_len, _sensor_response_buf[0], _sensor_response_buf[1],
+                _sensor_response_buf[2], _sensor_response_buf[3],
+                _sensor_response_buf[4], _sensor_response_buf[5],
+                _sensor_response_buf[6], _sensor_response_buf[7]);
+        } else if(rerr != 0) {
+            log_info("fake_iface WRITE→READ: %s", libusb_error_name(rerr));
+        }
+    }
     return 1;
 }
 
