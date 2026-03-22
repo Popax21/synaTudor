@@ -7,6 +7,7 @@ bool tudor_reg_handler(void *ctx, void *ctx_obj, const char *key_name, const cha
     if(!buf_size) return false;
 
     //Handle the driver configuration key
+    log_info("REG: %s '%s\\%s' %s (buf_size=%zu)", is_write ? "WRITE" : "READ", key_name, val_name, is_write ? "" : "→", *buf_size);
     if(!is_write && strcmp(key_name, "HKEY_LOCAL_MACHINE\\SOFTWARE\\Syna") == 0) {
         if(strcmp(val_name, "wbfMode") == 0) {
             if(buf && *buf_size >= 4) {
@@ -31,56 +32,44 @@ bool tudor_reg_handler(void *ctx, void *ctx_obj, const char *key_name, const cha
     if(strcmp(key_name, "HKEY_LOCAL_MACHINE\\Tudor\\Device") == 0 && ctx_obj) {
         struct tudor_device *dev = (struct tudor_device*) ctx_obj;
 
-        if(strcmp(val_name, "PairingInProcess") == 0) {
-            if(buf && *buf_size >= 4) {
-                if(!is_write) *((int*) buf) = dev->state.pairing_in_process;
-                else dev->state.pairing_in_process = *((int*) buf) != 0;
-            } else if(is_write || buf) return false;
-            *buf_size = 4;
-            if(!is_write) *val_type = WINREG_DWORD;
-            return true;
-        } else if(strcmp(val_name, "UnairingInProcess") == 0) {
-            if(buf && *buf_size >= 4) {
-                if(!is_write) *((int*) buf) = dev->state.unpairing_in_process;
-                else dev->state.unpairing_in_process = *((int*) buf) != 0;
-            } else if(is_write || buf) return false;
-            *buf_size = 4;
-            if(!is_write) *val_type = WINREG_DWORD;
-            return true;
-        } else if(strcmp(val_name, "DeviceUpdateInProcess") == 0) {
-            if(buf && *buf_size >= 4) {
-                if(!is_write) *((int*) buf) = dev->state.update_in_process;
-                else dev->state.update_in_process = *((int*) buf) != 0;
-            } else if(is_write || buf) return false;
-            *buf_size = 4;
-            if(!is_write) *val_type = WINREG_DWORD;
-            return true;
-        } else if(strcmp(val_name, "deviceInitializeFailures") == 0) {
-            if(buf && *buf_size >= 4) {
-                if(!is_write) *((int*) buf) = dev->state.init_fails;
-                else dev->state.init_fails = *((int*) buf);
-            } else if(is_write || buf) return false;
-            *buf_size = 4;
-            if(!is_write) *val_type = WINREG_DWORD;
-            return true;
-        } else if(strcmp(val_name, "updateFirmwareFailureCount") == 0) {
-            if(buf && *buf_size >= 4) {
-                if(!is_write) *((int*) buf) = dev->state.update_fails;
-                else dev->state.update_fails = *((int*) buf);
-            } else if(is_write || buf) return false;
-            *buf_size = 4;
-            if(!is_write) *val_type = WINREG_DWORD;
-            return true;
-        } else if(strcmp(val_name, "LastUpdateSystemTimeStamp") == 0) {
-            if(buf && *buf_size >= 4) {
-                if(!is_write) *((uint32_t*) buf) = dev->state.last_update_timestamp;
-                else dev->state.last_update_timestamp = *((uint32_t*) buf);
-            } else if(is_write || buf) return false;
+        /* Helper: handle a DWORD registry value with proper size-query support.
+           For reads: if buffer too small, just return the required size (success).
+           For writes: if buf_size=0, treat as "set to 0"; if buf too small, fail. */
+        #define REG_DWORD_VAR(name, var) \
+            if(strcasecmp(val_name, name) == 0) { \
+                if(is_write) { \
+                    if(buf && *buf_size >= 4) var = *((int*) buf); \
+                    else var = 0; /* write with no data = clear */ \
+                } else { \
+                    if(buf && *buf_size >= 4) *((int*) buf) = var; \
+                    /* else: size query — just report the required size */ \
+                } \
+                *buf_size = 4; \
+                if(!is_write) *val_type = WINREG_DWORD; \
+                return true; \
+            }
+
+        REG_DWORD_VAR("PairingInProcess", dev->state.pairing_in_process)
+        REG_DWORD_VAR("UnairingInProcess", dev->state.unpairing_in_process)
+        REG_DWORD_VAR("DeviceUpdateInProcess", dev->state.update_in_process)
+        REG_DWORD_VAR("deviceInitializeFailures", dev->state.init_fails)
+        REG_DWORD_VAR("updateFirmwareFailureCount", dev->state.update_fails)
+        if(strcasecmp(val_name, "LastUpdateSystemTimeStamp") == 0) {
+            if(is_write) {
+                if(buf && *buf_size >= 4) dev->state.last_update_timestamp = *((uint32_t*) buf);
+                else dev->state.last_update_timestamp = 0;
+            } else {
+                if(buf && *buf_size >= 4) *((uint32_t*) buf) = dev->state.last_update_timestamp;
+            }
             *buf_size = 4;
             if(!is_write) *val_type = WINREG_DWORD;
             return true;
         }
+        /* DLL uses both cases for some keys */
+        REG_DWORD_VAR("SetOwnershipFailureCount", dev->state.init_fails)
+        REG_DWORD_VAR("SensorLockFailureCount", dev->state.init_fails)
 
+        #undef REG_DWORD_VAR
         return false;
     }
 

@@ -125,6 +125,7 @@ __winfnc NTSTATUS WdfObjectAllocateContext(WDF_DRIVER_GLOBALS *globals, struct w
     ctx->type = resolve_context_type(ctx_attrs->ContextTypeInfo);
 
     size_t ctx_size = ctx->attrs.ContextSizeOverride ? ctx->attrs.ContextSizeOverride : ctx->type->ContextSize;
+    log_info("WdfObjectAllocateContext: obj=%p size=%zu type=%p", obj, ctx_size, (void*)ctx->type);
     ctx->data = malloc(ctx_size);
     if(!ctx->data) { perror("Couldn't allocate WDF context data"); abort(); }
     memset(ctx->data, 0, ctx_size);
@@ -159,6 +160,15 @@ __winfnc void *WdfObjectGetTypedContextWorker(WDF_DRIVER_GLOBALS *globals, struc
     }
 
     cant_fail_ret(pthread_mutex_unlock(&obj->contexts_lock));
+    if(ctx_data) {
+        uint64_t vtbl = *(uint64_t*)ctx_data;
+        if(vtbl) {
+            log_info("WdfObjectGetTypedContext: obj=%p → ctx=%p (vtbl=%p)", obj, ctx_data, (void*)vtbl);
+            /* Capture the first (largest) typed context as the CBiometricDevice context */
+            extern void *_tudor_biodev_ctx;
+            if(!_tudor_biodev_ctx) _tudor_biodev_ctx = ctx_data;
+        }
+    }
     return ctx_data;
 }
 WDFFUNC(WdfObjectGetTypedContextWorker, 123)

@@ -49,6 +49,7 @@ static struct winmodule ntdll_module = {
 typedef BOOL __winfnc (*api_DllMain)(HANDLE hinstDLL, int fdwReason, void *lpReserved);
 
 struct windrv_dll *tudor_adapter_dll, *tudor_driver_dll;
+void *_tudor_biodev_ctx = NULL;  /* CBiometricDevice context for runtime probing */
 WINBIO_SENSOR_INTERFACE *tudor_sensor_adapter;
 WINBIO_ENGINE_INTERFACE *tudor_engine_adapter;
 
@@ -122,6 +123,15 @@ bool tudor_init() {
         //UMDF v2 path (e.g. v104 DLLs)
         log_info("Using UMDF v2 entry (FxDriverEntryUm)");
         init_winwdf();
+
+        //Pre-load WINUSB.DLL BEFORE FxDriverEntryUm — the driver's EvtDriverDeviceAdd
+        //calls PrepareHardware → palWinUsbInitialize → LoadLibrary("WINUSB.DLL").
+        //Without this, first init fails with 0x80070259.
+        {
+            extern __winfnc HANDLE LoadLibraryA(const char *name);
+            HANDLE h = LoadLibraryA("WINUSB.DLL");
+            log_info("Pre-loaded WINUSB.DLL before FxDriverEntryUm: handle=%p", (void*)h);
+        }
 
         char16_t *reg_path_wstr = winstr_from_str("HKEY_LOCAL_MACHINE\\Tudor\\Driver");
         UNICODE_STRING reg_path = {

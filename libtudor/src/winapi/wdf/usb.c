@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "tudor/internal.h"
 
 typedef struct {
     ULONG USBDI_Version;
@@ -258,6 +259,7 @@ WDFFUNC(WdfUsbTargetDeviceResetPortSynchronously, 214)
 
 __winfnc WDFOBJECT WdfUsbTargetDeviceGetInterface(WDF_DRIVER_GLOBALS *globals, WDFOBJECT usb_dev_obj, UCHAR interface_idx) {
     struct wdf_usb_device *usb_dev = (struct wdf_usb_device*) usb_dev_obj;
+    log_info("WdfUsbTargetDeviceGetInterface: idx=%d (num_interfaces=%d)", interface_idx, usb_dev->cfg_descr->bNumInterfaces);
     if(interface_idx >= usb_dev->cfg_descr->bNumInterfaces) return NULL;
 
     //Create USB interface
@@ -362,6 +364,7 @@ WDFFUNC(WdfUsbInterfaceGetNumEndpoints, 231)
 
 __winfnc WDFOBJECT WdfUsbInterfaceGetConfiguredPipe(WDF_DRIVER_GLOBALS *globals, WDFOBJECT usb_if_obj, UCHAR idx, WDF_USB_PIPE_INFORMATION *info) {
     struct wdf_usb_interface *usb_if = (struct wdf_usb_interface*) usb_if_obj;
+    log_info("WdfUsbInterfaceGetConfiguredPipe: iface=%d pipe_idx=%d (num_pipes=%d)", usb_if->interface_idx, idx, usb_if->num_pipes);
 
     //Get the pipe
     if(idx >= usb_if->num_pipes) return NULL;
@@ -437,6 +440,53 @@ static void pipe_transfer_callback(struct libusb_transfer *transfer) {
     log_info("USB CB: ep=0x%02x status=%d actual=%d/%d",
         transfer->endpoint, transfer->status, transfer->actual_length, transfer->length);
 
+    /* One-shot probe: on first successful IN transfer, walk device handle chain */
+    static int _probed = 0;
+    if(!_probed && (transfer->endpoint & 0x80) && transfer->status == LIBUSB_TRANSFER_COMPLETED) {
+        _probed = 1;
+        extern struct windrv_dll *tudor_driver_dll;
+        uint64_t img = (uint64_t) tudor_driver_dll->image.base_addr;
+        uint64_t text_start = img + 0x1000;
+        uint64_t text_end = img + 0xcb494;
+
+        /* Walk: CBiometricDevice[0xe] (offset 0x70) → VFM device handle
+                 *(handle + 8) → inner
+                 *(inner) → sensor context first field
+                 sensor_ctx[0xc8/8] = function pointer */
+        extern void *_tudor_biodev_ctx;  /* set by WdfObjectGetTypedContext */
+        if(_tudor_biodev_ctx) {
+            uint64_t *biodev = (uint64_t*)_tudor_biodev_ctx;
+            uint64_t handle = biodev[0xe]; /* offset 0x70 = VFM device handle */
+            log_info("PROBE: CBiometricDevice ctx=%p, handle[0xe]=%p", _tudor_biodev_ctx, (void*)handle);
+            if(handle > 0x10000) {
+                uint64_t *h = (uint64_t*)handle;
+                log_info("PROBE: handle[0]=%p handle[1]=%p handle[2]=%p", (void*)h[0], (void*)h[1], (void*)h[2]);
+                uint64_t inner = h[1]; /* *(handle + 8) */
+                if(inner > 0x10000) {
+                    uint64_t *in = (uint64_t*)inner;
+                    uint64_t sensor_ctx = in[0]; /* *inner */
+                    log_info("PROBE: inner=%p, *inner (sensor_ctx)=%p", (void*)inner, (void*)sensor_ctx);
+                    if(sensor_ctx > 0x10000) {
+                        uint64_t *sc = (uint64_t*)sensor_ctx;
+                        /* Dump function pointers around offset 0xc8 */
+                        log_info("PROBE: sensor_ctx dump (looking for fn ptrs):");
+                        for(int i = 20; i < 30; i++) {
+                            uint64_t v = sc[i];
+                            if(v >= text_start && v < text_end) {
+                                log_info("  sc[%d] (0x%x) = RVA 0x%lx ← %s", i, i*8, v - img,
+                                    i == 25 ? "tudorProtoIoControl!" : "");
+                            } else if(v > 0x10000) {
+                                log_info("  sc[%d] (0x%x) = %p [ptr]", i, i*8, (void*)v);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            log_warn("PROBE: _tudor_biodev_ctx not set");
+        }
+    }
+
     /* If we used a padded buffer, copy received data back to the original buffer */
     if(ctx->padded_buf) {
         int copy_len = transfer->actual_length;
@@ -444,10 +494,12 @@ static void pipe_transfer_callback(struct libusb_transfer *transfer) {
         /* Log the actual received data */
         if(transfer->actual_length > 0) {
             uint8_t *d = (uint8_t*)ctx->padded_buf;
-            log_info("USB IN DATA (%d bytes): %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
-                transfer->actual_length,
-                d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7],
-                d[8], d[9], d[10], d[11], d[12], d[13], d[14], d[15]);
+            /* Dump all 64 bytes */
+            char hex[200] = {0};
+            int pos = 0;
+            for(int i = 0; i < transfer->actual_length && i < 64 && pos < 190; i++)
+                pos += snprintf(hex+pos, sizeof(hex)-pos, "%02x ", d[i]);
+            log_info("USB IN DATA (%d bytes): %s", transfer->actual_length, hex);
         }
         if(copy_len > 0) memcpy(ctx->mem->data + ctx->mem_off.BufferOffset, ctx->padded_buf, copy_len);
         transfer->actual_length = copy_len;
@@ -627,7 +679,7 @@ __winfnc NTSTATUS WdfUsbTargetPipeFormatRequestForRead(WDF_DRIVER_GLOBALS *globa
     unsigned char transfer_type;
     unsigned char ep_addr = usb_pipe->libusb_ep->bEndpointAddress & 0x7F;
     if(ep_addr == 0x01) {
-        transfer_type = LIBUSB_TRANSFER_TYPE_BULK;
+        transfer_type = LIBUSB_TRANSFER_TYPE_BULK;  /* Force BULK — INTERRUPT can't handle multi-packet reads > 60B MaxPacketSize */
     } else {
         switch(usb_pipe->libusb_ep->bmAttributes & 0b11) {
             case LIBUSB_ENDPOINT_TRANSFER_TYPE_BULK: transfer_type = LIBUSB_TRANSFER_TYPE_BULK; break;
@@ -678,9 +730,8 @@ __winfnc NTSTATUS WdfUsbTargetPipeFormatRequestForWrite(WDF_DRIVER_GLOBALS *glob
     //Determine the transfer type (force BULK for EP 0x01 — see read function comment)
     unsigned char transfer_type;
     unsigned char ep_addr_w = usb_pipe->libusb_ep->bEndpointAddress & 0x7F;
-    if(ep_addr_w == 0x01) {
-        transfer_type = LIBUSB_TRANSFER_TYPE_BULK;
-    } else {
+    (void)ep_addr_w;
+    {
         switch(usb_pipe->libusb_ep->bmAttributes & 0b11) {
             case LIBUSB_ENDPOINT_TRANSFER_TYPE_BULK: transfer_type = LIBUSB_TRANSFER_TYPE_BULK; break;
             case LIBUSB_ENDPOINT_TRANSFER_TYPE_INTERRUPT: transfer_type = LIBUSB_TRANSFER_TYPE_INTERRUPT; break;

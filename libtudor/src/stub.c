@@ -66,7 +66,8 @@ static uint8_t *wdf_cur_page;
 static int wdf_cur_slot;
 
 static void wdf_stub(int num) {
-    log_error("Unresolved WDF function %d called!", num);
+    fprintf(stderr, "\n[FATAL] Unresolved WDF function %d (0x%x) called!\n", num, num);
+    fflush(stderr);
     abort();
 }
 

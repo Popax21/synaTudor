@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "tudor/internal.h"
 
 typedef enum {
   WdfPowerDeviceInvalid,
@@ -177,15 +178,71 @@ static void device_destr(struct winwdf_device *dev) {
 }
 
 static void device_call_cbs(struct winwdf_device *dev) {
+    log_info(">>> device_call_cbs ENTRY <<<");
+    //Pre-load WINUSB.DLL so the DLL's palWinUsbInitialize finds it on the first try.
+    //Without this, PrepareHardware fails with 0x80070259 because palWinUsbInitialize
+    //can't find WinUSB functions. The retry path loads it too late (device already failed to open).
+    {
+        extern __winfnc HANDLE LoadLibraryA(const char *name);
+        HANDLE h = LoadLibraryA("WINUSB.DLL");
+        log_info("Pre-loaded WINUSB.DLL: handle=%p", h);
+    }
+
+    /* Inject fake Synaptics USB interface BEFORE PrepareHardware runs.
+       The DLL's palWinUsbDeviceHandleOpen needs this during PrepareHardware. */
+    {
+        extern struct windrv_dll *tudor_driver_dll;
+        extern void *synusb_get_fake_interface(void);
+        if(tudor_driver_dll) {
+            uint8_t *img = (uint8_t*) tudor_driver_dll->image.base_addr;
+            *(uint64_t*)(img + 0x173ae8) = (uint64_t)synusb_get_fake_interface();
+            log_info("Injected fake Synaptics USB interface at %p", synusb_get_fake_interface());
+        }
+    }
+
     //Call callbacks
     if(dev->pnp_callbacks) {
         log_debug("Calling WDF device attachment callbacks...");
 
         NTSTATUS status = 0;
-        if((status = WIN_CALL_CALLBACK(dev->pnp_callbacks->EvtDevicePrepareHardware, &dev->object, NULL, NULL)) != 0) goto cbErr;
-        if((status = WIN_CALL_CALLBACK(dev->pnp_callbacks->EvtDeviceD0Entry, &dev->object, WdfPowerDeviceD3Final)) != 0) goto cbErr;
-        if((status = WIN_CALL_CALLBACK(dev->pnp_callbacks->EvtDeviceD0EntryPostInterruptsEnabled, &dev->object, WdfPowerDeviceD3Final)) != 0) goto cbErr;
-        if((status = WIN_CALL_CALLBACK(dev->pnp_callbacks->EvtDeviceSelfManagedIoInit, &dev->object)) != 0) goto cbErr;
+        log_info(">>> Calling EvtDevicePrepareHardware...");
+        if((status = WIN_CALL_CALLBACK(dev->pnp_callbacks->EvtDevicePrepareHardware, &dev->object, NULL, NULL)) != 0) { log_error("EvtDevicePrepareHardware FAILED: 0x%x", status); goto cbErr; }
+        log_info(">>> EvtDevicePrepareHardware OK");
+        log_info(">>> Calling EvtDeviceD0Entry...");
+        if((status = WIN_CALL_CALLBACK(dev->pnp_callbacks->EvtDeviceD0Entry, &dev->object, WdfPowerDeviceD3Final)) != 0) { log_error("EvtDeviceD0Entry FAILED: 0x%x", status); goto cbErr; }
+        log_info(">>> EvtDeviceD0Entry OK");
+        log_info(">>> Calling EvtDeviceD0EntryPostInterruptsEnabled...");
+        if((status = WIN_CALL_CALLBACK(dev->pnp_callbacks->EvtDeviceD0EntryPostInterruptsEnabled, &dev->object, WdfPowerDeviceD3Final)) != 0) { log_error("EvtDeviceD0EntryPostInterruptsEnabled FAILED: 0x%x", status); goto cbErr; }
+        log_info(">>> EvtDeviceD0EntryPostInterruptsEnabled OK");
+        log_info(">>> Calling EvtDeviceSelfManagedIoInit...");
+        if((status = WIN_CALL_CALLBACK(dev->pnp_callbacks->EvtDeviceSelfManagedIoInit, &dev->object)) != 0) { log_error("EvtDeviceSelfManagedIoInit FAILED: 0x%x", status); goto cbErr; }
+        log_info(">>> EvtDeviceSelfManagedIoInit OK");
+
+        /* Probe VFM module vtable to find initDevice function */
+        {
+            extern struct windrv_dll *tudor_driver_dll;
+            uint8_t *img = (uint8_t*) tudor_driver_dll->image.base_addr;
+            /* DAT_180173ae0 is at RVA 0x173ae0 */
+            uint64_t *vfm_ctx_ptr = (uint64_t*)(img + 0x173ae0);
+            if(*vfm_ctx_ptr) {
+                uint64_t *vtable = (uint64_t*)(*vfm_ctx_ptr);
+                uint64_t *vtable_deref = (uint64_t*)(*vtable);  /* *DAT_180173ae0 → first qword is vtable ptr */
+                log_info("VFM ctx=%p, *ctx=%p, vtable[9]=%p (initDevice)",
+                    (void*)*vfm_ctx_ptr, (void*)*vtable, vtable_deref ? (void*)vtable_deref[9] : NULL);
+                /* Dump full module vtable — find tudorProtoIoControl at index 25 (offset 0xc8) */
+                if(vtable_deref) {
+                    uint64_t base = (uint64_t)img;
+                    for(int i = 0; i < 30; i++) {
+                        uint64_t fn = vtable_deref[i];
+                        if(fn > base && fn < base + 0x17e000) {
+                            log_info("  module_vtbl[%d] (0x%02x) = RVA 0x%lx", i, i*8, fn - base);
+                        }
+                    }
+                }
+            } else {
+                log_warn("VFM context not initialized (DAT_173ae0 = NULL)");
+            }
+        }
 
         cbErr:;
         if(status) {

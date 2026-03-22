@@ -298,19 +298,28 @@ __winfnc DWORD SetEntriesInAclA(ULONG count, void *entries, void *oldAcl, void *
 }
 WINAPI(SetEntriesInAclA)
 
-/* CfgMgr32 stubs — driver uses these to find USB device interface paths */
+/* CfgMgr32 stubs — driver uses these to find USB device interface paths.
+   The DLL's PAL layer calls these to enumerate USB device interfaces, then
+   passes the path to CreateFile → WinUsb_Initialize. We return a fake
+   Windows-style device path so the DLL proceeds to open the device. */
+static const char fake_dev_path[] = "\\\\?\\USB#VID_047D&PID_00F2#TUDOR#{a5dcbf10-6530-11d2-901f-00c04fb951ed}";
+
 __winfnc DWORD CM_Get_Device_Interface_List_SizeA(DWORD *size, void *guid, const char *devid, DWORD flags) {
-    log_debug("CM_Get_Device_Interface_List_SizeA(devid='%s')", devid ? devid : "(null)");
-    /* Return a small buffer size with an empty device path */
-    if(size) *size = 2; /* empty string + double null */
+    log_info("CM_Get_Device_Interface_List_SizeA(devid='%s')", devid ? devid : "(null)");
+    /* Return size for our fake device path + double null terminator */
+    if(size) *size = (DWORD)(strlen(fake_dev_path) + 2);
     return 0; /* CR_SUCCESS */
 }
 WINAPI(CM_Get_Device_Interface_List_SizeA)
 
 __winfnc DWORD CM_Get_Device_Interface_ListA(void *guid, const char *devid, char *buf, DWORD buflen, DWORD flags) {
-    log_debug("CM_Get_Device_Interface_ListA(devid='%s', buflen=%u)", devid ? devid : "(null)", buflen);
-    /* Return empty list (double-null terminated) */
-    if(buf && buflen >= 2) { buf[0] = '\0'; buf[1] = '\0'; }
+    log_info("CM_Get_Device_Interface_ListA(devid='%s', buflen=%u)", devid ? devid : "(null)", buflen);
+    DWORD needed = (DWORD)(strlen(fake_dev_path) + 2);
+    if(buf && buflen >= needed) {
+        memcpy(buf, fake_dev_path, strlen(fake_dev_path));
+        buf[strlen(fake_dev_path)] = '\0';     /* null-terminate path */
+        buf[strlen(fake_dev_path) + 1] = '\0'; /* double-null = end of list */
+    }
     return 0; /* CR_SUCCESS */
 }
 WINAPI(CM_Get_Device_Interface_ListA)
