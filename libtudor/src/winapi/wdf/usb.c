@@ -195,16 +195,21 @@ __winfnc NTSTATUS WdfUsbTargetDeviceCreate(WDF_DRIVER_GLOBALS *globals, WDFOBJEC
         /* Non-fatal — configuration might already be set */
     }
 
-    //Pre-initialize the WinUSB shim layer so the DLL's internal PAL layer can find it.
-    //In the WDF v2 path, palWinUsbInitialize is never called (the WDF framework handles USB).
-    //But _tudorInitDevice's proto IoControl still uses the PAL layer for init commands.
-    //By calling WinUsb_Initialize ourselves, we ensure the shim has the libusb handle ready.
+    //Force-initialize the WinUSB shim so the DLL's internal PAL layer works.
+    //In the WDF v2 path, the DLL never calls LoadLibrary("WINUSB.DLL") because
+    //WDF handles USB. But _tudorInitDevice's proto IoControl uses the PAL layer
+    //which needs WinUSB function pointers. By calling WinUsb_Initialize ourselves,
+    //we prime the shim with the libusb handle and claim interfaces.
     {
         extern libusb_device_handle *tudor_com_usb_dev;
         if(tudor_com_usb_dev) {
-            log_info("Pre-initializing WinUSB shim layer with libusb handle %p", tudor_com_usb_dev);
+            //Trigger WinUsb_Initialize to set up the shim's internal state
+            extern __winfnc BOOL WinUsb_Initialize(HANDLE, void**);
+            void *winusb_handle = NULL;
+            BOOL ret = WinUsb_Initialize(NULL, &winusb_handle);
+            log_info("Forced WinUSB init: ret=%d handle=%p", ret, winusb_handle);
         } else {
-            log_warn("tudor_com_usb_dev not set — PAL layer won't have USB access");
+            log_warn("tudor_com_usb_dev not set");
         }
     }
 
