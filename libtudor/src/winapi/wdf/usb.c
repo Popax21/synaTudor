@@ -215,6 +215,7 @@ __winfnc NTSTATUS WdfUsbTargetDeviceCreate(WDF_DRIVER_GLOBALS *globals, WDFOBJEC
 
     wdf_set_usb_device(dev, usb_dev);
     *out = &usb_dev->object;
+    log_info("WdfUsbTargetDeviceCreate: SUCCESS → usb_dev=%p obj=%p", usb_dev, &usb_dev->object);
     return STATUS_SUCCESS;
 }
 WDFFUNC(WdfUsbTargetDeviceCreate, 202)
@@ -310,6 +311,34 @@ __winfnc WDFOBJECT WdfUsbTargetDeviceGetInterface(WDF_DRIVER_GLOBALS *globals, W
     return &usb_if->object;
 }
 WDFFUNC(WdfUsbTargetDeviceGetInterface, 236)
+
+__winfnc NTSTATUS WdfUsbTargetDeviceSelectConfigType(WDF_DRIVER_GLOBALS *globals, WDFOBJECT usb_dev_obj, WDFOBJECT req_obj, void *params) {
+    struct wdf_usb_device *usb_dev = (struct wdf_usb_device*) usb_dev_obj;
+    log_info("WdfUsbTargetDeviceSelectConfig: usb_dev=%p", usb_dev);
+
+    //Claim all interfaces (similar to what Windows WDF does)
+    int usb_err;
+    for(int i = 0; i < usb_dev->cfg_descr->bNumInterfaces; i++) {
+        if((usb_err = libusb_claim_interface(usb_dev->libusb_dev, i)) != 0) {
+            if(usb_err != LIBUSB_ERROR_BUSY) { //Already claimed is OK
+                log_warn("WdfUsbTargetDeviceSelectConfig: claim interface %d failed: %s", i, libusb_error_name(usb_err));
+            }
+        } else {
+            log_info("WdfUsbTargetDeviceSelectConfig: claimed interface %d", i);
+        }
+    }
+
+    return STATUS_SUCCESS;
+}
+WDFFUNC(WdfUsbTargetDeviceSelectConfigType, 208)
+
+//Register for ALL SelectConfig variants (206-210) in case the DLL uses a different one
+static __winfnc NTSTATUS WdfUsbTargetDeviceSelectConfigSingle(WDF_DRIVER_GLOBALS *g, WDFOBJECT d, WDFOBJECT r, void *p, void *i) { return WdfUsbTargetDeviceSelectConfigType(g,d,r,p); }
+WDFFUNC(WdfUsbTargetDeviceSelectConfigSingle, 206)
+static __winfnc NTSTATUS WdfUsbTargetDeviceSelectConfigMulti(WDF_DRIVER_GLOBALS *g, WDFOBJECT d, WDFOBJECT r, void *p) { return WdfUsbTargetDeviceSelectConfigType(g,d,r,p); }
+WDFFUNC(WdfUsbTargetDeviceSelectConfigMulti, 207)
+static __winfnc NTSTATUS WdfUsbTargetDeviceSelectConfigUrb(WDF_DRIVER_GLOBALS *g, WDFOBJECT d, WDFOBJECT r, void *p) { return WdfUsbTargetDeviceSelectConfigType(g,d,r,p); }
+WDFFUNC(WdfUsbTargetDeviceSelectConfigUrb, 209)
 
 __winfnc BYTE WdfUsbInterfaceGetConfiguredSettingIndex(WDF_DRIVER_GLOBALS *globals, WDFOBJECT usb_if_obj) {
     return 0;

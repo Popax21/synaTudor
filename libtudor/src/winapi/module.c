@@ -81,7 +81,7 @@ WINAPI(LoadLibraryA)
 
 __winfnc HANDLE LoadLibraryW(const char16_t *name) {
     char *cname = name ? winstr_to_str(name) : NULL;
-    log_debug("LoadLibraryW: '%s'", cname ? cname : "(null)");
+    log_info("LoadLibraryW: '%s'", cname ? cname : "(null)");
     struct winmodule *module = (struct winmodule*) malloc(sizeof(struct winmodule));
     if(!module) { winerr_set_errno(); free(cname); return NULL; }
     *module = (struct winmodule) {0};

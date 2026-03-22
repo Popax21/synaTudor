@@ -189,8 +189,8 @@ static void device_call_cbs(struct winwdf_device *dev) {
 
         cbErr:;
         if(status) {
-            log_error("Error in WDF device attachment callbacks: 0x%x!", status);
-            abort();
+            log_error("Error in WDF device attachment callbacks: 0x%x! (continuing...)", status);
+            /* Don't abort — let the driver continue and retry */
         }
     }
 }
