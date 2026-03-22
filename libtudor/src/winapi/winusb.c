@@ -39,6 +39,8 @@ static __winfnc int64_t fake_iface_queryinterface(void *self, void *riid, void *
 static __winfnc uint32_t fake_iface_addref(void *self) { return 1; }
 static __winfnc uint32_t fake_iface_release(void *self) { return 1; }
 
+static int _last_write_done = 0;  /* Track write→read sequencing for fake interface */
+
 /* Numbered debug wrappers to identify which vtable offset is called */
 #define MAKE_NUMBERED_IFACE(N) \
 static __winfnc int64_t fake_iface_##N(void *p1, void *p2, void *p3, void *p4, void *p5, void *p6) { \
@@ -68,6 +70,14 @@ static __winfnc int64_t fake_iface_bulkwrite(void *self, void *pipe, uint8_t *bu
         buf, len, buf ? buf[0] : 0, (buf && len > 1) ? buf[1] : 0,
         (buf && len > 2) ? buf[2] : 0, (buf && len > 3) ? buf[3] : 0);
     if(!tudor_com_usb_dev || !buf) return 0;
+    /* Skip all-zeros frames (TLS not initialized → empty encrypted frame) */
+    int all_zero = 1;
+    for(uint32_t i = 0; i < len && i < 64; i++) if(buf[i]) { all_zero = 0; break; }
+    if(all_zero && len > 1) {
+        log_info("fake_iface WRITE: skipping %u-byte all-zeros frame", len);
+        if(transferred) *transferred = len; /* pretend success */
+        return 1;
+    }
     int xfr = 0;
     int err = libusb_bulk_transfer(tudor_com_usb_dev, 0x01, buf, len, &xfr, 5000);
     if(err != 0) {
@@ -76,22 +86,7 @@ static __winfnc int64_t fake_iface_bulkwrite(void *self, void *pipe, uint8_t *bu
     }
     if(transferred) *transferred = xfr;
     log_info("fake_iface WRITE: sent %d/%d bytes OK", xfr, len);
-
-    /* Auto-read: after writing, immediately read the sensor's response.
-       The DLL may expect async reads, but we do sync here. */
-    uint8_t resp[64] = {0};
-    int resp_len = 0;
-    err = libusb_bulk_transfer(tudor_com_usb_dev, 0x81, resp, sizeof(resp), &resp_len, 2000);
-    if(err == 0 && resp_len > 0) {
-        char hex[200] = {0};
-        int pos = 0;
-        for(int i = 0; i < resp_len && pos < 190; i++)
-            pos += snprintf(hex+pos, sizeof(hex)-pos, "%02x ", resp[i]);
-        log_info("fake_iface AUTO-READ: %d bytes: %s", resp_len, hex);
-    } else if(err != 0) {
-        log_info("fake_iface AUTO-READ: %s (no response)", libusb_error_name(err));
-    }
-
+    _last_write_done = 1;
     return 1;
 }
 
@@ -99,31 +94,45 @@ static __winfnc int64_t fake_iface_bulkwrite(void *self, void *pipe, uint8_t *bu
    During PrepareHardware: pipe query (p3=pipe_idx, p4=info_ptr)
    During init loop: bulk read (p3=length?, p4=output?)
    For now: if p3 looks like a buffer ptr → read, else query */
+/* [0x30] is called for BOTH pipe queries AND bulk reads.
+   During PrepareHardware: pipe query (returns pipe info)
+   During init loop after a write: bulk read (returns sensor response)
+   Detect: if there's pending data in the endpoint, read it. */
+
 static __winfnc int64_t fake_iface_querypipe_or_read(void *self, void *pipe, void *p3, void *p4, void *p5, void *p6) {
     uint64_t p3v = (uint64_t)p3;
-    if(p3v > 0x10000 && tudor_com_usb_dev) {
-        /* p3 is a buffer pointer — treat as BulkRead(self, pipe, buf, len, &transferred) */
-        /* But we don't know the length... Let me check p4 */
-        log_info("fake_iface READ?: buf=%p p4=%p", p3, p4);
-        /* Not enough info to do a read yet — return success with 0 bytes */
-    } else {
-        /* p3 is a small value — pipe query */
-        log_info("fake_iface QUERY: pipe_idx=%ld output=%p", (long)p3v, p4);
-        /* Fill in pipe info if p4 looks like a valid pointer */
-        if(p4 && (uint64_t)p4 > 0x10000) {
-            /* Minimal WINUSB_PIPE_INFORMATION: PipeType=Bulk(3), PipeId=0x01, MaxPacket=60 */
-            uint8_t *info = (uint8_t*)p4;
-            if(p3v == 0) {
-                /* Pipe 0: OUT bulk */
-                info[0] = 3; /* PipeType = Bulk */
-                info[1] = 0x01; /* PipeId = EP OUT */
-                *(uint16_t*)(info + 2) = 60; /* MaxPacketSize */
-            } else if(p3v == 1) {
-                /* Pipe 1: IN bulk */
-                info[0] = 3;
-                info[1] = 0x81; /* PipeId = EP IN */
-                *(uint16_t*)(info + 2) = 60;
-            }
+    uint64_t p4v = (uint64_t)p4;
+
+    /* If p3 is a small value AND p4 is a valid pointer → pipe query or read */
+    log_info("fake_iface[0x30]: pipe=%p p3=0x%lx p4=%p p5=%p (last_write=%d)",
+        pipe, (long)p3v, p4, p5, _last_write_done);
+
+    /* If we just did a write and this is pipe 1 (IN), do a bulk read */
+    if(_last_write_done && p3v <= 1 && p4v > 0x10000 && tudor_com_usb_dev) {
+        _last_write_done = 0;
+        /* p4 might be the output buffer for read data, or p5 might be.
+           Let's try reading into a temp buffer and see the response. */
+        uint8_t resp[64] = {0};
+        int resp_len = 0;
+        int err = libusb_bulk_transfer(tudor_com_usb_dev, 0x81, resp, sizeof(resp), &resp_len, 2000);
+        if(err == 0 && resp_len > 0) {
+            char hex[200] = {0};
+            int pos = 0;
+            for(int i = 0; i < resp_len && i < 32 && pos < 190; i++)
+                pos += snprintf(hex+pos, sizeof(hex)-pos, "%02x ", resp[i]);
+            log_info("fake_iface[0x30] READ: %d bytes: %s", resp_len, hex);
+        } else {
+            log_info("fake_iface[0x30] READ: %s", err ? libusb_error_name(err) : "0 bytes");
+        }
+    }
+
+    /* Always fill in pipe info (the DLL checks this during setup) */
+    if(p4v > 0x10000) {
+        uint8_t *info = (uint8_t*)p4;
+        if(p3v == 0) {
+            info[0] = 3; info[1] = 0x01; *(uint16_t*)(info + 2) = 60; /* OUT pipe */
+        } else if(p3v == 1) {
+            info[0] = 3; info[1] = 0x81; *(uint16_t*)(info + 2) = 60; /* IN pipe */
         }
     }
     return 1;
