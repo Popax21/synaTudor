@@ -68,6 +68,16 @@ void winmodule_set_cur(struct winmodule *module) {
     cur_module = module;
 }
 
+static HANDLE get_default_module_handle(void) {
+    struct winmodule *module = winmodule_get_cur();
+    if(module) return module->handle;
+
+    cant_fail_ret(pthread_rwlock_rdlock(&modules_lock));
+    HANDLE handle = modules_head ? modules_head->handle : NULL;
+    cant_fail_ret(pthread_rwlock_unlock(&modules_lock));
+    return handle;
+}
+
 __winfnc HANDLE LoadLibraryA(const char *name) {
     log_info("LoadLibraryA: '%s'", name ? name : "(null)");
     struct winmodule *module = (struct winmodule*) malloc(sizeof(struct winmodule));
@@ -110,12 +120,14 @@ __winfnc BOOL FreeLibrary(HANDLE handle) {
 WINAPI(FreeLibrary)
 
 __winfnc HANDLE GetModuleHandleA(const char *name) {
+    if(!name) return get_default_module_handle();
     struct winmodule *module = (struct winmodule*) winmodule_find(name);
     return module ? module->handle : NULL;
 }
 WINAPI(GetModuleHandleA)
 
 __winfnc HANDLE GetModuleHandleW(const char16_t *name) {
+    if(!name) return get_default_module_handle();
     char *cname = winstr_to_str(name);
     struct winmodule *module = (struct winmodule*) winmodule_find(cname);
     free(cname);
@@ -130,6 +142,11 @@ __winfnc BOOL GetModuleHandleExW(DWORD flags, const char16_t *name, HANDLE *out)
         struct winmodule *cur = winmodule_get_cur();
         if(out) *out = cur ? cur->handle : NULL;
         return cur != NULL;
+    }
+
+    if(!name) {
+        if(out) *out = get_default_module_handle();
+        return out && *out;
     }
 
     char *cname = winstr_to_str(name);

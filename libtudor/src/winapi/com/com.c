@@ -172,6 +172,15 @@ static __winfnc UCHAR usb_target_get_num_interfaces(com_object *self) {
 /* ─── IWDFUsbInterface (minimal) ───────────────────────────────── */
 
 static com_object g_usb_interface_objs[4]; /* up to 4 interfaces */
+typedef struct {
+    com_object obj;
+    UCHAR interface_idx;
+    UCHAR pipe_idx;
+    UCHAR endpoint;
+    USHORT max_packet_size;
+    UCHAR interval;
+} com_usb_pipe;
+static com_usb_pipe g_usb_pipe_objs[4][8];
 
 static __winfnc HRESULT usb_iface_qi(com_object *self, const GUID *riid, void **ppv) {
     GUID ids[] = { IID_IUNKNOWN, IID_IWDFOBJECT, IID_IWDFUSBINTERFACE };
@@ -219,12 +228,6 @@ static __winfnc HRESULT usb_iface_get_descriptor(com_object *self, void *desc, v
     return S_OK;
 }
 
-static __winfnc HRESULT usb_iface_retrieve_pipe(com_object *self, UCHAR pipe_idx, void **ppPipe) {
-    log_debug("COM: IWDFUsbInterface::RetrieveUsbPipeObject(%d) — stub", pipe_idx);
-    *ppPipe = NULL;
-    return E_NOTIMPL;
-}
-
 static __winfnc HRESULT usb_iface_select_setting(com_object *self, UCHAR setting) {
     log_debug("COM: IWDFUsbInterface::SelectSetting(%d)", setting);
     return S_OK;
@@ -236,6 +239,95 @@ static __winfnc HRESULT usb_iface_noop_target() {
 }
 static __winfnc UCHAR usb_iface_get_configured_setting(com_object *self) {
     return 0;
+}
+
+static __winfnc HRESULT usb_pipe_qi(com_object *self, const GUID *riid, void **ppv) {
+    GUID ids[] = { IID_IUNKNOWN, IID_IWDFOBJECT, IID_IWDFIOTARGET, IID_IWDFUSBTARGETPIPE };
+    for(int i = 0; i < 4; i++) {
+        if(guid_eq(riid, &ids[i])) { *ppv = self; self->ref_count++; return S_OK; }
+    }
+    log_guid("UsbPipe::QI unknown", riid);
+    *ppv = NULL;
+    return E_NOINTERFACE;
+}
+
+static __winfnc HRESULT usb_pipe_success(com_object *self, void *a, void *b, void *c, void *d) {
+    return S_OK;
+}
+
+static __winfnc HRESULT usb_pipe_retrieve_info(com_object *self, void *info) {
+    com_usb_pipe *pipe = (com_usb_pipe*)self;
+    if(!info) return E_POINTER;
+    memset(info, 0, 16);
+    BYTE *p = (BYTE*)info;
+    p[0] = 3; /* Bulk */
+    p[1] = pipe->endpoint;
+    *(USHORT*)(p + 2) = pipe->max_packet_size;
+    p[4] = pipe->endpoint;
+    p[5] = pipe->interval;
+    log_debug("COM: IWDFUsbTargetPipe::RetrievePipeInformation(iface=%u pipe=%u ep=0x%02x)",
+        pipe->interface_idx, pipe->pipe_idx, pipe->endpoint);
+    return S_OK;
+}
+
+static void *g_usb_pipe_vtbl[] = {
+    [0]  = usb_pipe_qi,
+    [1]  = stub_addref,
+    [2]  = stub_release,
+    [3]  = wdfobj_delete,
+    [4]  = wdfobj_assign_ctx,
+    [5]  = wdfobj_retrieve_ctx,
+    [6]  = wdfobj_noop,
+    [7]  = wdfobj_noop,
+    [8]  = usb_pipe_success,
+    [9]  = usb_pipe_success,
+    [10] = usb_pipe_success,
+    [11] = usb_pipe_success,
+    [12] = usb_pipe_success,
+    [13] = usb_pipe_success,
+    [14] = usb_pipe_success,
+    [15] = usb_pipe_success,
+    [16] = usb_pipe_retrieve_info,
+    [17] = usb_pipe_success,
+    [18] = usb_pipe_success,
+    [19] = usb_pipe_success,
+};
+
+static __winfnc HRESULT usb_iface_retrieve_pipe(com_object *self, UCHAR pipe_idx, void **ppPipe) {
+    UCHAR idx = (UCHAR)(uintptr_t)self->impl_data;
+    if(!ppPipe) return E_POINTER;
+    *ppPipe = NULL;
+    if(!com_libusb_dev) return E_FAIL;
+
+    struct libusb_config_descriptor *cfg;
+    if(libusb_get_config_descriptor(libusb_get_device(com_libusb_dev), 0, &cfg) != 0) return E_FAIL;
+    if(idx >= cfg->bNumInterfaces || cfg->interface[idx].num_altsetting == 0) {
+        libusb_free_config_descriptor(cfg);
+        return E_INVALIDARG;
+    }
+    const struct libusb_interface_descriptor *desc = &cfg->interface[idx].altsetting[0];
+    if(pipe_idx >= desc->bNumEndpoints || pipe_idx >= 8) {
+        libusb_free_config_descriptor(cfg);
+        return E_INVALIDARG;
+    }
+
+    const struct libusb_endpoint_descriptor *ep = &desc->endpoint[pipe_idx];
+    com_usb_pipe *pipe = &g_usb_pipe_objs[idx][pipe_idx];
+    pipe->obj.vtbl = (com_vtable*)g_usb_pipe_vtbl;
+    pipe->obj.ref_count = 1;
+    pipe->obj.impl_data = NULL;
+    pipe->interface_idx = idx;
+    pipe->pipe_idx = pipe_idx;
+    pipe->endpoint = ep->bEndpointAddress;
+    pipe->max_packet_size = ep->wMaxPacketSize;
+    pipe->interval = ep->bInterval;
+    *ppPipe = &pipe->obj;
+    pipe->obj.ref_count++;
+
+    log_info("COM: IWDFUsbInterface::RetrieveUsbPipeObject(iface=%u pipe=%u) -> ep=0x%02x",
+        idx, pipe_idx, pipe->endpoint);
+    libusb_free_config_descriptor(cfg);
+    return S_OK;
 }
 
 /* USB interface vtable — IUnknown + IWDFObject + IWDFUsbInterface */
@@ -257,9 +349,9 @@ static void *g_usb_iface_vtbl[] = {
     [11] = usb_iface_retrieve_pipe,        /* RetrieveUsbPipeObject */
     [12] = usb_iface_get_winusb_handle,    /* GetWinUsbHandle */
     [13] = usb_iface_select_setting,       /* SelectSetting */
-    [14] = usb_iface_get_configured_setting, /* GetConfiguredSettingIndex */
+    [14] = usb_iface_retrieve_pipe,        /* v132 calls this slot */
     /* Padding */
-    [15] = usb_iface_noop_target,
+    [15] = usb_iface_get_configured_setting,
     [16] = usb_iface_noop_target,
     [17] = usb_iface_noop_target,
     [18] = usb_iface_noop_target,
@@ -585,7 +677,31 @@ static __winfnc HRESULT device_create_io_queue(com_object *self, void *callback,
 
 static __winfnc HRESULT device_create_iface(com_object *self, const GUID *g, const char16_t *r) { return S_OK; }
 static __winfnc HRESULT device_assign_iface_state(com_object *self, const GUID *g, const char16_t *r, BOOL e) { return S_OK; }
-static __winfnc HRESULT device_retrieve_name(com_object *self, char16_t *n, DWORD *l) { return E_NOTIMPL; }
+static __winfnc HRESULT device_retrieve_name(com_object *self, char16_t *n, DWORD *l) {
+    const char *path = "\\\\?\\USB#VID_047D&PID_00F2&MI_01#TUDOR#{a5dcbf10-6530-11d2-901f-00c04fb951ed}";
+    char16_t *wide = winstr_from_str(path);
+    DWORD len = (DWORD)winstr_len(wide) + 1;
+
+    log_info("COM: Device::RetrieveDeviceName('%s')", path);
+    if(!l) {
+        free(wide);
+        return E_POINTER;
+    }
+    if(!n) {
+        *l = len;
+        free(wide);
+        return S_OK;
+    }
+    if(*l < len) {
+        *l = len;
+        free(wide);
+        return E_INVALIDARG;
+    }
+    memcpy(n, wide, len * sizeof(char16_t));
+    *l = len;
+    free(wide);
+    return S_OK;
+}
 static __winfnc HRESULT device_post_event(com_object *self, const GUID *g, DWORD t, BYTE *d, DWORD s) { return S_OK; }
 static __winfnc HRESULT device_config_dispatching(com_object *self, void *q, DWORD t, BOOL f) { return S_OK; }
 static __winfnc HRESULT device_create_request(com_object *self, void *cb, void *p, void **r) { return E_NOTIMPL; }
@@ -597,6 +713,7 @@ static __winfnc HRESULT device_s0_idle(com_object *self, DWORD a, DWORD b, ULONG
     return S_OK;
 }
 static __winfnc HRESULT device_stop_idle(com_object *self, BOOL w) { return S_OK; }
+static __winfnc DWORD device_get_system_power_action(com_object *self) { return 0; }
 
 /*
  * Full device vtable — every slot filled, no NULLs.
@@ -641,7 +758,7 @@ static void *g_device_vtbl[] = {
     [31] = com_method_stub,       /* CreateRemoteTarget */
     [32] = com_void_stub,         /* GetDeviceStackIoTypePreference */
     [33] = com_method_stub,       /* AssignSxWakeSettings */
-    [34] = com_method_stub,       /* GetSystemPowerAction */
+    [34] = device_get_system_power_action, /* GetSystemPowerAction */
     /* IWDFDevice3 (35-42) */
     [35] = com_method_stub,       /* MapIoSpace */
     [36] = com_void_stub,         /* UnmapIoSpace */
@@ -714,10 +831,6 @@ static __winfnc HRESULT driver_create_device(com_object *self, com_object *pDevI
             if(cb->vtbl->QueryInterface(cb, &probe_guids[g], &iface) == S_OK && iface) {
                 log_info("COM: Probe hit! GUID {%08x-%04x-%04x-...} → interface at %p",
                     probe_guids[g].PartA, probe_guids[g].PartB, probe_guids[g].PartC, iface);
-                if(!com_pnp_hw_callback) {
-                    com_pnp_hw_callback = (com_object*)iface;
-                    log_info("COM: Using probed interface as IPnpCallbackHardware");
-                }
                 /* For {1493cd1b...}: save as USB device obj and zero field_0x80
                    so WBFUsbInitialize takes the init path when called later */
                 if(probe_guids[g].PartA == 0x1493cd1b) {
@@ -743,13 +856,26 @@ static __winfnc HRESULT driver_create_device(com_object *self, com_object *pDevI
     return S_OK;
 }
 
+typedef struct com_memory com_memory;
+static com_memory *com_memory_create(void *buf, SIZE_T size);
+
 static __winfnc HRESULT driver_create_prealloc_mem(com_object *self, BYTE *buf, SIZE_T sz, void *cb, void *p, void **mem) {
     log_debug("COM: Driver::CreatePreallocatedWdfMemory(size=%zu)", sz);
-    return E_NOTIMPL;
+    if(!mem) return E_POINTER;
+    *mem = com_memory_create(buf, sz);
+    return *mem ? S_OK : E_FAIL;
 }
 static __winfnc HRESULT driver_create_mem(com_object *self, SIZE_T sz, void *cb, void *p, void **mem) {
     log_debug("COM: Driver::CreateWdfMemory(size=%zu)", sz);
-    return E_NOTIMPL;
+    if(!mem) return E_POINTER;
+    void *buf = calloc(1, sz);
+    if(!buf) return E_FAIL;
+    *mem = com_memory_create(buf, sz);
+    if(!*mem) {
+        free(buf);
+        return E_FAIL;
+    }
+    return S_OK;
 }
 static __winfnc BOOL driver_is_version_avail(com_object *self, void *ver) { return TRUE; }
 
@@ -774,11 +900,11 @@ static com_object g_wdf_driver = {
 
 /* ─── IWDFMemory (buffer wrapper) ─────────────────────────────────── */
 
-typedef struct {
+struct com_memory {
     com_object obj;
     void *buffer;
     SIZE_T size;
-} com_memory;
+};
 
 static __winfnc HRESULT mem_qi(com_object *self, const GUID *riid, void **ppv) {
     GUID ids[] = { IID_IUNKNOWN, IID_IWDFOBJECT, IID_IWDFMEMORY };
@@ -1063,26 +1189,34 @@ bool com_init_driver(struct dll_image *driver_dll) {
         }
     }
 
-    /* Step 4b: Call WBFUsbInitialize (patches applied by driver.c after this returns) */
-    if(com_usb_device_obj) {
-        typedef HRESULT __winfnc (*wbf_usb_init_fn)(void *self);
-        wbf_usb_init_fn wbf_init = (wbf_usb_init_fn)(driver_dll->base_addr + 0x16160);
+    return true;
+}
 
-        struct winmodule *mod = winmodule_get_cur();
-        winmodule_set_cur(&tudor_driver_dll->module);
-        log_info("COM: Calling WBFUsbInitialize...");
-        hr = wbf_init(com_usb_device_obj);
-        winmodule_set_cur(mod);
-        log_info("COM: WBFUsbInitialize returned hr=0x%x", hr);
+static void com_log_usb_device_state(const char *label) {
+    if(!com_usb_device_obj) {
+        log_info("COM: %s: USB device object not captured", label);
+        return;
     }
 
-    /* Step 5: OnPrepareHardware */
+    uint8_t *self = (uint8_t*)com_usb_device_obj;
+    log_info("COM: %s: usb_self=%p vtbl=%p", label, com_usb_device_obj, *(void**)self);
+    log_info("COM: %s: [self-0x20]=0x%02x [self+0x18]=%p [self+0x58]=%p [self+0x80]=%p [self+0x508]=%p",
+        label, *(uint8_t*)(self - 0x20), *(void**)(self + 0x18),
+        *(void**)(self + 0x58), *(void**)(self + 0x80), *(void**)(self + 0x508));
+}
+
+bool com_finish_init(struct dll_image *driver_dll) {
+    (void)driver_dll;
+    HRESULT hr = S_OK;
+
+    com_log_usb_device_state("before OnPrepareHardware");
+
     if(com_usb_device_obj) {
         void **vtbl = *(void***)com_usb_device_obj;
         log_info("COM: Calling OnPrepareHardware...");
 
-        typedef HRESULT __winfnc (*prep_hw_fn)(com_object *self, com_object *pDevice);
-        hr = ((prep_hw_fn)vtbl[3])((com_object*)com_usb_device_obj, &g_wdf_device);
+        typedef HRESULT __winfnc (*prep_hw_fn)(com_object *self, com_object *pDevice, void *raw, void *translated);
+        hr = ((prep_hw_fn)vtbl[3])((com_object*)com_usb_device_obj, &g_wdf_device, NULL, NULL);
 
         if((int)hr < 0) {
             log_error("COM: OnPrepareHardware failed: 0x%x", hr);
@@ -1091,7 +1225,8 @@ bool com_init_driver(struct dll_image *driver_dll) {
         }
     }
 
-    /* Step 6: OnD0Entry */
+    com_log_usb_device_state("after OnPrepareHardware");
+
     if(com_pnp_callback) {
         IPnpCallbackVtbl *pnp = (IPnpCallbackVtbl*)com_pnp_callback->vtbl;
         log_info("COM: Calling OnD0Entry (D3→D0)...");
@@ -1109,17 +1244,31 @@ bool com_init_driver(struct dll_image *driver_dll) {
 void com_shutdown_driver(void) {
     if(com_pnp_callback) {
         IPnpCallbackVtbl *pnp = (IPnpCallbackVtbl*)com_pnp_callback->vtbl;
-        pnp->OnD0Exit(com_pnp_callback, &g_wdf_device, 4);
+        log_info("COM: Calling OnD0Exit...");
+        HRESULT hr = pnp->OnD0Exit(com_pnp_callback, &g_wdf_device, 3);
+        log_info("COM: OnD0Exit returned 0x%x", hr);
     }
-    if(com_pnp_hw2_callback) {
+    if(com_usb_device_obj) {
+        void **vtbl = *(void***)com_usb_device_obj;
+        typedef HRESULT __winfnc (*release_hw_fn)(com_object *self, com_object *pDevice, void *translated);
+        log_info("COM: Calling OnReleaseHardware...");
+        HRESULT hr = ((release_hw_fn)vtbl[4])((com_object*)com_usb_device_obj, &g_wdf_device, NULL);
+        log_info("COM: OnReleaseHardware returned 0x%x", hr);
+    } else if(com_pnp_hw2_callback) {
         IPnpCallbackHardware2Vtbl *hw2 = (IPnpCallbackHardware2Vtbl*)com_pnp_hw2_callback->vtbl;
-        hw2->OnReleaseHardware(com_pnp_hw2_callback, &g_wdf_device, NULL);
+        log_info("COM: Calling OnReleaseHardware (v2)...");
+        HRESULT hr = hw2->OnReleaseHardware(com_pnp_hw2_callback, &g_wdf_device, NULL);
+        log_info("COM: OnReleaseHardware (v2) returned 0x%x", hr);
     } else if(com_pnp_hw_callback) {
         IPnpCallbackHardwareVtbl *hw = (IPnpCallbackHardwareVtbl*)com_pnp_hw_callback->vtbl;
-        hw->OnReleaseHardware(com_pnp_hw_callback, &g_wdf_device);
+        log_info("COM: Calling OnReleaseHardware...");
+        HRESULT hr = hw->OnReleaseHardware(com_pnp_hw_callback, &g_wdf_device);
+        log_info("COM: OnReleaseHardware returned 0x%x", hr);
     }
     if(com_driver_callback) {
         IDriverEntryVtbl *de = (IDriverEntryVtbl*)com_driver_callback->vtbl;
+        log_info("COM: Calling OnDeinitialize...");
         de->OnDeinitialize(com_driver_callback, &g_wdf_driver);
+        log_info("COM: OnDeinitialize returned");
     }
 }

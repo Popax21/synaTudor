@@ -170,6 +170,12 @@ bool tudor_init() {
             uint8_t *img = tudor_driver_dll->image.base_addr;
             if(img && img[0x929b] == 0x74) { img[0x929b] = 0xEB; log_info("Patched 0x929b"); }
             if(img && img[0x161bb] == 0x49) { img[0x161bb] = 0x41; log_info("Patched 0x161bb"); }
+            extern int tudor_wbf_done;
+            tudor_wbf_done = 1;
+        }
+        if(!com_finish_init(&tudor_driver_dll->image)) {
+            log_error("COM driver hardware initialization failed!");
+            return false;
         }
     }
 
@@ -193,8 +199,13 @@ bool tudor_shutdown() {
     //Unload the driver
     winmodule_set_cur(&tudor_driver_dll->module);
 
-    log_debug("Unloading WDF driver...");
-    winwdf_unload_driver(tudor_wdf_driver);
+    if(tudor_using_com_path) {
+        log_debug("Unloading COM driver...");
+        com_shutdown_driver();
+    } else if(tudor_wdf_driver) {
+        log_debug("Unloading WDF driver...");
+        winwdf_unload_driver(tudor_wdf_driver);
+    }
     
     if(umdf_driver.DriverUnload) {
         log_debug("Unloading UMDF driver...");

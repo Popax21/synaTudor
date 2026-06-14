@@ -322,6 +322,17 @@ typedef struct {
     USHORT Length;
 } WINUSB_SETUP_PACKET;
 
+static void log_control_bytes(const char *label, const BYTE *buf, ULONG len) {
+    if(!buf || len == 0) return;
+    char hex[16 * 3 + 1] = {0};
+    int pos = 0;
+    ULONG shown = len < 16 ? len : 16;
+    for(ULONG i = 0; i < shown && pos < (int)sizeof(hex); i++) {
+        pos += snprintf(hex + pos, sizeof(hex) - pos, "%02x ", buf[i]);
+    }
+    log_info("%s first %lu/%u bytes: %s", label, (unsigned long)shown, len, hex);
+}
+
 /* Track claimed interfaces */
 static bool usb_initialized = false;
 static struct libusb_config_descriptor *usb_cfg = NULL;
@@ -445,6 +456,15 @@ WINAPI(WinUsb_WritePipe)
 
 __winfnc BOOL WinUsb_ControlTransfer(WINUSB_INTERFACE_HANDLE InterfaceHandle, WINUSB_SETUP_PACKET SetupPacket, BYTE *Buffer, ULONG BufferLength, ULONG *LengthTransferred, OVERLAPPED *Overlapped) {
     libusb_device_handle *dev = winusb_to_libusb(InterfaceHandle);
+    if(!dev) {
+        log_error("WinUsb_ControlTransfer: NULL device");
+        return FALSE;
+    }
+
+    log_info("WinUsb_ControlTransfer: type=0x%02x request=0x%02x value=0x%04x index=0x%04x len=%u",
+        SetupPacket.RequestType, SetupPacket.Request, SetupPacket.Value,
+        SetupPacket.Index, BufferLength);
+    if((SetupPacket.RequestType & 0x80) == 0) log_control_bytes("WinUsb_ControlTransfer OUT", Buffer, BufferLength);
 
     int ret = libusb_control_transfer(dev,
         SetupPacket.RequestType, SetupPacket.Request,
@@ -457,7 +477,8 @@ __winfnc BOOL WinUsb_ControlTransfer(WINUSB_INTERFACE_HANDLE InterfaceHandle, WI
     }
 
     if(LengthTransferred) *LengthTransferred = ret;
-    log_debug("WinUsb_ControlTransfer: %d bytes", ret);
+    log_info("WinUsb_ControlTransfer: transferred %d bytes", ret);
+    if((SetupPacket.RequestType & 0x80) != 0) log_control_bytes("WinUsb_ControlTransfer IN", Buffer, ret);
     return TRUE;
 }
 WINAPI(WinUsb_ControlTransfer)

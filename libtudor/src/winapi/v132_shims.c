@@ -17,6 +17,104 @@ __winfnc void OutputDebugStringA(const char *str) {
 }
 WINAPI(OutputDebugStringA)
 
+__winfnc HANDLE GetTraceLoggerHandle(void *buffer) { return NULL; }
+WINAPI(GetTraceLoggerHandle)
+
+__winfnc UCHAR GetTraceEnableLevel(HANDLE handle) { return 0; }
+WINAPI(GetTraceEnableLevel)
+
+__winfnc ULONG GetTraceEnableFlags(HANDLE handle) { return 0; }
+WINAPI(GetTraceEnableFlags)
+
+__winfnc BOOL WTSRegisterSessionNotification(HANDLE hwnd, DWORD flags) {
+    log_debug("WTSRegisterSessionNotification (stub)");
+    return TRUE;
+}
+WINAPI(WTSRegisterSessionNotification)
+
+__winfnc BOOL WTSUnRegisterSessionNotification(HANDLE hwnd) {
+    log_debug("WTSUnRegisterSessionNotification (stub)");
+    return TRUE;
+}
+WINAPI(WTSUnRegisterSessionNotification)
+
+__winfnc HANDLE CreateWindowExW(DWORD exStyle, const char16_t *className, const char16_t *windowName,
+    DWORD style, int x, int y, int width, int height, HANDLE parent, HANDLE menu, HANDLE instance, void *param) {
+    log_debug("CreateWindowExW (stub)");
+    return winhandle_create(NULL, NULL);
+}
+WINAPI(CreateWindowExW)
+
+__winfnc BOOL DestroyWindow(HANDLE hwnd) {
+    log_debug("DestroyWindow (stub)");
+    winhandle_destroy(hwnd);
+    return TRUE;
+}
+WINAPI(DestroyWindow)
+
+__winfnc BOOL GetMessageW(void *msg, HANDLE hwnd, UINT min, UINT max) { return FALSE; }
+WINAPI(GetMessageW)
+
+__winfnc BOOL TranslateMessage(const void *msg) { return TRUE; }
+WINAPI(TranslateMessage)
+
+__winfnc LONG_PTR DispatchMessageW(const void *msg) { return 0; }
+WINAPI(DispatchMessageW)
+
+__winfnc BOOL PostThreadMessageW(DWORD threadId, UINT msg, ULONG_PTR wparam, LONG_PTR lparam) {
+    log_debug("PostThreadMessageW(thread=%u, msg=0x%x)", threadId, msg);
+    return TRUE;
+}
+WINAPI(PostThreadMessageW)
+
+__winfnc HANDLE RegisterPowerSettingNotification(HANDLE recipient, const GUID *guid, DWORD flags) {
+    log_debug("RegisterPowerSettingNotification (stub)");
+    return winhandle_create(NULL, NULL);
+}
+WINAPI(RegisterPowerSettingNotification)
+
+__winfnc BOOL UnregisterPowerSettingNotification(HANDLE handle) {
+    log_debug("UnregisterPowerSettingNotification (stub)");
+    winhandle_destroy(handle);
+    return TRUE;
+}
+WINAPI(UnregisterPowerSettingNotification)
+
+__winfnc LONG_PTR DefWindowProcW(HANDLE hwnd, UINT msg, ULONG_PTR wparam, LONG_PTR lparam) { return 0; }
+WINAPI(DefWindowProcW)
+
+__winfnc LONG_PTR CallWindowProcW(void *prev, HANDLE hwnd, UINT msg, ULONG_PTR wparam, LONG_PTR lparam) { return 0; }
+WINAPI(CallWindowProcW)
+
+__winfnc USHORT RegisterClassExW(const void *classInfo) {
+    log_debug("RegisterClassExW (stub)");
+    return 1;
+}
+WINAPI(RegisterClassExW)
+
+__winfnc BOOL UnregisterClassW(const char16_t *className, HANDLE instance) {
+    log_debug("UnregisterClassW (stub)");
+    return TRUE;
+}
+WINAPI(UnregisterClassW)
+
+__winfnc LONG_PTR SetWindowLongPtrW(HANDLE hwnd, int index, LONG_PTR value) { return 0; }
+WINAPI(SetWindowLongPtrW)
+
+__winfnc LONG_PTR GetWindowLongPtrW(HANDLE hwnd, int index) { return 0; }
+WINAPI(GetWindowLongPtrW)
+
+__winfnc HANDLE BeginPaint(HANDLE hwnd, void *paint) { return NULL; }
+WINAPI(BeginPaint)
+
+__winfnc BOOL EndPaint(HANDLE hwnd, const void *paint) { return TRUE; }
+WINAPI(EndPaint)
+
+__winfnc void RtlUnwind(void *target_frame, void *target_ip, void *exception_record, void *return_value) {
+    log_debug("RtlUnwind (stub)");
+}
+WINAPI(RtlUnwind)
+
 /* lstrcpyA */
 __winfnc char *lstrcpyA(char *dst, const char *src) {
     if(!dst || !src) return NULL;
@@ -302,7 +400,7 @@ WINAPI(SetEntriesInAclA)
    The DLL's PAL layer calls these to enumerate USB device interfaces, then
    passes the path to CreateFile → WinUsb_Initialize. We return a fake
    Windows-style device path so the DLL proceeds to open the device. */
-static const char fake_dev_path[] = "\\\\?\\USB#VID_047D&PID_00F2#TUDOR#{a5dcbf10-6530-11d2-901f-00c04fb951ed}";
+static const char fake_dev_path[] = "\\\\?\\USB#VID_047D&PID_00F2&MI_01#TUDOR#{a5dcbf10-6530-11d2-901f-00c04fb951ed}";
 
 __winfnc DWORD CM_Get_Device_Interface_List_SizeA(DWORD *size, void *guid, const char *devid, DWORD flags) {
     log_info("CM_Get_Device_Interface_List_SizeA(devid='%s')", devid ? devid : "(null)");
