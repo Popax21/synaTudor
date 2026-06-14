@@ -39,15 +39,7 @@ static NTSTATUS tudor_devctrl(struct tudor_device *device, OVERLAPPED *ovlp, ULO
     }
 
     if(tudor_using_com_path) {
-        //COM path: route IOCTL through the driver's IQueueCallbackDeviceIoControl
-        size_t bytes_ret = 0;
-        NTSTATUS status = com_send_ioctl(code, in_buf, in_size, out_buf, out_size, &bytes_ret);
-
-        if(status == STATUS_SUCCESS) {
-            //Complete the overlapped
-            winio_complete_overlapped(ovlp, status, bytes_ret);
-        }
-        return status;
+        return com_start_ioctl(code, in_buf, in_size, out_buf, out_size, ovlp, (void**)req);
     }
 
     //WDF v2 path: Start the request through the WDF file
@@ -63,11 +55,16 @@ static NTSTATUS tudor_devctrl(struct tudor_device *device, OVERLAPPED *ovlp, ULO
 }
 
 static NTSTATUS tudor_cancel(struct tudor_device *device, OVERLAPPED *ovlp, struct winwdf_request *req) {
+    if(tudor_using_com_path) return STATUS_SUCCESS;
     winwdf_cancel_request(req);
     return STATUS_SUCCESS;
 }
 
 static void tudor_cleanup(struct tudor_device *device, OVERLAPPED *ovlp, struct winwdf_request *req) {
+    if(tudor_using_com_path) {
+        com_cleanup_ioctl(req);
+        return;
+    }
     winwdf_destroy_object((WDFOBJECT) req);
 }
 

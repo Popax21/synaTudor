@@ -8,6 +8,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include <libusb.h>
 #include <time.h>
 /* Note: mprotect must NOT be called from this file — causes mysterious crashes */
@@ -32,6 +33,41 @@ void com_set_usb_device(libusb_device_handle *dev) {
     com_libusb_dev = dev;
 }
 
+static int usb_cfg_find_vendor_interface(const struct libusb_config_descriptor *cfg) {
+    for(int i = 0; i < cfg->bNumInterfaces; i++) {
+        if(cfg->interface[i].num_altsetting == 0) continue;
+        if(cfg->interface[i].altsetting[0].bInterfaceClass == LIBUSB_CLASS_VENDOR_SPEC) return i;
+    }
+    return -1;
+}
+
+static UCHAR usb_cfg_logical_interface_count(const struct libusb_config_descriptor *cfg) {
+    return usb_cfg_find_vendor_interface(cfg) >= 0 ? 1 : cfg->bNumInterfaces;
+}
+
+static bool usb_cfg_map_logical_interface(const struct libusb_config_descriptor *cfg, UCHAR logical_idx, UCHAR *actual_idx) {
+    int vendor_idx = usb_cfg_find_vendor_interface(cfg);
+    if(vendor_idx >= 0) {
+        if(logical_idx != 0) return false;
+        *actual_idx = (UCHAR)vendor_idx;
+        return true;
+    }
+
+    if(logical_idx >= cfg->bNumInterfaces) return false;
+    *actual_idx = logical_idx;
+    return true;
+}
+
+static UCHAR usb_pipe_type_from_attrs(UCHAR attrs) {
+    switch(attrs & 0x03) {
+        case LIBUSB_TRANSFER_TYPE_CONTROL: return 1;
+        case LIBUSB_TRANSFER_TYPE_ISOCHRONOUS: return 2;
+        case LIBUSB_TRANSFER_TYPE_BULK: return 3;
+        case LIBUSB_TRANSFER_TYPE_INTERRUPT: return 4;
+        default: return 0;
+    }
+}
+
 /* ─── Generic helpers ─────────────────────────────────────────────── */
 
 static __winfnc ULONG stub_addref(com_object *self) { return ++self->ref_count; }
@@ -42,14 +78,16 @@ static __winfnc ULONG stub_release(com_object *self) {
 
 /* Catch-all for any COM method that shouldn't be called but might be.
    Uses __builtin_return_address to help identify which vtable slot was called. */
-static __winfnc HRESULT com_method_stub() {
+static __winfnc HRESULT com_method_stub(com_object *self) {
     void *caller = __builtin_return_address(0);
-    log_warn("COM: Unimplemented COM method called! (caller %p)", caller);
+    log_warn("COM: Unimplemented COM method called! self=%p vtbl=%p caller=%p",
+        self, self ? self->vtbl : NULL, caller);
     return E_NOTIMPL;
 }
-static __winfnc void com_void_stub() {
+static __winfnc void com_void_stub(com_object *self) {
     void *caller = __builtin_return_address(0);
-    log_warn("COM: Unimplemented void COM method called! (caller %p)", caller);
+    log_warn("COM: Unimplemented void COM method called! self=%p vtbl=%p caller=%p",
+        self, self ? self->vtbl : NULL, caller);
 }
 
 static __winfnc HRESULT wdfobj_delete(com_object *self) { return S_OK; }
@@ -66,6 +104,18 @@ static __winfnc void wdfobj_noop(com_object *self) {}
 /* Log a GUID for debugging */
 static void log_guid(const char *label, const GUID *g) {
     log_debug("COM: %s {%08x-%04x-%04x-...}", label, g->PartA, g->PartB, g->PartC);
+}
+
+static void log_control_bytes(const char *label, const BYTE *buf, SIZE_T len) {
+    if(!buf || len == 0) return;
+
+    char hex[16 * 3 + 1] = {0};
+    int pos = 0;
+    SIZE_T shown = len < 16 ? len : 16;
+    for(SIZE_T i = 0; i < shown && pos < (int)sizeof(hex); i++) {
+        pos += snprintf(hex + pos, sizeof(hex) - (size_t)pos, "%02x ", buf[i]);
+    }
+    log_debug("COM: %s first %zu/%zu bytes: %s", label, shown, len, hex);
 }
 
 /* ─── IWDFDeviceInitialize ────────────────────────────────────────── */
@@ -134,6 +184,7 @@ static __winfnc HRESULT usb_factory_qi(com_object *self, const GUID *riid, void 
 /* ─── IWDFUsbTargetDevice (minimal, backed by libusb) ─────────────── */
 
 static com_object g_usb_target_device;
+static HRESULT com_request_configure_control(void *request, void *setup, void *memory, void *offset);
 
 static __winfnc HRESULT usb_target_qi(com_object *self, const GUID *riid, void **ppv) {
     GUID ids[] = { IID_IUNKNOWN, IID_IWDFOBJECT, IID_IWDFUSBTARGETDEVICE, IID_IWDFIOTARGET };
@@ -163,7 +214,7 @@ static __winfnc UCHAR usb_target_get_num_interfaces(com_object *self) {
     if(!com_libusb_dev) return 0;
     struct libusb_config_descriptor *cfg;
     if(libusb_get_config_descriptor(libusb_get_device(com_libusb_dev), 0, &cfg) != 0) return 0;
-    UCHAR n = cfg->bNumInterfaces;
+    UCHAR n = usb_cfg_logical_interface_count(cfg);
     libusb_free_config_descriptor(cfg);
     log_debug("COM: IWDFUsbTargetDevice::GetNumInterfaces → %d", n);
     return n;
@@ -172,15 +223,18 @@ static __winfnc UCHAR usb_target_get_num_interfaces(com_object *self) {
 /* ─── IWDFUsbInterface (minimal) ───────────────────────────────── */
 
 static com_object g_usb_interface_objs[4]; /* up to 4 interfaces */
-typedef struct {
+typedef struct com_usb_pipe {
     com_object obj;
     UCHAR interface_idx;
     UCHAR pipe_idx;
     UCHAR endpoint;
     USHORT max_packet_size;
     UCHAR interval;
+    UCHAR transfer_type;
+    UCHAR wdf_pipe_type;
 } com_usb_pipe;
 static com_usb_pipe g_usb_pipe_objs[4][8];
+static HRESULT com_request_configure_pipe(void *request, com_usb_pipe *pipe, void *memory, void *offset, bool read);
 
 static __winfnc HRESULT usb_iface_qi(com_object *self, const GUID *riid, void **ppv) {
     GUID ids[] = { IID_IUNKNOWN, IID_IWDFOBJECT, IID_IWDFUSBINTERFACE };
@@ -194,8 +248,18 @@ static __winfnc HRESULT usb_iface_qi(com_object *self, const GUID *riid, void **
 
 static __winfnc UCHAR usb_iface_get_iface_number(com_object *self) {
     UCHAR idx = (UCHAR)(uintptr_t)self->impl_data;
-    log_debug("COM: IWDFUsbInterface::GetInterfaceNumber → %d", idx);
-    return idx;
+    UCHAR iface_number = idx;
+    if(com_libusb_dev) {
+        struct libusb_config_descriptor *cfg;
+        if(libusb_get_config_descriptor(libusb_get_device(com_libusb_dev), 0, &cfg) == 0) {
+            if(idx < cfg->bNumInterfaces && cfg->interface[idx].num_altsetting > 0) {
+                iface_number = cfg->interface[idx].altsetting[0].bInterfaceNumber;
+            }
+            libusb_free_config_descriptor(cfg);
+        }
+    }
+    log_debug("COM: IWDFUsbInterface::GetInterfaceNumber → %d", iface_number);
+    return iface_number;
 }
 
 static __winfnc UCHAR usb_iface_get_num_endpoints(com_object *self) {
@@ -255,18 +319,49 @@ static __winfnc HRESULT usb_pipe_success(com_object *self, void *a, void *b, voi
     return S_OK;
 }
 
+static __winfnc HRESULT usb_pipe_format_read(com_object *self, void *request, void *file, void *memory, void *offset, void *dev_offset) {
+    com_usb_pipe *pipe = (com_usb_pipe*)self;
+    log_info("COM: IWDFIoTarget::FormatRequestForRead(pipe ep=0x%02x)", pipe->endpoint);
+    return com_request_configure_pipe(request, pipe, memory, offset, true);
+}
+
+static __winfnc HRESULT usb_pipe_format_write(com_object *self, void *request, void *file, void *memory, void *offset, void *dev_offset) {
+    com_usb_pipe *pipe = (com_usb_pipe*)self;
+    log_info("COM: IWDFIoTarget::FormatRequestForWrite(pipe ep=0x%02x)", pipe->endpoint);
+    return com_request_configure_pipe(request, pipe, memory, offset, false);
+}
+
+static __winfnc HRESULT usb_pipe_maintenance(com_object *self) {
+    com_usb_pipe *pipe = (com_usb_pipe*)self;
+    log_debug("COM: IWDFUsbTargetPipe maintenance ep=0x%02x", pipe->endpoint);
+    if(com_libusb_dev) libusb_clear_halt(com_libusb_dev, pipe->endpoint);
+    return S_OK;
+}
+
+static __winfnc BOOL usb_pipe_is_in(com_object *self) {
+    return (((com_usb_pipe*)self)->endpoint & 0x80) != 0;
+}
+
+static __winfnc BOOL usb_pipe_is_out(com_object *self) {
+    return (((com_usb_pipe*)self)->endpoint & 0x80) == 0;
+}
+
+static __winfnc ULONG usb_pipe_get_type(com_object *self) {
+    return ((com_usb_pipe*)self)->wdf_pipe_type;
+}
+
 static __winfnc HRESULT usb_pipe_retrieve_info(com_object *self, void *info) {
     com_usb_pipe *pipe = (com_usb_pipe*)self;
     if(!info) return E_POINTER;
     memset(info, 0, 16);
     BYTE *p = (BYTE*)info;
-    p[0] = 3; /* Bulk */
+    p[0] = pipe->wdf_pipe_type;
     p[1] = pipe->endpoint;
     *(USHORT*)(p + 2) = pipe->max_packet_size;
     p[4] = pipe->endpoint;
     p[5] = pipe->interval;
-    log_debug("COM: IWDFUsbTargetPipe::RetrievePipeInformation(iface=%u pipe=%u ep=0x%02x)",
-        pipe->interface_idx, pipe->pipe_idx, pipe->endpoint);
+    log_debug("COM: IWDFUsbTargetPipe::RetrievePipeInformation(iface=%u pipe=%u ep=0x%02x type=%u)",
+        pipe->interface_idx, pipe->pipe_idx, pipe->endpoint, pipe->wdf_pipe_type);
     return S_OK;
 }
 
@@ -281,16 +376,18 @@ static void *g_usb_pipe_vtbl[] = {
     [7]  = wdfobj_noop,
     [8]  = usb_pipe_success,
     [9]  = usb_pipe_success,
-    [10] = usb_pipe_success,
-    [11] = usb_pipe_success,
+    [10] = usb_pipe_format_read,
+    [11] = usb_pipe_format_write,
     [12] = usb_pipe_success,
-    [13] = usb_pipe_success,
-    [14] = usb_pipe_success,
-    [15] = usb_pipe_success,
+    [13] = usb_pipe_is_in,
+    [14] = usb_pipe_is_out,
+    [15] = usb_pipe_get_type,
     [16] = usb_pipe_retrieve_info,
     [17] = usb_pipe_success,
     [18] = usb_pipe_success,
-    [19] = usb_pipe_success,
+    [19] = usb_pipe_maintenance,
+    [20] = usb_pipe_maintenance,
+    [21] = usb_pipe_maintenance,
 };
 
 static __winfnc HRESULT usb_iface_retrieve_pipe(com_object *self, UCHAR pipe_idx, void **ppPipe) {
@@ -321,11 +418,13 @@ static __winfnc HRESULT usb_iface_retrieve_pipe(com_object *self, UCHAR pipe_idx
     pipe->endpoint = ep->bEndpointAddress;
     pipe->max_packet_size = ep->wMaxPacketSize;
     pipe->interval = ep->bInterval;
+    pipe->transfer_type = ep->bmAttributes & 0x03;
+    pipe->wdf_pipe_type = usb_pipe_type_from_attrs(ep->bmAttributes);
     *ppPipe = &pipe->obj;
     pipe->obj.ref_count++;
 
-    log_info("COM: IWDFUsbInterface::RetrieveUsbPipeObject(iface=%u pipe=%u) -> ep=0x%02x",
-        idx, pipe_idx, pipe->endpoint);
+    log_info("COM: IWDFUsbInterface::RetrieveUsbPipeObject(iface=%u pipe=%u) -> ep=0x%02x type=%u",
+        idx, pipe_idx, pipe->endpoint, pipe->wdf_pipe_type);
     libusb_free_config_descriptor(cfg);
     return S_OK;
 }
@@ -363,7 +462,8 @@ static __winfnc HRESULT usb_target_retrieve_interface(com_object *self, UCHAR id
     if(libusb_get_config_descriptor(libusb_get_device(com_libusb_dev), 0, &cfg) != 0) {
         *ppIface = NULL; return E_FAIL;
     }
-    if(idx >= cfg->bNumInterfaces) {
+    UCHAR actual_idx = 0;
+    if(!usb_cfg_map_logical_interface(cfg, idx, &actual_idx)) {
         libusb_free_config_descriptor(cfg);
         *ppIface = NULL; return E_INVALIDARG;
     }
@@ -373,9 +473,10 @@ static __winfnc HRESULT usb_target_retrieve_interface(com_object *self, UCHAR id
     if(idx < 4) {
         g_usb_interface_objs[idx].vtbl = (com_vtable*)g_usb_iface_vtbl;
         g_usb_interface_objs[idx].ref_count = 1;
-        g_usb_interface_objs[idx].impl_data = (void*)(uintptr_t)idx;
+        g_usb_interface_objs[idx].impl_data = (void*)(uintptr_t)actual_idx;
         *ppIface = &g_usb_interface_objs[idx];
-        log_info("COM: IWDFUsbTargetDevice::RetrieveUsbInterface(%d) → OK", idx);
+        log_info("COM: IWDFUsbTargetDevice::RetrieveUsbInterface(%d) → USB interface %d",
+            idx, actual_idx);
         return S_OK;
     }
     *ppIface = NULL;
@@ -384,8 +485,7 @@ static __winfnc HRESULT usb_target_retrieve_interface(com_object *self, UCHAR id
 
 /* USB target device methods that need real implementations */
 static __winfnc HRESULT usb_target_format_ctrl(com_object *self, void *request, void *setup, void *memory, void *offset) {
-    log_debug("COM: IWDFUsbTargetDevice::FormatRequestForControlTransfer (stub)");
-    return S_OK;
+    return com_request_configure_control(request, setup, memory, offset);
 }
 
 static __winfnc HRESULT usb_target_retrieve_dev_info(com_object *self, ULONG info_type, ULONG *value) {
@@ -495,6 +595,13 @@ static __winfnc HRESULT usb_factory_create_target(com_object *self, com_object *
         log_error("COM: libusb_get_config_descriptor failed: %s", libusb_error_name(usb_err));
     }
 
+    usb_err = libusb_control_transfer(com_libusb_dev, 0x21, 0x0a, 0, 0, NULL, 0, 1000);
+    if(usb_err < 0) {
+        log_warn("COM: HID SET_IDLE failed: %s", libusb_error_name(usb_err));
+    } else {
+        log_info("COM: HID SET_IDLE sent");
+    }
+
     *ppDevice = &g_usb_target_device;
     g_usb_target_device.ref_count++;
     log_info("COM: USB target device created (backed by libusb)");
@@ -516,6 +623,7 @@ static com_object g_usb_target_factory = {
 
 static com_object g_wdf_device;
 static com_object g_wdf_driver;
+static com_object *com_request_create_driver(void *callback, void *context);
 
 static __winfnc HRESULT device_qi(com_object *self, const GUID *riid, void **ppv) {
     GUID checks[] = { IID_IUNKNOWN, IID_IWDFOBJECT, IID_IWDFDEVICE, IID_IWDFDEVICE2, IID_IWDFDEVICE3 };
@@ -704,7 +812,13 @@ static __winfnc HRESULT device_retrieve_name(com_object *self, char16_t *n, DWOR
 }
 static __winfnc HRESULT device_post_event(com_object *self, const GUID *g, DWORD t, BYTE *d, DWORD s) { return S_OK; }
 static __winfnc HRESULT device_config_dispatching(com_object *self, void *q, DWORD t, BOOL f) { return S_OK; }
-static __winfnc HRESULT device_create_request(com_object *self, void *cb, void *p, void **r) { return E_NOTIMPL; }
+static __winfnc HRESULT device_create_request(com_object *self, void *cb, void *p, void **r) {
+    log_debug("COM: Device::CreateRequest(callback=%p context=%p)", cb, p);
+    if(!r) return E_POINTER;
+
+    *r = com_request_create_driver(cb, p);
+    return *r ? S_OK : E_FAIL;
+}
 static __winfnc HRESULT device_create_symlink(com_object *self, const char16_t *l) { return S_OK; }
 
 /* IWDFDevice2 */
@@ -713,7 +827,12 @@ static __winfnc HRESULT device_s0_idle(com_object *self, DWORD a, DWORD b, ULONG
     return S_OK;
 }
 static __winfnc HRESULT device_stop_idle(com_object *self, BOOL w) { return S_OK; }
+static __winfnc void device_resume_idle(com_object *self) {}
 static __winfnc DWORD device_get_system_power_action(com_object *self) { return 0; }
+static __winfnc HRESULT device_s0_idle_ex(com_object *self, void *settings) {
+    log_debug("COM: Device::AssignS0IdleSettingsEx unsupported");
+    return E_NOTIMPL;
+}
 
 /*
  * Full device vtable — every slot filled, no NULLs.
@@ -751,7 +870,7 @@ static void *g_device_vtbl[] = {
     /* IWDFDevice2 (25-34) */
     [25] = device_s0_idle,        /* AssignS0IdleSettings */
     [26] = device_stop_idle,      /* StopIdle */
-    [27] = com_void_stub,         /* ResumeIdle */
+    [27] = device_resume_idle,    /* ResumeIdle */
     [28] = com_method_stub,       /* CreateSymbolicLinkWithReferenceString */
     [29] = com_method_stub,       /* RegisterRemoteInterfaceNotification */
     [30] = com_method_stub,       /* CreateRemoteInterface */
@@ -767,7 +886,7 @@ static void *g_device_vtbl[] = {
     [39] = com_void_stub,         /* WriteToHardware */
     [40] = com_method_stub,       /* CreateInterrupt */
     [41] = com_method_stub,       /* CreateWorkItem */
-    [42] = com_method_stub,       /* AssignS0IdleSettingsEx */
+    [42] = device_s0_idle_ex,     /* AssignS0IdleSettingsEx */
     /* Extra padding in case there are more methods */
     [43] = com_method_stub,
     [44] = com_method_stub,
@@ -964,12 +1083,46 @@ static com_memory *com_memory_create(void *buf, SIZE_T size) {
 /* ─── IWDFIoRequest (for IOCTL routing) ──────────────────────────── */
 
 typedef struct {
+    SIZE_T BufferOffset;
+    SIZE_T BufferLength;
+} com_memory_offset;
+
+typedef struct {
+    BYTE bmRequestType;
+    BYTE bRequest;
+    USHORT wValue;
+    USHORT wIndex;
+    USHORT wLength;
+} com_control_setup;
+
+typedef enum {
+    COM_REQUEST_UNCONFIGURED = 0,
+    COM_REQUEST_IOCTL,
+    COM_REQUEST_CONTROL,
+    COM_REQUEST_PIPE_READ,
+    COM_REQUEST_PIPE_WRITE,
+} com_request_kind;
+
+typedef struct {
     com_object obj;
+    com_request_kind kind;
+    com_object completion_params;
     ULONG ioctl_code;
     com_memory *in_mem;
     com_memory *out_mem;
     SIZE_T in_size;
     SIZE_T out_size;
+    com_control_setup ctrl_setup;
+    com_memory *ctrl_mem;
+    SIZE_T ctrl_offset;
+    SIZE_T ctrl_length;
+    com_usb_pipe *pipe;
+    com_memory *pipe_mem;
+    SIZE_T pipe_offset;
+    SIZE_T pipe_length;
+    com_object *completion_callback;
+    void *completion_context;
+    OVERLAPPED *async_ovlp;
     /* Completion state */
     volatile bool completed;
     HRESULT completion_status;
@@ -989,13 +1142,23 @@ static __winfnc HRESULT req_qi(com_object *self, const GUID *riid, void **ppv) {
 
 static __winfnc void req_complete_with_info(com_object *self, HRESULT status, SIZE_T info) {
     com_request *r = (com_request*)self;
+    OVERLAPPED *async_ovlp = NULL;
+    NTSTATUS async_status = status == S_OK ? STATUS_SUCCESS : STATUS_CANCELLED;
+
     pthread_mutex_lock(&r->lock);
+    if(r->completed) {
+        pthread_mutex_unlock(&r->lock);
+        return;
+    }
     r->completion_status = status;
     r->completion_info = info;
     r->completed = true;
+    async_ovlp = r->async_ovlp;
     pthread_cond_signal(&r->cond);
     pthread_mutex_unlock(&r->lock);
+
     log_debug("COM: Request completed: status=0x%x info=%zu", status, info);
+    if(async_ovlp) winio_complete_overlapped(async_ovlp, async_status, info);
 }
 
 static __winfnc void req_set_info(com_object *self, ULONG_PTR info) {
@@ -1003,7 +1166,134 @@ static __winfnc void req_set_info(com_object *self, ULONG_PTR info) {
 }
 
 static __winfnc void req_complete(com_object *self, HRESULT status) {
-    req_complete_with_info(self, status, 0);
+    req_complete_with_info(self, status, ((com_request*)self)->completion_info);
+}
+
+static __winfnc ULONG req_get_type(com_object *self) {
+    com_request *r = (com_request*)self;
+    if(r->kind == COM_REQUEST_IOCTL) return 14;   /* WdfRequestTypeDeviceControl */
+    if(r->kind == COM_REQUEST_PIPE_READ) return 2;
+    if(r->kind == COM_REQUEST_PIPE_WRITE) return 3;
+    if(r->kind == COM_REQUEST_CONTROL) return 29; /* WdfRequestTypeUsb */
+    return 30;                                    /* WdfRequestTypeNoFormat */
+}
+
+static __winfnc void req_set_completion_callback(com_object *self, com_object *callback, void *context) {
+    com_request *r = (com_request*)self;
+    r->completion_callback = callback;
+    r->completion_context = context;
+    log_debug("COM: Request::SetCompletionCallback(callback=%p context=%p)", callback, context);
+}
+
+static void req_invoke_completion(com_request *r, com_object *target) {
+    if(!r->completion_callback) return;
+
+    void **vtbl = (void**)r->completion_callback->vtbl;
+    typedef void __winfnc (*completion_fn)(com_object *self, com_object *request, com_object *target, com_object *params, void *context);
+    log_debug("COM: Request completion callback(callback=%p context=%p)", r->completion_callback, r->completion_context);
+    ((completion_fn)vtbl[3])(r->completion_callback, &r->obj, target, &r->completion_params, r->completion_context);
+}
+
+static __winfnc HRESULT req_send(com_object *self, com_object *target, ULONG flags, LONGLONG timeout) {
+    com_request *r = (com_request*)self;
+
+    if(!com_libusb_dev) {
+        log_error("COM: Request::Send has no libusb device");
+        req_complete_with_info(self, E_FAIL, 0);
+        return E_FAIL;
+    }
+
+    unsigned int timeout_ms = 5000;
+    if(timeout < 0) {
+        LONGLONG relative_ms = -timeout / 10000;
+        if(relative_ms > 0 && relative_ms < 60000) timeout_ms = (unsigned int)relative_ms;
+    } else if(timeout > 0) {
+        log_warn("COM: Request::Send got absolute timeout %lld; using %ums",
+            (long long)timeout, timeout_ms);
+    }
+
+    if(r->kind == COM_REQUEST_PIPE_READ || r->kind == COM_REQUEST_PIPE_WRITE) {
+        if(!r->pipe || !r->pipe_mem || r->pipe_length > INT_MAX) {
+            req_complete_with_info(self, E_INVALIDARG, 0);
+            req_invoke_completion(r, target);
+            return E_INVALIDARG;
+        }
+
+        BYTE *buf = (BYTE*)r->pipe_mem->buffer + r->pipe_offset;
+        int transferred = 0;
+        log_info("COM PIPE XFER: %s ep=0x%02x len=%zu flags=0x%x",
+            r->kind == COM_REQUEST_PIPE_READ ? "READ" : "WRITE",
+            r->pipe->endpoint, r->pipe_length, flags);
+        if(r->kind == COM_REQUEST_PIPE_WRITE) {
+            log_control_bytes("PIPE OUT", buf, r->pipe_length);
+        }
+
+        int ret;
+        if(r->pipe->transfer_type == LIBUSB_TRANSFER_TYPE_INTERRUPT) {
+            ret = libusb_interrupt_transfer(com_libusb_dev, r->pipe->endpoint,
+                buf, (int)r->pipe_length, &transferred, timeout_ms);
+        } else if(r->pipe->transfer_type == LIBUSB_TRANSFER_TYPE_BULK) {
+            ret = libusb_bulk_transfer(com_libusb_dev, r->pipe->endpoint,
+                buf, (int)r->pipe_length, &transferred, timeout_ms);
+        } else {
+            log_warn("COM PIPE XFER unsupported transfer type=%u", r->pipe->transfer_type);
+            req_complete_with_info(self, E_INVALIDARG, 0);
+            req_invoke_completion(r, target);
+            return E_INVALIDARG;
+        }
+        if(ret < 0) {
+            log_warn("COM PIPE XFER failed: %s", libusb_error_name(ret));
+            req_complete_with_info(self, E_FAIL, 0);
+            req_invoke_completion(r, target);
+            return E_FAIL;
+        }
+
+        log_info("COM PIPE XFER: transferred %d bytes", transferred);
+        if(r->kind == COM_REQUEST_PIPE_READ) {
+            log_control_bytes("PIPE IN", buf, (SIZE_T)transferred);
+        }
+        req_complete_with_info(self, S_OK, (SIZE_T)transferred);
+        req_invoke_completion(r, target);
+        return S_OK;
+    }
+
+    if(r->kind != COM_REQUEST_CONTROL) {
+        log_warn("COM: Request::Send unsupported kind=%u target=%p flags=0x%x", r->kind, target, flags);
+        req_complete_with_info(self, E_NOTIMPL, 0);
+        req_invoke_completion(r, target);
+        return E_NOTIMPL;
+    }
+
+    BYTE *buf = NULL;
+    if(r->ctrl_mem && r->ctrl_length > 0) {
+        buf = (BYTE*)r->ctrl_mem->buffer + r->ctrl_offset;
+    }
+
+    log_info("COM CTRL XFER: bmReqType=0x%02x bReq=0x%02x wVal=0x%04x wIdx=0x%04x wLen=%zu flags=0x%x",
+        r->ctrl_setup.bmRequestType, r->ctrl_setup.bRequest, r->ctrl_setup.wValue,
+        r->ctrl_setup.wIndex, r->ctrl_length, flags);
+    if((r->ctrl_setup.bmRequestType & 0x80) == 0) {
+        log_control_bytes("CTRL OUT", buf, r->ctrl_length);
+    }
+
+    int ret = libusb_control_transfer(com_libusb_dev,
+        r->ctrl_setup.bmRequestType, r->ctrl_setup.bRequest,
+        r->ctrl_setup.wValue, r->ctrl_setup.wIndex,
+        buf, (uint16_t)r->ctrl_length, timeout_ms);
+    if(ret < 0) {
+        log_warn("COM CTRL XFER failed: %s", libusb_error_name(ret));
+        req_complete_with_info(self, E_FAIL, 0);
+        req_invoke_completion(r, target);
+        return E_FAIL;
+    }
+
+    log_info("COM CTRL XFER: transferred %d bytes", ret);
+    if((r->ctrl_setup.bmRequestType & 0x80) != 0) {
+        log_control_bytes("CTRL IN", buf, (SIZE_T)ret);
+    }
+    req_complete_with_info(self, S_OK, (SIZE_T)ret);
+    req_invoke_completion(r, target);
+    return S_OK;
 }
 
 static __winfnc void req_get_devioctl_params(com_object *self, ULONG *code, SIZE_T *in_size, SIZE_T *out_size) {
@@ -1023,6 +1313,51 @@ static __winfnc void req_get_input_memory(com_object *self, com_object **mem) {
     if(*mem) (*mem)->ref_count++;
 }
 
+static __winfnc void req_get_completion_params(com_object *self, com_object **params) {
+    com_request *r = (com_request*)self;
+    if(params) {
+        *params = &r->completion_params;
+        r->completion_params.ref_count++;
+    }
+    log_debug("COM: Request::GetCompletionParams(status=0x%x info=%zu)",
+        r->completion_status, r->completion_info);
+}
+
+static __winfnc HRESULT cparams_qi(com_object *self, const GUID *riid, void **ppv) {
+    GUID iid_unk = IID_IUNKNOWN;
+    if(guid_eq(riid, &iid_unk)) {
+        *ppv = self;
+        self->ref_count++;
+        return S_OK;
+    }
+    *ppv = NULL;
+    return E_NOINTERFACE;
+}
+
+static __winfnc HRESULT cparams_get_status(com_object *self) {
+    com_request *r = (com_request*)self->impl_data;
+    return r ? r->completion_status : E_FAIL;
+}
+
+static __winfnc ULONG_PTR cparams_get_information(com_object *self) {
+    com_request *r = (com_request*)self->impl_data;
+    return r ? r->completion_info : 0;
+}
+
+static __winfnc ULONG cparams_get_type(com_object *self) {
+    com_request *r = (com_request*)self->impl_data;
+    return r ? req_get_type(&r->obj) : 30;
+}
+
+static void *g_completion_params_vtbl[] = {
+    cparams_qi,
+    stub_addref,
+    stub_release,
+    cparams_get_status,
+    cparams_get_information,
+    cparams_get_type,
+};
+
 static void *g_request_vtbl[] = {
     /* IUnknown (0-2) */
     req_qi, stub_addref, stub_release,
@@ -1032,8 +1367,8 @@ static void *g_request_vtbl[] = {
     req_complete_with_info,   /* [8]  CompleteWithInformation */
     req_set_info,             /* [9]  SetInformation */
     req_complete,             /* [10] Complete */
-    com_void_stub,            /* [11] SetCompletionCallback */
-    com_method_stub,          /* [12] GetType */
+    req_set_completion_callback, /* [11] SetCompletionCallback */
+    req_get_type,             /* [12] GetType */
     com_void_stub,            /* [13] GetCreateParameters */
     com_void_stub,            /* [14] GetReadParameters */
     com_void_stub,            /* [15] GetWriteParameters */
@@ -1044,32 +1379,40 @@ static void *g_request_vtbl[] = {
     com_method_stub,          /* [20] UnmarkCancelable */
     com_method_stub,          /* [21] CancelSentRequest */
     com_method_stub,          /* [22] ForwardToIoQueue */
-    com_method_stub,          /* [23] Send */
+    req_send,                 /* [23] Send */
     com_void_stub,            /* [24] GetFileObject */
     com_void_stub,            /* [25] FormatUsingCurrentType */
     com_method_stub,          /* [26] GetRequestorProcessId */
     com_void_stub,            /* [27] GetIoQueue */
     com_method_stub,          /* [28] Impersonate */
     com_method_stub,          /* [29] IsFrom32BitProcess */
-    com_void_stub,            /* [30] GetCompletionParams */
+    req_get_completion_params, /* [30] GetCompletionParams */
     /* Padding */
     com_method_stub, com_method_stub, com_method_stub, com_method_stub,
 };
 
-/* Send an IOCTL through the COM IQueueCallbackDeviceIoControl path */
-NTSTATUS com_send_ioctl(ULONG code, const void *in_buf, size_t in_size, void *out_buf, size_t out_size, size_t *bytes_returned) {
-    if(!com_ioctl_callback) {
-        log_error("COM: No IQueueCallbackDeviceIoControl captured");
-        return STATUS_CANCELLED;
-    }
+static com_object *com_request_create_driver(void *callback, void *context) {
+    com_request *req = (com_request*)calloc(1, sizeof(com_request));
+    if(!req) return NULL;
 
-    /* Create memory wrappers */
-    com_memory *in_mem = in_buf ? com_memory_create((void*)in_buf, in_size) : NULL;
-    com_memory *out_mem = out_buf ? com_memory_create(out_buf, out_size) : NULL;
+    req->obj.vtbl = (com_vtable*)g_request_vtbl;
+    req->obj.ref_count = 1;
+    req->completion_params.vtbl = (com_vtable*)g_completion_params_vtbl;
+    req->completion_params.ref_count = 1;
+    req->completion_params.impl_data = req;
+    req->completion_callback = (com_object*)callback;
+    req->completion_context = context;
+    req->completion_status = E_FAIL;
+    pthread_mutex_init(&req->lock, NULL);
+    pthread_cond_init(&req->cond, NULL);
+    return &req->obj;
+}
 
-    /* Create request */
-    com_request req = {
+static void com_request_init_ioctl(com_request *req, ULONG code, com_memory *in_mem, com_memory *out_mem, size_t in_size, size_t out_size) {
+    *req = (com_request) {
         .obj = { .vtbl = (com_vtable*)g_request_vtbl, .ref_count = 1, .impl_data = NULL },
+        .completion_params = { .vtbl = (com_vtable*)g_completion_params_vtbl, .ref_count = 1 },
+        .kind = COM_REQUEST_IOCTL,
         .ioctl_code = code,
         .in_mem = in_mem,
         .out_mem = out_mem,
@@ -1079,16 +1422,121 @@ NTSTATUS com_send_ioctl(ULONG code, const void *in_buf, size_t in_size, void *ou
         .completion_status = E_FAIL,
         .completion_info = 0,
     };
-    pthread_mutex_init(&req.lock, NULL);
-    pthread_cond_init(&req.cond, NULL);
+    req->completion_params.impl_data = req;
+    pthread_mutex_init(&req->lock, NULL);
+    pthread_cond_init(&req->cond, NULL);
+}
 
-    /* Call the driver's OnDeviceIoControl */
+static com_request *com_request_alloc_ioctl(ULONG code, const void *in_buf, size_t in_size, void *out_buf, size_t out_size) {
+    com_memory *in_mem = in_buf ? com_memory_create((void*)in_buf, in_size) : NULL;
+    com_memory *out_mem = out_buf ? com_memory_create(out_buf, out_size) : NULL;
+    com_request *req = (com_request*)calloc(1, sizeof(com_request));
+    if(!req) {
+        free(in_mem);
+        free(out_mem);
+        return NULL;
+    }
+
+    com_request_init_ioctl(req, code, in_mem, out_mem, in_size, out_size);
+    return req;
+}
+
+static void com_request_destroy_ioctl(com_request *req) {
+    if(!req) return;
+    pthread_mutex_destroy(&req->lock);
+    pthread_cond_destroy(&req->cond);
+    free(req->in_mem);
+    free(req->out_mem);
+    free(req);
+}
+
+static void com_dispatch_ioctl(com_request *req) {
     IQueueCallbackDeviceIoControlVtbl *vtbl = (IQueueCallbackDeviceIoControlVtbl*)com_ioctl_callback->vtbl;
-
     struct winmodule *mod = winmodule_get_cur();
     winmodule_set_cur(&tudor_driver_dll->module);
-    vtbl->OnDeviceIoControl(com_ioctl_callback, &g_wdf_device, (com_object*)&req, code, in_size, out_size);
+    vtbl->OnDeviceIoControl(com_ioctl_callback, &g_wdf_device, (com_object*)req,
+        req->ioctl_code, req->in_size, req->out_size);
     winmodule_set_cur(mod);
+}
+
+static HRESULT com_request_configure_control(void *request, void *setup, void *memory, void *offset) {
+    if(!request || !setup) return E_POINTER;
+
+    com_request *req = (com_request*)request;
+    com_memory *mem = (com_memory*)memory;
+    com_memory_offset *mem_off = (com_memory_offset*)offset;
+
+    memcpy(&req->ctrl_setup, setup, sizeof(req->ctrl_setup));
+    req->kind = COM_REQUEST_CONTROL;
+    req->ctrl_mem = mem;
+    req->ctrl_offset = mem_off ? mem_off->BufferOffset : 0;
+    req->ctrl_length = mem_off && mem_off->BufferLength ? mem_off->BufferLength : req->ctrl_setup.wLength;
+
+    if(mem) {
+        SIZE_T available;
+        if(req->ctrl_offset > mem->size) return E_INVALIDARG;
+        available = mem->size - req->ctrl_offset;
+        if(req->ctrl_length == 0 && req->ctrl_setup.wLength == 0) {
+            req->ctrl_length = available;
+        }
+        if(req->ctrl_length > available) return E_INVALIDARG;
+        mem->obj.ref_count++;
+    } else if(req->ctrl_length != 0) {
+        return E_POINTER;
+    }
+    if(req->ctrl_length > UINT16_MAX) return E_INVALIDARG;
+    req->ctrl_setup.wLength = (USHORT)req->ctrl_length;
+
+    log_info("COM: IWDFUsbTargetDevice::FormatRequestForControlTransfer request=%p bmReqType=0x%02x bReq=0x%02x wVal=0x%04x wIdx=0x%04x wLen=%zu",
+        request, req->ctrl_setup.bmRequestType, req->ctrl_setup.bRequest,
+        req->ctrl_setup.wValue, req->ctrl_setup.wIndex, req->ctrl_length);
+    if((req->ctrl_setup.bmRequestType & 0x80) == 0 && mem) {
+        log_control_bytes("formatted CTRL OUT", (BYTE*)mem->buffer + req->ctrl_offset, req->ctrl_length);
+    }
+    return S_OK;
+}
+
+static HRESULT com_request_configure_pipe(void *request, com_usb_pipe *pipe, void *memory, void *offset, bool read) {
+    if(!request || !pipe || !memory) return E_POINTER;
+
+    com_request *req = (com_request*)request;
+    com_memory *mem = (com_memory*)memory;
+    com_memory_offset *mem_off = (com_memory_offset*)offset;
+
+    req->kind = read ? COM_REQUEST_PIPE_READ : COM_REQUEST_PIPE_WRITE;
+    req->pipe = pipe;
+    req->pipe_mem = mem;
+    req->pipe_offset = mem_off ? mem_off->BufferOffset : 0;
+    req->pipe_length = mem_off && mem_off->BufferLength ? mem_off->BufferLength : 0;
+
+    if(req->pipe_offset > mem->size) return E_INVALIDARG;
+    SIZE_T available = mem->size - req->pipe_offset;
+    if(req->pipe_length == 0) req->pipe_length = available;
+    if(req->pipe_length > available) return E_INVALIDARG;
+    if(read && (pipe->endpoint & 0x80) == 0) return E_INVALIDARG;
+    if(!read && (pipe->endpoint & 0x80) != 0) return E_INVALIDARG;
+
+    mem->obj.ref_count++;
+    log_info("COM: formatted pipe %s request=%p ep=0x%02x len=%zu",
+        read ? "read" : "write", request, pipe->endpoint, req->pipe_length);
+    if(!read) {
+        log_control_bytes("formatted PIPE OUT", (BYTE*)mem->buffer + req->pipe_offset, req->pipe_length);
+    }
+    return S_OK;
+}
+
+/* Send an IOCTL through the COM IQueueCallbackDeviceIoControl path */
+NTSTATUS com_send_ioctl(ULONG code, const void *in_buf, size_t in_size, void *out_buf, size_t out_size, size_t *bytes_returned) {
+    if(!com_ioctl_callback) {
+        log_error("COM: No IQueueCallbackDeviceIoControl captured");
+        return STATUS_CANCELLED;
+    }
+
+    com_request req;
+    com_memory *in_mem = in_buf ? com_memory_create((void*)in_buf, in_size) : NULL;
+    com_memory *out_mem = out_buf ? com_memory_create(out_buf, out_size) : NULL;
+    com_request_init_ioctl(&req, code, in_mem, out_mem, in_size, out_size);
+    com_dispatch_ioctl(&req);
 
     /* Wait for completion (with timeout) */
     if(!req.completed) {
@@ -1119,6 +1567,25 @@ NTSTATUS com_send_ioctl(ULONG code, const void *in_buf, size_t in_size, void *ou
     free(out_mem);
 
     return status;
+}
+
+NTSTATUS com_start_ioctl(ULONG code, const void *in_buf, size_t in_size, void *out_buf, size_t out_size, OVERLAPPED *ovlp, void **op_ctx) {
+    if(!com_ioctl_callback) {
+        log_error("COM: No IQueueCallbackDeviceIoControl captured");
+        return STATUS_CANCELLED;
+    }
+
+    com_request *req = com_request_alloc_ioctl(code, in_buf, in_size, out_buf, out_size);
+    if(!req) return STATUS_CANCELLED;
+    req->async_ovlp = ovlp;
+    if(op_ctx) *op_ctx = req;
+
+    com_dispatch_ioctl(req);
+    return STATUS_SUCCESS;
+}
+
+void com_cleanup_ioctl(void *op_ctx) {
+    com_request_destroy_ioctl((com_request*)op_ctx);
 }
 
 /* ─── COM Host bootstrap ─────────────────────────────────────────── */
@@ -1200,9 +1667,11 @@ static void com_log_usb_device_state(const char *label) {
 
     uint8_t *self = (uint8_t*)com_usb_device_obj;
     log_info("COM: %s: usb_self=%p vtbl=%p", label, com_usb_device_obj, *(void**)self);
-    log_info("COM: %s: [self-0x20]=0x%02x [self+0x18]=%p [self+0x58]=%p [self+0x80]=%p [self+0x508]=%p",
+    log_info("COM: %s: [self-0x20]=0x%02x [self+0x18]=%p [self+0x58]=%p [self+0x70]=%p [self+0x78]=%p [self+0x80]=%p [self+0x84]=0x%08x [self+0xbc]=0x%02x [self+0x4f1]=0x%02x [self+0x508]=%p",
         label, *(uint8_t*)(self - 0x20), *(void**)(self + 0x18),
-        *(void**)(self + 0x58), *(void**)(self + 0x80), *(void**)(self + 0x508));
+        *(void**)(self + 0x58), *(void**)(self + 0x70), *(void**)(self + 0x78),
+        *(void**)(self + 0x80), *(uint32_t*)(self + 0x84), *(uint8_t*)(self + 0xbc),
+        *(uint8_t*)(self + 0x4f1), *(void**)(self + 0x508));
 }
 
 bool com_finish_init(struct dll_image *driver_dll) {

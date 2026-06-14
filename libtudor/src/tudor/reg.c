@@ -86,6 +86,7 @@ bool tudor_reg_handler(void *ctx, void *ctx_obj, const char *key_name, const cha
                 } else if(buf) return false;
                 *buf_size = pdata->data_size;
                 *val_type = WINREG_BINARY;
+                return true;
             }
         } else {
             if(tudor_set_pdata_fnc) {

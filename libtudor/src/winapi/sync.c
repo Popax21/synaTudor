@@ -92,10 +92,20 @@ static struct sync_event {
 
     pthread_mutex_t lock;
     pthread_cond_t cond;
+    pthread_cond_t idle_cond;
     bool state;
+    bool closing;
+    size_t active_ops;
 } *events_head;
 
 static void evt_destr(struct sync_event *evt) {
+    cant_fail_ret(pthread_mutex_lock(&evt->lock));
+    evt->closing = true;
+    evt->state = true;
+    cant_fail_ret(pthread_cond_broadcast(&evt->cond));
+    while(evt->active_ops > 0) cant_fail_ret(pthread_cond_wait(&evt->idle_cond, &evt->lock));
+    cant_fail_ret(pthread_mutex_unlock(&evt->lock));
+
     //Unlink the event
     cant_fail_ret(pthread_rwlock_wrlock(&events_lock));
 
@@ -106,8 +116,14 @@ static void evt_destr(struct sync_event *evt) {
     cant_fail_ret(pthread_rwlock_unlock(&events_lock));
 
     //Free memory
+    int err = pthread_mutex_destroy(&evt->lock);
+    if(err == EBUSY) {
+        log_warn("Event '%s' still busy during close; leaking sync object", evt->name ? evt->name : "<unnamed>");
+        return;
+    }
+    cant_fail(err);
     cant_fail_ret(pthread_cond_destroy(&evt->cond));
-    cant_fail_ret(pthread_mutex_destroy(&evt->lock));
+    cant_fail_ret(pthread_cond_destroy(&evt->idle_cond));
     free((void*) evt->name);
     free(evt);
 }
@@ -115,9 +131,14 @@ static void evt_destr(struct sync_event *evt) {
 static DWORD evt_wait(struct sync_event *evt, DWORD timeout) {
     DWORD res = 0;
     cant_fail_ret(pthread_mutex_lock(&evt->lock));
+    if(evt->closing) {
+        cant_fail_ret(pthread_mutex_unlock(&evt->lock));
+        return WAIT_TIMEOUT;
+    }
+    evt->active_ops++;
 
     //Wait for the event
-    while(!evt->state) {
+    while(!evt->state && !evt->closing) {
         if(timeout != INFINITE) {
             struct timespec time;
             time.tv_nsec = timeout * 10000000L;
@@ -134,6 +155,7 @@ static DWORD evt_wait(struct sync_event *evt, DWORD timeout) {
     //Auto-reset event
     if(res == 0 && !evt->manual_reset) evt->state = false;
 
+    if(--evt->active_ops == 0 && evt->closing) cant_fail_ret(pthread_cond_broadcast(&evt->idle_cond));
     cant_fail_ret(pthread_mutex_unlock(&evt->lock));
     return res;
 }
@@ -148,8 +170,11 @@ HANDLE win_create_event(const char *name, bool initial_state, bool manual_reset)
     evt->name = name ? strdup(name) : NULL;
     evt->state = initial_state;
     evt->manual_reset = manual_reset;
+    evt->closing = false;
+    evt->active_ops = 0;
     cant_fail_ret(pthread_mutex_init(&evt->lock, NULL));
     cant_fail_ret(pthread_cond_init(&evt->cond, NULL));
+    cant_fail_ret(pthread_cond_init(&evt->idle_cond, NULL));
 
     //Add event to list
     cant_fail_ret(pthread_rwlock_wrlock(&events_lock));
@@ -169,8 +194,10 @@ void win_set_event(HANDLE handle) {
 
     //Signal the event
     cant_fail_ret(pthread_mutex_lock(&evt->lock));
-    evt->state = true;
-    cant_fail_ret(pthread_cond_broadcast(&evt->cond));
+    if(!evt->closing) {
+        evt->state = true;
+        cant_fail_ret(pthread_cond_broadcast(&evt->cond));
+    }
     cant_fail_ret(pthread_mutex_unlock(&evt->lock));
 }
 
@@ -179,8 +206,10 @@ void win_reset_event(HANDLE handle) {
 
     //Reset the event
     cant_fail_ret(pthread_mutex_lock(&evt->lock));
-    evt->state = false;
-    cant_fail_ret(pthread_cond_broadcast(&evt->cond));
+    if(!evt->closing) {
+        evt->state = false;
+        cant_fail_ret(pthread_cond_broadcast(&evt->cond));
+    }
     cant_fail_ret(pthread_mutex_unlock(&evt->lock));
 }
 
