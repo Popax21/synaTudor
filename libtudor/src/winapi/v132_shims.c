@@ -9,7 +9,64 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <pthread.h>
 #include "internal.h"
+
+#define WM_QUIT 0x0012
+
+typedef struct {
+    HANDLE hwnd;
+    UINT message;
+    ULONG_PTR wParam;
+    LONG_PTR lParam;
+    DWORD time;
+    struct {
+        LONG x;
+        LONG y;
+    } pt;
+} win_msg;
+
+struct queued_msg {
+    win_msg msg;
+    struct queued_msg *next;
+};
+
+struct msg_queue {
+    DWORD thread_id;
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+    struct queued_msg *head;
+    struct queued_msg *tail;
+    struct msg_queue *next;
+};
+
+static pthread_mutex_t msg_queues_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct msg_queue *msg_queues;
+
+static struct msg_queue *get_msg_queue(DWORD thread_id, bool create) {
+    cant_fail_ret(pthread_mutex_lock(&msg_queues_lock));
+
+    struct msg_queue *queue = msg_queues;
+    while(queue && queue->thread_id != thread_id) queue = queue->next;
+
+    if(!queue && create) {
+        queue = calloc(1, sizeof(*queue));
+        if(!queue) {
+            pthread_mutex_unlock(&msg_queues_lock);
+            winerr_set_errno();
+            return NULL;
+        }
+
+        queue->thread_id = thread_id;
+        cant_fail_ret(pthread_mutex_init(&queue->lock, NULL));
+        cant_fail_ret(pthread_cond_init(&queue->cond, NULL));
+        queue->next = msg_queues;
+        msg_queues = queue;
+    }
+
+    cant_fail_ret(pthread_mutex_unlock(&msg_queues_lock));
+    return queue;
+}
 
 /* OutputDebugStringA - debug output, just forward to log */
 __winfnc void OutputDebugStringA(const char *str) {
@@ -52,7 +109,30 @@ __winfnc BOOL DestroyWindow(HANDLE hwnd) {
 }
 WINAPI(DestroyWindow)
 
-__winfnc BOOL GetMessageW(void *msg, HANDLE hwnd, UINT min, UINT max) { return FALSE; }
+__winfnc BOOL GetMessageW(void *msg, HANDLE hwnd, UINT min, UINT max) {
+    (void)hwnd;
+    (void)min;
+    (void)max;
+
+    DWORD thread_id = win_get_thread_id();
+    struct msg_queue *queue = get_msg_queue(thread_id, true);
+    if(!queue) return FALSE;
+
+    cant_fail_ret(pthread_mutex_lock(&queue->lock));
+    while(!queue->head) cant_fail_ret(pthread_cond_wait(&queue->cond, &queue->lock));
+
+    struct queued_msg *node = queue->head;
+    queue->head = node->next;
+    if(!queue->head) queue->tail = NULL;
+    cant_fail_ret(pthread_mutex_unlock(&queue->lock));
+
+    if(msg) memcpy(msg, &node->msg, sizeof(node->msg));
+    UINT message = node->msg.message;
+    free(node);
+
+    log_debug("GetMessageW(thread=%u) -> msg=0x%x", thread_id, message);
+    return message == WM_QUIT ? FALSE : TRUE;
+}
 WINAPI(GetMessageW)
 
 __winfnc BOOL TranslateMessage(const void *msg) { return TRUE; }
@@ -62,6 +142,26 @@ __winfnc LONG_PTR DispatchMessageW(const void *msg) { return 0; }
 WINAPI(DispatchMessageW)
 
 __winfnc BOOL PostThreadMessageW(DWORD threadId, UINT msg, ULONG_PTR wparam, LONG_PTR lparam) {
+    struct msg_queue *queue = get_msg_queue(threadId, true);
+    if(!queue) return FALSE;
+
+    struct queued_msg *node = calloc(1, sizeof(*node));
+    if(!node) {
+        winerr_set_errno();
+        return FALSE;
+    }
+
+    node->msg.message = msg;
+    node->msg.wParam = wparam;
+    node->msg.lParam = lparam;
+
+    cant_fail_ret(pthread_mutex_lock(&queue->lock));
+    if(queue->tail) queue->tail->next = node;
+    else queue->head = node;
+    queue->tail = node;
+    cant_fail_ret(pthread_cond_signal(&queue->cond));
+    cant_fail_ret(pthread_mutex_unlock(&queue->lock));
+
     log_debug("PostThreadMessageW(thread=%u, msg=0x%x)", threadId, msg);
     return TRUE;
 }
