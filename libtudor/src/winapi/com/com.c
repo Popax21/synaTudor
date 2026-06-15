@@ -116,6 +116,12 @@ static void log_control_bytes(const char *label, const BYTE *buf, SIZE_T len) {
         pos += snprintf(hex + pos, sizeof(hex) - (size_t)pos, "%02x ", buf[i]);
     }
     log_debug("COM: %s first %zu/%zu bytes: %s", label, shown, len, hex);
+    if(len == 7) {
+        uint32_t tail = (uint32_t)buf[3] | ((uint32_t)buf[4] << 8) |
+            ((uint32_t)buf[5] << 16) | ((uint32_t)buf[6] << 24);
+        log_debug("COM: %s Tudor status: b0=0x%02x b2=0x%02x b5=0x%02x seq=0x%02x tail_le=0x%08x",
+            label, buf[0], buf[2], buf[5], buf[6], tail);
+    }
 }
 
 /* ─── IWDFDeviceInitialize ────────────────────────────────────────── */
@@ -713,13 +719,21 @@ static __winfnc HRESULT propstore_get_named_value(com_object *self, const char16
     if(value) {
         /* PROPVARIANT layout: USHORT vt, padding, then value */
         memset(value, 0, 24);
-        /* Return VT_UI4 (DWORD = 0) for known counter properties */
-        if(cname && (strstr(cname, "Failure") || strstr(cname, "Count"))) {
+        bool zero_dword =
+            cname &&
+            (strstr(cname, "Failure") || strstr(cname, "Count") ||
+             strcmp(cname, "PairingInProcess") == 0 ||
+             strcmp(cname, "UnairingInProcess") == 0 ||
+             strcmp(cname, "UnpairingInProcess") == 0 ||
+             strcmp(cname, "DeviceUpdateInProcess") == 0 ||
+             strcmp(cname, "LastUpdateSystemTimeStamp") == 0);
+
+        if(zero_dword) {
             ((USHORT*)value)[0] = 19; /* VT_UI4 */
-            /* Value at offset 8 = 0 (DWORD zero) */
             log_debug("COM: → returning VT_UI4(0)");
+        } else {
+            log_debug("COM: → returning VT_EMPTY");
         }
-        /* else VT_EMPTY (already zeroed) */
     }
     free(cname);
     return S_OK;
@@ -1197,7 +1211,12 @@ static __winfnc void req_complete_with_info(com_object *self, HRESULT status, SI
     pthread_cond_signal(&r->cond);
     pthread_mutex_unlock(&r->lock);
 
-    log_debug("COM: Request completed: status=0x%x info=%zu", status, info);
+    log_debug("COM: Request completed: request=%p kind=%u ioctl=0x%x status=0x%x info=%zu async_ovlp=%p",
+        r, r->kind, r->ioctl_code, status, info, async_ovlp);
+    if(r->kind == COM_REQUEST_IOCTL && status == S_OK && r->out_mem && info > 0) {
+        SIZE_T n = info < r->out_mem->size ? info : r->out_mem->size;
+        log_control_bytes("IOCTL OUT", (BYTE*)r->out_mem->buffer, n);
+    }
     if(async_ovlp) winio_complete_overlapped(async_ovlp, async_status, info);
 }
 
@@ -1321,6 +1340,7 @@ static __winfnc HRESULT req_send(com_object *self, com_object *target, ULONG fla
             }
 
             log_debug("COM: Dropping stale no-contact interrupt packet before capture");
+            log_control_bytes("PIPE IN stale no-contact", buf, (SIZE_T)transferred);
         }
         if(ret < 0) {
             log_warn("COM PIPE XFER failed: %s", libusb_error_name(ret));
@@ -1661,6 +1681,8 @@ NTSTATUS com_start_ioctl(ULONG code, const void *in_buf, size_t in_size, void *o
     req->async_ovlp = ovlp;
     if(op_ctx) *op_ctx = req;
 
+    log_debug("COM: start async IOCTL request=%p code=0x%x ovlp=%p in=%zu out=%zu",
+        req, code, ovlp, in_size, out_size);
     com_dispatch_ioctl(req);
     return STATUS_SUCCESS;
 }

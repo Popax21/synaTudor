@@ -130,6 +130,9 @@ static void evt_destr(struct sync_event *evt) {
 
 static DWORD evt_wait(struct sync_event *evt, DWORD timeout) {
     DWORD res = 0;
+    log_debug("WaitForSingleObject(event=%p handle=%p name=%s timeout=%u state=%d manual=%d)",
+        evt, evt->handle, evt->name ? evt->name : "<unnamed>", timeout,
+        evt->state, evt->manual_reset);
     cant_fail_ret(pthread_mutex_lock(&evt->lock));
     if(evt->closing) {
         cant_fail_ret(pthread_mutex_unlock(&evt->lock));
@@ -162,6 +165,8 @@ static DWORD evt_wait(struct sync_event *evt, DWORD timeout) {
 
     if(--evt->active_ops == 0 && evt->closing) cant_fail_ret(pthread_cond_broadcast(&evt->idle_cond));
     cant_fail_ret(pthread_mutex_unlock(&evt->lock));
+    log_debug("WaitForSingleObject(event=%p handle=%p name=%s) -> 0x%x",
+        evt, evt->handle, evt->name ? evt->name : "<unnamed>", res);
     return res;
 }
 
@@ -191,6 +196,9 @@ HANDLE win_create_event(const char *name, bool initial_state, bool manual_reset)
 
     cant_fail_ret(pthread_rwlock_unlock(&events_lock));
 
+    log_debug("CreateEvent(name=%s manual=%d initial=%d) -> handle=%p event=%p",
+        evt->name ? evt->name : "<unnamed>", manual_reset, initial_state,
+        evt->handle, evt);
     return evt->handle;
 }
 
@@ -200,6 +208,8 @@ void win_set_event(HANDLE handle) {
     //Signal the event
     cant_fail_ret(pthread_mutex_lock(&evt->lock));
     if(!evt->closing) {
+        log_debug("SetEvent(handle=%p event=%p name=%s)", handle, evt,
+            evt->name ? evt->name : "<unnamed>");
         evt->state = true;
         cant_fail_ret(pthread_cond_broadcast(&evt->cond));
     }
@@ -212,6 +222,8 @@ void win_reset_event(HANDLE handle) {
     //Reset the event
     cant_fail_ret(pthread_mutex_lock(&evt->lock));
     if(!evt->closing) {
+        log_debug("ResetEvent(handle=%p event=%p name=%s)", handle, evt,
+            evt->name ? evt->name : "<unnamed>");
         evt->state = false;
         cant_fail_ret(pthread_cond_broadcast(&evt->cond));
     }
@@ -425,9 +437,15 @@ __winfnc HANDLE OpenEventW(DWORD access, BOOL inherit, const char16_t *name) {
         if(e->name && strcmp(e->name, cname) == 0) { evt = e; break; }
     }
     cant_fail_ret(pthread_rwlock_unlock(&events_lock));
-    free(cname);
 
-    if(!evt) { winerr_set(); return NULL; }
+    if(!evt) {
+        log_debug("OpenEventW('%s') -> NULL", cname);
+        free(cname);
+        winerr_set();
+        return NULL;
+    }
+    log_debug("OpenEventW('%s') -> handle=%p event=%p", cname, evt->handle, evt);
+    free(cname);
     return evt->handle;
 }
 WINAPI(OpenEventW)

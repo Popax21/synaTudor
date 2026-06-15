@@ -74,13 +74,13 @@ __winfnc void OutputDebugStringA(const char *str) {
 }
 WINAPI(OutputDebugStringA)
 
-__winfnc HANDLE GetTraceLoggerHandle(void *buffer) { return NULL; }
+__winfnc HANDLE GetTraceLoggerHandle(void *buffer) { return (HANDLE) 1; }
 WINAPI(GetTraceLoggerHandle)
 
-__winfnc UCHAR GetTraceEnableLevel(HANDLE handle) { return 0; }
+__winfnc UCHAR GetTraceEnableLevel(HANDLE handle) { return 0xff; }
 WINAPI(GetTraceEnableLevel)
 
-__winfnc ULONG GetTraceEnableFlags(HANDLE handle) { return 0; }
+__winfnc ULONG GetTraceEnableFlags(HANDLE handle) { return 0xffff; }
 WINAPI(GetTraceEnableFlags)
 
 __winfnc BOOL WTSRegisterSessionNotification(HANDLE hwnd, DWORD flags) {

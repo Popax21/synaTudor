@@ -81,6 +81,8 @@ static inline void call_overlapped_cb(OVERLAPPED *ovlp, NTSTATUS status, winio_o
 
 void winio_set_overlapped_callback(OVERLAPPED *ovlp, winio_overlapped_cb_fnc *cb, void *ctx, bool new_thread) {
     struct winfile_op *op = (struct winfile_op*) ovlp->Pointer;
+    log_debug("winio_set_overlapped_callback(ovlp=%p op=%p cb=%p ctx=%p new_thread=%d)",
+        ovlp, op, cb, ctx, new_thread);
     if(!op) {
         call_overlapped_cb(ovlp, (NTSTATUS) ovlp->Internal, cb, ctx, new_thread);
         return;
@@ -112,6 +114,9 @@ void winio_cancel_overlapped(OVERLAPPED *ovlp) {
 }
 
 void winio_complete_overlapped(OVERLAPPED *ovlp, NTSTATUS status, size_t num_transfered) {
+    log_debug("winio_complete_overlapped(ovlp=%p status=0x%x bytes=%zu)",
+        ovlp, status, num_transfered);
+
     //Complete overlapped
     ovlp->Internal = status;
     if(ovlp->Internal == STATUS_SUCCESS) ovlp->InternalHigh = num_transfered;

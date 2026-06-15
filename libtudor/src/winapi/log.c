@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <pthread.h>
+#include <tudor/tudor.h>
 #include "internal.h"
 
 void winlog_printf(const char *format, bool ptr_mode, win_va_list va) {
@@ -134,7 +135,7 @@ typedef struct {
     HANDLE RegHandle;
 } TRACE_GUID_REGISTRATION;
 
-typedef ULONG Wmidprequest(DWORD RequestCode, void *RequestContext, ULONG *BufferSize, void *Buffer);
+typedef ULONG __winfnc Wmidprequest(DWORD RequestCode, void *RequestContext, ULONG *BufferSize, void *Buffer);
 
 struct trace_guid {
     struct trace_provider *prov;
@@ -176,6 +177,13 @@ __winfnc DWORD RegisterTraceGuidsA(Wmidprequest *request_fnc, void *request_ctx,
     }
 
     *handle = winhandle_create(prov, (winhandle_destr_fnc*) trace_prov_destr);
+
+    if(tudor_log_traces && request_fnc) {
+        BYTE enable_buf[64] = { 0 };
+        ULONG enable_buf_size = sizeof(enable_buf);
+        ULONG status = request_fnc(WMI_ENABLE_EVENTS, request_ctx, &enable_buf_size, enable_buf);
+        log_debug("RegisterTraceGuidsA: forced WMI_ENABLE_EVENTS status=0x%x", status);
+    }
 
     return ERROR_SUCCESS;
 }
