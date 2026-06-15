@@ -331,9 +331,21 @@ static __winfnc HRESULT usb_pipe_format_write(com_object *self, void *request, v
     return com_request_configure_pipe(request, pipe, memory, offset, false);
 }
 
-static __winfnc HRESULT usb_pipe_maintenance(com_object *self) {
+static __winfnc HRESULT usb_pipe_abort(com_object *self) {
     com_usb_pipe *pipe = (com_usb_pipe*)self;
-    log_debug("COM: IWDFUsbTargetPipe maintenance ep=0x%02x", pipe->endpoint);
+    log_debug("COM: IWDFUsbTargetPipe::Abort(ep=0x%02x)", pipe->endpoint);
+    return S_OK;
+}
+
+static __winfnc HRESULT usb_pipe_flush(com_object *self) {
+    com_usb_pipe *pipe = (com_usb_pipe*)self;
+    log_debug("COM: IWDFUsbTargetPipe::Flush(ep=0x%02x)", pipe->endpoint);
+    return S_OK;
+}
+
+static __winfnc HRESULT usb_pipe_reset(com_object *self) {
+    com_usb_pipe *pipe = (com_usb_pipe*)self;
+    log_debug("COM: IWDFUsbTargetPipe::Reset(ep=0x%02x)", pipe->endpoint);
     if(com_libusb_dev) libusb_clear_halt(com_libusb_dev, pipe->endpoint);
     return S_OK;
 }
@@ -385,9 +397,9 @@ static void *g_usb_pipe_vtbl[] = {
     [16] = usb_pipe_retrieve_info,
     [17] = usb_pipe_success,
     [18] = usb_pipe_success,
-    [19] = usb_pipe_maintenance,
-    [20] = usb_pipe_maintenance,
-    [21] = usb_pipe_maintenance,
+    [19] = usb_pipe_abort,
+    [20] = usb_pipe_flush,
+    [21] = usb_pipe_reset,
 };
 
 static __winfnc HRESULT usb_iface_retrieve_pipe(com_object *self, UCHAR pipe_idx, void **ppPipe) {
