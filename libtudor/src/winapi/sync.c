@@ -141,8 +141,13 @@ static DWORD evt_wait(struct sync_event *evt, DWORD timeout) {
     while(!evt->state && !evt->closing) {
         if(timeout != INFINITE) {
             struct timespec time;
-            time.tv_nsec = timeout * 10000000L;
-            time.tv_sec = timeout / 1000L;
+            cant_fail_ret(clock_gettime(CLOCK_REALTIME, &time));
+            time.tv_sec += timeout / 1000L;
+            time.tv_nsec += (timeout % 1000L) * 1000000L;
+            if(time.tv_nsec >= 1000000000L) {
+                time.tv_sec++;
+                time.tv_nsec -= 1000000000L;
+            }
             int err = pthread_cond_timedwait(&evt->cond, &evt->lock, &time);
             if(err == ETIMEDOUT) {
                 res = WAIT_TIMEOUT;

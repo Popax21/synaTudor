@@ -821,17 +821,43 @@ static __winfnc HRESULT device_create_request(com_object *self, void *cb, void *
 }
 static __winfnc HRESULT device_create_symlink(com_object *self, const char16_t *l) { return S_OK; }
 
-/* IWDFDevice2 */
 static __winfnc HRESULT device_s0_idle(com_object *self, DWORD a, DWORD b, ULONG c, DWORD d, DWORD e) {
     log_debug("COM: Device::AssignS0IdleSettings");
     return S_OK;
 }
-static __winfnc HRESULT device_stop_idle(com_object *self, BOOL w) { return S_OK; }
-static __winfnc void device_resume_idle(com_object *self) {}
+static __winfnc HRESULT device_stop_idle(com_object *self, BOOL w) {
+    log_debug("COM: Device::StopIdle(wait=%d)", w);
+    return S_OK;
+}
+static __winfnc void device_resume_idle(com_object *self) {
+    log_debug("COM: Device::ResumeIdle");
+}
 static __winfnc DWORD device_get_system_power_action(com_object *self) { return 0; }
+
+typedef struct {
+    ULONG Size;
+    ULONG IdleCaps;
+    ULONG DxState;
+    ULONG IdleTimeout;
+    ULONG UserControlOfIdleSettings;
+    ULONG Enabled;
+    ULONG PowerUpIdleDeviceOnSystemWake;
+    ULONG ExcludeD3Cold;
+} wudf_idle_settings;
+
 static __winfnc HRESULT device_s0_idle_ex(com_object *self, void *settings) {
-    log_debug("COM: Device::AssignS0IdleSettingsEx unsupported");
-    return E_NOTIMPL;
+    wudf_idle_settings *idle = settings;
+    void *caller = __builtin_return_address(0);
+
+    if(idle && idle->Size >= sizeof(*idle)) {
+        log_debug("COM: Device::AssignS0IdleSettingsEx caller=%p size=%u caps=%u dx=%u timeout=%u user=%u enabled=%u wake=%u d3cold=%u",
+            caller, idle->Size, idle->IdleCaps, idle->DxState, idle->IdleTimeout,
+            idle->UserControlOfIdleSettings, idle->Enabled,
+            idle->PowerUpIdleDeviceOnSystemWake, idle->ExcludeD3Cold);
+    } else {
+        log_debug("COM: Device::AssignS0IdleSettingsEx caller=%p settings=%p", caller, settings);
+    }
+    return S_OK;
 }
 
 /*
@@ -1122,8 +1148,10 @@ typedef struct {
     SIZE_T pipe_length;
     com_object *completion_callback;
     void *completion_context;
+    com_object *cancel_callback;
     OVERLAPPED *async_ovlp;
     /* Completion state */
+    bool cancelable;
     volatile bool completed;
     HRESULT completion_status;
     SIZE_T completion_info;
@@ -1185,6 +1213,30 @@ static __winfnc void req_set_completion_callback(com_object *self, com_object *c
     log_debug("COM: Request::SetCompletionCallback(callback=%p context=%p)", callback, context);
 }
 
+static __winfnc HRESULT req_mark_cancelable(com_object *self, com_object *callback) {
+    com_request *r = (com_request*)self;
+
+    pthread_mutex_lock(&r->lock);
+    r->cancel_callback = callback;
+    r->cancelable = true;
+    pthread_mutex_unlock(&r->lock);
+
+    log_debug("COM: Request::MarkCancelable(callback=%p)", callback);
+    return S_OK;
+}
+
+static __winfnc HRESULT req_unmark_cancelable(com_object *self) {
+    com_request *r = (com_request*)self;
+
+    pthread_mutex_lock(&r->lock);
+    r->cancel_callback = NULL;
+    r->cancelable = false;
+    pthread_mutex_unlock(&r->lock);
+
+    log_debug("COM: Request::UnmarkCancelable");
+    return S_OK;
+}
+
 static void req_invoke_completion(com_request *r, com_object *target) {
     if(!r->completion_callback) return;
 
@@ -1192,6 +1244,11 @@ static void req_invoke_completion(com_request *r, com_object *target) {
     typedef void __winfnc (*completion_fn)(com_object *self, com_object *request, com_object *target, com_object *params, void *context);
     log_debug("COM: Request completion callback(callback=%p context=%p)", r->completion_callback, r->completion_context);
     ((completion_fn)vtbl[3])(r->completion_callback, &r->obj, target, &r->completion_params, r->completion_context);
+}
+
+static bool pipe_read_is_stale_no_contact_event(const BYTE *buf, int transferred) {
+    static const BYTE stale_event[] = { 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
+    return transferred == (int)sizeof(stale_event) && memcmp(buf, stale_event, sizeof(stale_event)) == 0;
 }
 
 static __winfnc HRESULT req_send(com_object *self, com_object *target, ULONG flags, LONGLONG timeout) {
@@ -1203,7 +1260,8 @@ static __winfnc HRESULT req_send(com_object *self, com_object *target, ULONG fla
         return E_FAIL;
     }
 
-    unsigned int timeout_ms = 5000;
+    bool is_pipe = r->kind == COM_REQUEST_PIPE_READ || r->kind == COM_REQUEST_PIPE_WRITE;
+    unsigned int timeout_ms = is_pipe ? 0 : 5000;
     if(timeout < 0) {
         LONGLONG relative_ms = -timeout / 10000;
         if(relative_ms > 0 && relative_ms < 60000) timeout_ms = (unsigned int)relative_ms;
@@ -1229,17 +1287,28 @@ static __winfnc HRESULT req_send(com_object *self, com_object *target, ULONG fla
         }
 
         int ret;
-        if(r->pipe->transfer_type == LIBUSB_TRANSFER_TYPE_INTERRUPT) {
-            ret = libusb_interrupt_transfer(com_libusb_dev, r->pipe->endpoint,
-                buf, (int)r->pipe_length, &transferred, timeout_ms);
-        } else if(r->pipe->transfer_type == LIBUSB_TRANSFER_TYPE_BULK) {
-            ret = libusb_bulk_transfer(com_libusb_dev, r->pipe->endpoint,
-                buf, (int)r->pipe_length, &transferred, timeout_ms);
-        } else {
+        if(r->pipe->transfer_type != LIBUSB_TRANSFER_TYPE_INTERRUPT &&
+           r->pipe->transfer_type != LIBUSB_TRANSFER_TYPE_BULK) {
             log_warn("COM PIPE XFER unsupported transfer type=%u", r->pipe->transfer_type);
             req_complete_with_info(self, E_INVALIDARG, 0);
             req_invoke_completion(r, target);
             return E_INVALIDARG;
+        }
+
+        for(;;) {
+            if(r->pipe->transfer_type == LIBUSB_TRANSFER_TYPE_INTERRUPT) {
+                ret = libusb_interrupt_transfer(com_libusb_dev, r->pipe->endpoint,
+                    buf, (int)r->pipe_length, &transferred, timeout_ms);
+            } else {
+                ret = libusb_bulk_transfer(com_libusb_dev, r->pipe->endpoint,
+                    buf, (int)r->pipe_length, &transferred, timeout_ms);
+            }
+            if(ret < 0 || r->kind != COM_REQUEST_PIPE_READ ||
+               !pipe_read_is_stale_no_contact_event(buf, transferred)) {
+                break;
+            }
+
+            log_debug("COM: Dropping stale no-contact interrupt packet before capture");
         }
         if(ret < 0) {
             log_warn("COM PIPE XFER failed: %s", libusb_error_name(ret));
@@ -1375,8 +1444,8 @@ static void *g_request_vtbl[] = {
     req_get_devioctl_params,  /* [16] GetDeviceIoControlParameters */
     req_get_output_memory,    /* [17] GetOutputMemory */
     req_get_input_memory,     /* [18] GetInputMemory */
-    com_void_stub,            /* [19] MarkCancelable */
-    com_method_stub,          /* [20] UnmarkCancelable */
+    req_mark_cancelable,      /* [19] MarkCancelable */
+    req_unmark_cancelable,    /* [20] UnmarkCancelable */
     com_method_stub,          /* [21] CancelSentRequest */
     com_method_stub,          /* [22] ForwardToIoQueue */
     req_send,                 /* [23] Send */
