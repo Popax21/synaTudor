@@ -124,6 +124,36 @@ static void log_control_bytes(const char *label, const BYTE *buf, SIZE_T len) {
     }
 }
 
+static uint32_t read_le32(const BYTE *buf) {
+    return (uint32_t)buf[0] | ((uint32_t)buf[1] << 8) |
+        ((uint32_t)buf[2] << 16) | ((uint32_t)buf[3] << 24);
+}
+
+static uint16_t read_le16(const BYTE *buf) {
+    return (uint16_t)buf[0] | ((uint16_t)buf[1] << 8);
+}
+
+static void log_capture_ioctl_input(const BYTE *buf, SIZE_T len) {
+    if(!buf || len < 0x20) return;
+
+    log_debug("COM: capture IOCTL input len=%u purpose=0x%02x format=%04x:%04x guid=%08x-%04x-%04x",
+        read_le32(buf), buf[4], read_le16(buf + 6), read_le16(buf + 8),
+        read_le32(buf + 0xc), read_le16(buf + 0x10), read_le16(buf + 0x12));
+}
+
+static void log_capture_ioctl_output(const BYTE *buf, SIZE_T len) {
+    if(!buf || len < 0x18) return;
+
+    uint32_t sample_size = read_le32(buf + 0x10);
+    log_debug("COM: capture IOCTL output total=%u hresult=0x%x status=%u reject=%u sample_size=%u",
+        read_le32(buf), read_le32(buf + 4), read_le32(buf + 8), read_le32(buf + 0xc), sample_size);
+    if(sample_size != 0 && len >= 0x14) {
+        SIZE_T sample_available = len - 0x14;
+        log_control_bytes("capture IOCTL sample", buf + 0x14,
+            sample_size < sample_available ? sample_size : sample_available);
+    }
+}
+
 /* ─── IWDFDeviceInitialize ────────────────────────────────────────── */
 
 static __winfnc HRESULT devinit_qi(com_object *self, const GUID *riid, void **ppv) {
@@ -1216,6 +1246,9 @@ static __winfnc void req_complete_with_info(com_object *self, HRESULT status, SI
     if(r->kind == COM_REQUEST_IOCTL && status == S_OK && r->out_mem && info > 0) {
         SIZE_T n = info < r->out_mem->size ? info : r->out_mem->size;
         log_control_bytes("IOCTL OUT", (BYTE*)r->out_mem->buffer, n);
+        if(r->ioctl_code == 0x440014) {
+            log_capture_ioctl_output((BYTE*)r->out_mem->buffer, n);
+        }
     }
     if(async_ovlp) winio_complete_overlapped(async_ovlp, async_status, info);
 }
@@ -1683,6 +1716,9 @@ NTSTATUS com_start_ioctl(ULONG code, const void *in_buf, size_t in_size, void *o
 
     log_debug("COM: start async IOCTL request=%p code=0x%x ovlp=%p in=%zu out=%zu",
         req, code, ovlp, in_size, out_size);
+    if(code == 0x440014) {
+        log_capture_ioctl_input((const BYTE*)in_buf, in_size);
+    }
     com_dispatch_ioctl(req);
     return STATUS_SUCCESS;
 }
