@@ -53,6 +53,25 @@ void *_tudor_biodev_ctx = NULL;  /* CBiometricDevice context for runtime probing
 WINBIO_SENSOR_INTERFACE *tudor_sensor_adapter;
 WINBIO_ENGINE_INTERFACE *tudor_engine_adapter;
 
+static void patch_v132_adapter_capture_buffer_size(void) {
+    uint8_t *img = tudor_adapter_dll->image.base_addr;
+    const int patch_rva = 0x6a54;
+
+    if(!img || tudor_adapter_dll->image.image_size <= patch_rva + 3) return;
+
+    if(img[patch_rva - 1] != 0xb9 || img[patch_rva] != 0x70 || img[patch_rva + 1] != 0x00 ||
+            img[patch_rva + 2] != 0x00 || img[patch_rva + 3] != 0x00) {
+        log_warn("Skipping v132 adapter capture buffer patch; unexpected bytes");
+        return;
+    }
+
+    img[patch_rva] = 0x18;
+    img[patch_rva + 1] = 0xd4;
+    img[patch_rva + 2] = 0x01;
+    img[patch_rva + 3] = 0x00;
+    log_info("Patched v132 adapter capture buffer size");
+}
+
 static DRIVER_OBJECT umdf_driver;
 struct winwdf_driver *tudor_wdf_driver;
 
@@ -156,6 +175,7 @@ bool tudor_init() {
         //UMDF v1 COM path (e.g. v132 DLLs with DllGetClassObject)
         log_info("Using UMDF v1 entry (COM/DllGetClassObject)");
         tudor_using_com_path = true;
+        patch_v132_adapter_capture_buffer_size();
         if(!tudor_com_usb_dev) {
             log_warn("No USB device set for COM path");
         } else {
