@@ -195,6 +195,13 @@ bool tudor_init() {
             uint8_t *img = tudor_driver_dll->image.base_addr;
             if(img && img[0x929b] == 0x74) { img[0x929b] = 0xEB; log_info("Patched 0x929b"); }
             if(img && img[0x161bb] == 0x49) { img[0x161bb] = 0x41; log_info("Patched 0x161bb"); }
+            if(img && img[0xd037] == 0x4c && img[0xd038] == 0x8d && img[0xd039] == 0x49 && img[0xd03a] == 0x08) {
+                img[0xd037] = 0x90;
+                img[0xd038] = 0x90;
+                img[0xd039] = 0x90;
+                img[0xd03a] = 0x90;
+                log_info("Patched v132 capture packer selector");
+            }
             extern int tudor_wbf_done;
             tudor_wbf_done = 1;
         }
