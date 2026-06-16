@@ -91,6 +91,11 @@ bool tudor_init() {
         winlog_register_trace_msg(DEFINE_GUID(824d7f8b, e993, 3db5, 6a1a, 91a0d317b75a), 0x0f, "%s<- %s [0x%x]");
 
         winlog_register_trace_msg(DEFINE_GUID(2c18840b, 2ee0, 377e, f168, 1552bbd307c4), 0x0a, "VFM LOG | %s\033[1A");
+
+        winlog_register_trace_msg(DEFINE_GUID(f4a2a1b6, b0f6, 3bc7, 38ef, 14ee547d9ad1), 0x45, "%s capture data pack");
+        winlog_register_trace_msg(DEFINE_GUID(f4a2a1b6, b0f6, 3bc7, 38ef, 14ee547d9ad1), 0x47, "%s skipped completion: capture completion disabled");
+        winlog_register_trace_msg(DEFINE_GUID(f4a2a1b6, b0f6, 3bc7, 38ef, 14ee547d9ad1), 0x48, "%s skipped completion: missing output buffer");
+        winlog_register_trace_msg(DEFINE_GUID(f4a2a1b6, b0f6, 3bc7, 38ef, 14ee547d9ad1), 0x49, "%s skipped completion: output buffer too small");
     }
 
     //Set registry handler
