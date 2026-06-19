@@ -1,10 +1,12 @@
 #include <pthread.h>
 #include <errno.h>
+#include <limits.h>
 #include "internal.h"
 
 typedef DWORD __winfnc THREAD_START_ROUTINE(void *param);
 
 #define CREATE_SUSPENDED 0x00000004
+#define WIN_THREAD_DEFAULT_STACK_SIZE (1024 * 1024)
 
 struct win_thread {
     struct win_sync_object sync_obj;
@@ -79,6 +81,11 @@ static void *thread_entry(void *arg) {
     return (void*) 0;
 }
 
+static size_t normalize_thread_stack_size(SIZE_T stack_size) {
+    size_t normalized = stack_size ? (size_t) stack_size : WIN_THREAD_DEFAULT_STACK_SIZE;
+    return normalized < PTHREAD_STACK_MIN ? PTHREAD_STACK_MIN : normalized;
+}
+
 __winfnc HANDLE CreateThread(void *security_attrs, SIZE_T stack_size, THREAD_START_ROUTINE *start_proc, void *param, DWORD flags, DWORD *id) {
     //Allocate thread
     struct win_thread *thread = (struct win_thread*) malloc(sizeof(struct win_thread));
@@ -99,7 +106,11 @@ __winfnc HANDLE CreateThread(void *security_attrs, SIZE_T stack_size, THREAD_STA
     //Create the actual thread
     thread->has_detached = FALSE;
     cant_fail_ret(pthread_mutex_lock(&thread->lock));
-    cant_fail_ret(pthread_create(&thread->thread, NULL, thread_entry, thread));
+    pthread_attr_t attr;
+    cant_fail_ret(pthread_attr_init(&attr));
+    cant_fail_ret(pthread_attr_setstacksize(&attr, normalize_thread_stack_size(stack_size)));
+    cant_fail_ret(pthread_create(&thread->thread, &attr, thread_entry, thread));
+    cant_fail_ret(pthread_attr_destroy(&attr));
     cant_fail_ret(pthread_cond_wait(&thread->start_cond, &thread->lock));
     cant_fail_ret(pthread_cond_destroy(&thread->start_cond));
     cant_fail_ret(pthread_mutex_unlock(&thread->lock));
