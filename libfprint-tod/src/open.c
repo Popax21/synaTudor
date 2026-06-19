@@ -398,7 +398,7 @@ void close_device(FpiDeviceTudor *tdev, bool orphan_host, GAsyncReadyCallback ca
     if(orphan_host) {
         //Clear the host prints, then orphan
         tdev->send_msg->size = sizeof(enum ipc_msg_type);
-        tdev->send_msg->type = IPC_MSG_CLEAR_RECORDS;
+        tdev->send_msg->type = IPC_MSG_CLEAR_HOST_RECORDS;
         send_acked_ipc_msg(tdev, tdev->send_msg, orphan_clear_acked_cb, NULL);
     } else shutdown_host(tdev);
 }

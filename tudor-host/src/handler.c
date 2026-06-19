@@ -346,6 +346,19 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
             send_ack(state->ipc_sock);
         } break;
 
+        case IPC_MSG_CLEAR_HOST_RECORDS: {
+            check_in_action(state, type);
+            consume_simple_msg(state->ipc_sock, type);
+
+            int num_recs = tudor_uses_native_storage(state->dev)
+                ? 0
+                : tudor_wipe_records(state->dev, NULL, TUDOR_FINGER_ANY);
+            if(num_recs < 0) abort();
+            log_info("Cleared %d host records", num_recs);
+
+            send_ack(state->ipc_sock);
+        } break;
+
         case IPC_MSG_ENROLL: {
             check_in_action(state, type);
             
