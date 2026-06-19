@@ -11,5 +11,11 @@ Flag | Description
 ----- | ---------------------------
 `UNMOUNTFS=true` | Enable unmounting of the root file system in the sandbox, which prevents the driver from accessing any files. Enabled by default, disable when debugging using e.g. GDB.
 
-## Documentation
-**TODO**
+## Native Storage
+For v132 devices, `tudor-host` lets the native Synaptics storage adapter own the
+template database. The libfprint-tod side sends metadata-only records for
+already-enrolled prints, and the host uses the GUID/finger pair for verify,
+identify, delete, and clear-storage operations.
+
+The native database path is supplied by `TUDOR_NATIVE_STORAGE_PATH`, normally
+set by the host launcher.

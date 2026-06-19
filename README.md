@@ -1,10 +1,8 @@
 # Synaptics Tudor Driver Relinking Project
-This project attempts to dynamically relink the driver of the Synaptics Tudor
-family of fingerprint sensors at run time, allowing them to run and provide
-their functionality on Linux-based x86-64 systems. It split off from the reverse
-engineering branch after it hit multiple dead ends, and because it showed the
-potential of quickly allowing for the creation of *something* which can at least
-allow users to use the sensors installed in their hardware.
+This project dynamically relinks the Windows driver for Synaptics Tudor
+fingerprint sensors at run time so they can be used from Linux on x86-64
+systems. It includes a debug CLI, a sandboxed host process, a DBus host
+launcher, and a libfprint-tod module for fprintd integration.
 
 THIS PROJECT IS PROVIDED AS IS, WITHOUT WARRANTY OR LIABILITY OF ANY KIND, OR
 FOR ANY RISKS OR SIDE EFFECTS WHICH MIGHT OCCUR FROM USAGE OF ANYTHING PROVIDED
@@ -12,7 +10,14 @@ AS PART OF THIS PROJECT, INCLUDING, BUT NOT LIMITED TO, BRICKED SENSORS,
 CORRUPTED FIRMWARE, BYPASSES OF HOST SECURITY, AND VULNERABILITIES IN THE CODE.
 USE AT YOUR OWN RISK.
 
-**NOTE: The project should be fully functional right now, contrary to its earlier state. If there are any issues, please report them.**
+## Status
+The v132 path can enroll, verify, and identify through fprintd when the matching
+Synaptics Windows driver DLLs are available. Matching uses the native Synaptics
+storage adapter from the Windows driver; fprintd records store only metadata
+that points at templates in the driver-managed storage database.
+
+This is still a reverse-engineered driver path. Expect rough edges, hardware
+variation, and logs that contain noisy Windows-driver trace messages.
 
 ## Structure
 This project is split over multiple folders, all providing different parts of
@@ -29,28 +34,76 @@ the functionality:
 - [libfprint-tod](libfprint-tod/README.md): Contains the libfprint module, to be
   loaded by the libfprint TOD fork.
 
-## Building / Installation
-The same build system used by libfprint, meson, is used for this project.
-During the first build, the Windows driver is automatically downloaded and
-extracted. `innoextract` has to be installed for this.
-To build and install all contained parts, execute:
+## Requirements
+- x86-64 Linux
+- `meson`, `ninja`, `pkg-config`, `innoextract`
+- `libusb`, `glib2`, `gio-unix-2.0`, `json-glib`, `udev`
+- `libfprint-tod` and `fprintd`
+
+On Arch Linux, install `libfprint-tod-git` instead of regular `libfprint`.
+
+## Build
+During the first build, the Windows driver is downloaded and extracted
+automatically. `innoextract` must be installed before the first build.
+
 ```sh
-meson build
-cd build
-ninja
-sudo ninja install
+meson setup build -Dbuild_tod=enabled
+ninja -C build
 ```
-(for Arch Linux specifically, you might want to use `arch-meson` instead of `meson`)
 
-For documentation about build options etc., see the individual parts.
+For Arch Linux packaging conventions, `arch-meson build -Dbuild_tod=enabled`
+also works.
 
-For the libfprint module to be picked up and work, you'll need to have a
-`libfprint-tod` fork of libfprint installed. Most Linux distributions have a
-seperate package which you can install instead of the regular libfprint one
-(e.g. Arch Linux: AUR `libfprint-tod-git`).
+## Install
+Install the host, launcher, TOD module, DBus policy, systemd unit, and udev
+rules:
 
-~~**NOTE:** Currently libfprint-tod has a bug which can cause fprintd to lock up.
-It's recommended to use [this
-fork](https://gitlab.freedesktop.org/Popax21/libfprint/-/tree/tod) for now, at least
-until it's merged into the base repository.~~
-The regular upstream libfprint-tod repository should work now
+```sh
+sudo ninja -C build install
+sudo systemctl daemon-reload
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+sudo systemctl restart fprintd
+```
+
+The host launcher is DBus-activated. Its state directory is managed by systemd
+as `/var/lib/tudor` with mode `0700`.
+
+## Use With fprintd
+Enroll a finger:
+
+```sh
+fprintd-enroll
+```
+
+Verify a finger:
+
+```sh
+fprintd-verify
+```
+
+List or delete enrolled prints:
+
+```sh
+fprintd-list "$USER"
+fprintd-delete "$USER"
+```
+
+## Native Storage
+The v132 Windows engine expects the Synaptics storage adapter from the same DLL
+to own the template database. The libfprint-tod module therefore stores
+metadata-only records containing the template GUID and finger. The real template
+database lives in the launcher state directory as `native-storage.dat`, and the
+host process receives that path through `TUDOR_NATIVE_STORAGE_PATH`.
+
+Deleting prints through fprintd removes the matching native storage record.
+
+## Troubleshooting
+- `fprintd-enroll` cannot see the device: reload udev rules, reconnect the
+  sensor, then restart `fprintd`.
+- The host launcher does not start: check
+  `journalctl -u tudor-host-launcher.service`.
+- fprintd returns protocol errors: check `journalctl -u fprintd` and the host
+  launcher logs together.
+- CLI testing is available through [cli](cli/README.md), but fprintd is the
+  safer integration path.
