@@ -98,6 +98,83 @@ static bool refresh_native_storage_cache(struct tudor_device *device, const char
     return true;
 }
 
+static bool get_native_storage_database_strings(char **owned_database_path, char16_t **database_path, char16_t **connect_string) {
+    const char *database_path_str = getenv("TUDOR_NATIVE_STORAGE_PATH");
+    if(!database_path_str || !database_path_str[0]) {
+        const char *state_dir = getenv("STATE_DIRECTORY");
+        if(state_dir && state_dir[0]) {
+            size_t path_len = strlen(state_dir) + strlen("/native-storage.dat") + 1;
+            *owned_database_path = malloc(path_len);
+            if(!*owned_database_path) {
+                perror("Error allocating native storage path");
+                return false;
+            }
+            snprintf(*owned_database_path, path_len, "%s/native-storage.dat", state_dir);
+            database_path_str = *owned_database_path;
+        } else {
+            database_path_str = "/var/lib/tudor/native-storage.dat";
+        }
+    }
+
+    *database_path = winstr_from_str(database_path_str);
+    *connect_string = winstr_from_str("");
+    if(!*database_path || !*connect_string) {
+        perror("Error allocating native storage strings");
+        return false;
+    }
+
+    return true;
+}
+
+static bool recreate_native_storage_database(struct tudor_device *device) {
+    GUID database_id = DEFINE_GUID(625AC644, 29F2, 4D93, B26B, 96E97C4C35B1);
+    WINBIO_REGISTERED_FORMAT standard_format = {0};
+    GUID vendor_format = {0};
+    char *owned_database_path = NULL;
+    char16_t *database_path = NULL;
+    char16_t *connect_string = NULL;
+    bool ok = false;
+
+    if(!get_native_storage_database_strings(&owned_database_path, &database_path, &connect_string)) goto exit;
+
+    if(tudor_engine_adapter->QueryPreferredFormat) {
+        HRESULT hres = tudor_engine_adapter->QueryPreferredFormat(device->pipeline, &standard_format, &vendor_format);
+        if(hres != ERROR_SUCCESS) log_warn("Native storage preferred format query failed before erase: 0x%x", hres);
+    }
+
+    HRESULT hres = device->pipeline->StorageInterface->CloseDatabase(device->pipeline);
+    if(hres != ERROR_SUCCESS) log_warn("Native storage database close before erase failed: 0x%x", hres);
+
+    hres = device->pipeline->StorageInterface->EraseDatabase(device->pipeline, &database_id, database_path, connect_string);
+    if(hres != ERROR_SUCCESS && hres != WINBIO_E_DATABASE_CANT_FIND) {
+        log_error("Native storage database erase failed: 0x%x", hres);
+        goto exit;
+    }
+
+    hres = device->pipeline->StorageInterface->CreateDatabase(
+        device->pipeline,
+        &database_id,
+        WINBIO_TYPE_FINGERPRINT,
+        &vendor_format,
+        database_path,
+        connect_string,
+        0,
+        0);
+    if(hres != ERROR_SUCCESS) {
+        log_error("Native storage database recreate failed: 0x%x", hres);
+        goto exit;
+    }
+
+    refresh_native_storage_cache(device, "database erase");
+    ok = true;
+
+    exit:;
+    free(owned_database_path);
+    free(database_path);
+    free(connect_string);
+    return ok;
+}
+
 static int tudor_wipe_native_records(struct tudor_device *device, RECGUID *guid, enum tudor_finger finger) {
     winmodule_set_cur(&tudor_adapter_dll->module);
 
@@ -108,6 +185,10 @@ static int tudor_wipe_native_records(struct tudor_device *device, RECGUID *guid,
     } else {
         ident.Type = WINBIO_ID_TYPE_WILDCARD;
         ident.Wildcard = 0;
+    }
+
+    if(!guid && finger == TUDOR_FINGER_ANY) {
+        return recreate_native_storage_database(device) ? 0 : -1;
     }
 
     if(!guid || finger == TUDOR_FINGER_ANY) {
