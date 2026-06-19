@@ -43,3 +43,6 @@ fprintd-delete "$USER"
   by libfprint.
 - Deleting a TOD print also asks the host to delete the native storage record.
 - Clearing storage asks the host to delete all native storage records.
+- Closing an orphaned host process only clears transient host-side records. It
+  must not clear the native storage database, because fprintd metadata points at
+  templates stored there.

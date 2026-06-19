@@ -19,3 +19,7 @@ identify, delete, and clear-storage operations.
 
 The native database path is supplied by `TUDOR_NATIVE_STORAGE_PATH`, normally
 set by the host launcher.
+
+`IPC_MSG_CLEAR_RECORDS` is a real storage operation and deletes native records.
+`IPC_MSG_CLEAR_HOST_RECORDS` is only for clearing transient host-side state when
+libfprint-tod orphans a host process.

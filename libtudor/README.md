@@ -3,10 +3,17 @@ This folder contains the common library which relinks and interfaces with the
 native Windows driver. It is used by the [CLI wrapper](../cli/README.md) and the
 [libfprint host](../tudor-host/README.md).
 
-## Driver Download / Extraction
-During your first build, the Windows driver will automatically be downloaded and
-extracted (you'll need a working internet connection). This requires
-`innoextract` to be installed (https://pkgs.org/download/innoextract).
+## Driver DLLs
+
+The current build embeds the v132 Windows driver DLLs from
+`libtudor/driver_dlls/`:
+
+- `synaFpAdapter132.dll`
+- `synaWudfBioUsb132.dll`
+
+`download_driver.sh` is kept as a helper for fetching the Lenovo package used
+while reverse engineering, but the Meson build copies local DLLs rather than
+downloading them automatically.
 
 ## v132 Native Storage
 v132 matching depends on the native Synaptics storage adapter exported by the
