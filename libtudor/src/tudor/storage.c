@@ -4,6 +4,100 @@ bool tudor_uses_native_storage(struct tudor_device *device) {
     return device && device->pipeline && device->pipeline->StorageInterface == tudor_native_storage_adapter;
 }
 
+struct native_record_ref {
+    WINBIO_IDENTITY identity;
+    UCHAR subfactor;
+};
+
+static bool append_native_record_ref(struct native_record_ref **records, size_t *num_records, size_t *record_cap, const WINBIO_STORAGE_RECORD *record) {
+    if(*num_records == *record_cap) {
+        size_t new_cap = *record_cap ? *record_cap * 2 : 8;
+        struct native_record_ref *new_records = realloc(*records, new_cap * sizeof(**records));
+        if(!new_records) return false;
+
+        *records = new_records;
+        *record_cap = new_cap;
+    }
+
+    (*records)[*num_records] = (struct native_record_ref) {
+        .identity = *record->Identity,
+        .subfactor = record->SubFactor
+    };
+    (*num_records)++;
+    return true;
+}
+
+static int collect_native_record_refs(struct tudor_device *device, RECGUID *guid, enum tudor_finger finger, struct native_record_ref **records_out, size_t *num_records_out) {
+    WINBIO_IDENTITY query_ident = {0};
+    if(guid) {
+        query_ident.Type = WINBIO_ID_TYPE_GUID;
+        query_ident.TemplateGuid = *(GUID*) guid;
+    } else {
+        query_ident.Type = WINBIO_ID_TYPE_WILDCARD;
+        query_ident.Wildcard = 0;
+    }
+
+    HRESULT hres = device->pipeline->StorageInterface->QueryBySubject(device->pipeline, &query_ident, (UCHAR) finger);
+    if(hres == WINBIO_E_DATABASE_NO_SUCH_RECORD || hres == WINBIO_E_DATABASE_NO_RESULTS) return 0;
+    if(hres != ERROR_SUCCESS) {
+        log_error("Native storage record query failed: 0x%x", hres);
+        return -1;
+    }
+
+    hres = device->pipeline->StorageInterface->FirstRecord(device->pipeline);
+    if(hres == WINBIO_E_DATABASE_NO_RESULTS) return 0;
+    if(hres != ERROR_SUCCESS) {
+        log_error("Native storage first record failed: 0x%x", hres);
+        return -1;
+    }
+
+    struct native_record_ref *records = NULL;
+    size_t num_records = 0, record_cap = 0;
+    for(;;) {
+        WINBIO_STORAGE_RECORD record = {0};
+        hres = device->pipeline->StorageInterface->GetCurrentRecord(device->pipeline, &record);
+        if(hres != ERROR_SUCCESS) {
+            log_error("Native storage current record failed: 0x%x", hres);
+            free(records);
+            return -1;
+        }
+        if(!record.Identity || record.Identity->Type != WINBIO_ID_TYPE_GUID) {
+            log_error("Native storage returned unsupported identity type");
+            free(records);
+            return -1;
+        }
+        if(!append_native_record_ref(&records, &num_records, &record_cap, &record)) {
+            perror("Couldn't allocate native storage record snapshot");
+            free(records);
+            return -1;
+        }
+
+        hres = device->pipeline->StorageInterface->NextRecord(device->pipeline);
+        if(hres == WINBIO_E_DATABASE_NO_MORE_RECORDS || hres == WINBIO_E_DATABASE_NO_RESULTS) break;
+        if(hres != ERROR_SUCCESS) {
+            log_error("Native storage next record failed: 0x%x", hres);
+            free(records);
+            return -1;
+        }
+    }
+
+    *records_out = records;
+    *num_records_out = num_records;
+    return 0;
+}
+
+static bool refresh_native_storage_cache(struct tudor_device *device, const char *context) {
+    if(!tudor_engine_adapter->RefreshCache) return true;
+
+    HRESULT hres = tudor_engine_adapter->RefreshCache(device->pipeline);
+    if(hres != ERROR_SUCCESS) {
+        log_warn("Engine cache refresh failed after native %s: 0x%x", context, hres);
+        return false;
+    }
+
+    return true;
+}
+
 static int tudor_wipe_native_records(struct tudor_device *device, RECGUID *guid, enum tudor_finger finger) {
     winmodule_set_cur(&tudor_adapter_dll->module);
 
@@ -16,6 +110,30 @@ static int tudor_wipe_native_records(struct tudor_device *device, RECGUID *guid,
         ident.Wildcard = 0;
     }
 
+    if(!guid || finger == TUDOR_FINGER_ANY) {
+        struct native_record_ref *records = NULL;
+        size_t num_records = 0;
+        int collect_status = collect_native_record_refs(device, guid, finger, &records, &num_records);
+        if(collect_status < 0) return -1;
+        if(num_records == 0) return 0;
+
+        int num_deleted = 0;
+        for(size_t i = 0; i < num_records; i++) {
+            HRESULT hres = device->pipeline->StorageInterface->DeleteRecord(device->pipeline, &records[i].identity, records[i].subfactor);
+            if(hres == WINBIO_E_DATABASE_NO_SUCH_RECORD || hres == WINBIO_E_DATABASE_NO_RESULTS) continue;
+            if(hres != ERROR_SUCCESS) {
+                log_error("Native storage record delete failed: 0x%x", hres);
+                free(records);
+                return -1;
+            }
+            num_deleted++;
+        }
+
+        free(records);
+        if(num_deleted) refresh_native_storage_cache(device, "delete");
+        return num_deleted;
+    }
+
     HRESULT hres = device->pipeline->StorageInterface->DeleteRecord(device->pipeline, &ident, (UCHAR) finger);
     if(hres == WINBIO_E_DATABASE_NO_SUCH_RECORD || hres == WINBIO_E_DATABASE_NO_RESULTS) return 0;
     if(hres != ERROR_SUCCESS) {
@@ -23,10 +141,7 @@ static int tudor_wipe_native_records(struct tudor_device *device, RECGUID *guid,
         return -1;
     }
 
-    if(tudor_engine_adapter->RefreshCache) {
-        hres = tudor_engine_adapter->RefreshCache(device->pipeline);
-        if(hres != ERROR_SUCCESS) log_warn("Engine cache refresh failed after native delete: 0x%x", hres);
-    }
+    refresh_native_storage_cache(device, "delete");
 
     return 1;
 }
