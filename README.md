@@ -127,8 +127,8 @@ GNOME/GDM, troubleshooting, and recovery commands.
 The current code proves the hardware path and gives Linux users a working
 bridge. The next major step is turning that knowledge into a native driver that
 does not depend on the Windows DLLs. See
-[docs/rust-driver-roadmap.md](docs/rust-driver-roadmap.md) for the proposed
-Rust architecture and migration plan.
+[docs/rust-driver-roadmap.md](docs/rust-driver-roadmap.md) for the native Rust
+driver spec, architecture, and migration plan.
 
 Near-term work:
 
