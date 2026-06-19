@@ -1,6 +1,8 @@
 #include <stdlib.h>
 #include "internal.h"
 
+#define WINIO_CALLBACK_STACK_SIZE (256 * 1024)
+
 struct winfile_op {
     struct winfile *file;
     void *op_ctx;
@@ -62,6 +64,23 @@ static void *ovlp_cb_thread_func(struct ovlp_cb *cb) {
     return NULL;
 }
 
+static void start_overlapped_cb_thread(struct ovlp_cb *cb) {
+    pthread_attr_t attr;
+    cant_fail_ret(pthread_attr_init(&attr));
+    cant_fail_ret(pthread_attr_setstacksize(&attr, WINIO_CALLBACK_STACK_SIZE));
+
+    pthread_t thread;
+    int err = pthread_create(&thread, &attr, (void *(*)(void*)) ovlp_cb_thread_func, cb);
+    cant_fail_ret(pthread_attr_destroy(&attr));
+    if(err != 0) {
+        free(cb);
+        log_error("Couldn't start OVERLAPPED callback thread: %d [%s]", err, strerror(err));
+        abort();
+    }
+
+    cant_fail_ret(pthread_detach(thread));
+}
+
 static inline void call_overlapped_cb(OVERLAPPED *ovlp, NTSTATUS status, winio_overlapped_cb_fnc *cb, void *ctx, bool new_thread) {
     if(!new_thread) {
         cb(ovlp, status, ctx);
@@ -72,9 +91,7 @@ static inline void call_overlapped_cb(OVERLAPPED *ovlp, NTSTATUS status, winio_o
     if(!c) { perror("Couldn't allocate OVERLAPPED callback"); abort(); }
     *c = (struct ovlp_cb) { .ovlp = ovlp, .status = status, .cb = cb, .ctx = ctx };
 
-    pthread_t thread;
-    cant_fail_ret(pthread_create(&thread, NULL, (void *(*)(void*)) ovlp_cb_thread_func, c));
-    cant_fail_ret(pthread_detach(thread));
+    start_overlapped_cb_thread(c);
 }
 
 //<< END CODE >>
