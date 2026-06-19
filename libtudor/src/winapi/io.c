@@ -1,7 +1,7 @@
 #include <stdlib.h>
 #include "internal.h"
 
-#define WINIO_CALLBACK_STACK_SIZE (256 * 1024)
+#define WINIO_CALLBACK_STACK_SIZE (1024 * 1024)
 
 struct winfile_op {
     struct winfile *file;
