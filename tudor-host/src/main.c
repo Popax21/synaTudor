@@ -164,16 +164,6 @@ int main() {
     cant_fail_ret(pthread_create(&usb_thread, NULL, usb_thread_func, usb_ctx));
     log_debug("Started USB polling thread");
 
-    //Initialize driver
-    tudor_get_pdata_fnc = get_pdata_cb;
-    tudor_set_pdata_fnc = set_pdata_cb;
-    pdata_ipc_sock = sock;
-    if(!tudor_init()) {
-        log_error("Couldn't initialize tudor driver!");
-        return EXIT_FAILURE;
-    }
-    log_info("Initialized tudor driver");
-
     //Open the USB device
     libusb_device_handle *usb_dev;
     if((usb_err = libusb_wrap_sys_device(usb_ctx, usb_dev_fd, &usb_dev)) < 0) {
@@ -182,6 +172,17 @@ int main() {
         return EXIT_FAILURE;
     }
     log_info("Opened USB device");
+
+    //Initialize driver
+    tudor_get_pdata_fnc = get_pdata_cb;
+    tudor_set_pdata_fnc = set_pdata_cb;
+    tudor_set_com_usb_device(usb_dev);
+    pdata_ipc_sock = sock;
+    if(!tudor_init()) {
+        log_error("Couldn't initialize tudor driver!");
+        return EXIT_FAILURE;
+    }
+    log_info("Initialized tudor driver");
 
     //Open device
     struct tudor_device dev;
