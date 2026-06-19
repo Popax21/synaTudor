@@ -52,6 +52,7 @@ struct windrv_dll *tudor_adapter_dll, *tudor_driver_dll;
 void *_tudor_biodev_ctx = NULL;  /* CBiometricDevice context for runtime probing */
 WINBIO_SENSOR_INTERFACE *tudor_sensor_adapter;
 WINBIO_ENGINE_INTERFACE *tudor_engine_adapter;
+WINBIO_STORAGE_INTERFACE *tudor_native_storage_adapter;
 
 static void patch_v132_adapter_capture_buffer_size(void) {
     uint8_t *img = tudor_adapter_dll->image.base_addr;
@@ -222,6 +223,19 @@ bool tudor_init() {
     if((hres = ((api_WbioQueryEngineInterface) find_dll_export(&tudor_adapter_dll->image, "WbioQueryEngineInterface"))(&tudor_engine_adapter)) != 0) {
         log_error("Error querying engine interface: 0x%x!", hres);
         return false;
+    }
+    api_WbioQueryStorageInterface query_storage = (api_WbioQueryStorageInterface) try_find_dll_export(&tudor_adapter_dll->image, "WbioQueryStorageInterface");
+    tudor_native_storage_adapter = NULL;
+    if(query_storage) {
+        if((hres = query_storage(&tudor_native_storage_adapter)) != 0) {
+            log_warn("Error querying native storage interface: 0x%x; falling back to host storage", hres);
+            tudor_native_storage_adapter = NULL;
+        } else {
+            log_info("Queried native storage interface version=%u.%u size=0x%lx",
+                tudor_native_storage_adapter->Version.MajorVersion,
+                tudor_native_storage_adapter->Version.MinorVersion,
+                tudor_native_storage_adapter->Size);
+        }
     }
 
     return true;

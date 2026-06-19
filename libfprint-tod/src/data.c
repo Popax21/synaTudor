@@ -140,7 +140,7 @@ void load_record(FpiDeviceTudor *tdev, TudorRecord *rec, GAsyncReadyCallback cb,
         .guid = rec->guid,
         .finger = rec->finger
     };
-    memcpy(tdev->send_msg->add_record.record_data, rec_data, rec_size);
+    if(rec_size) memcpy(tdev->send_msg->add_record.record_data, rec_data, rec_size);
 
     send_acked_ipc_msg(tdev, tdev->send_msg, load_rec_acked_cb, task);
 }
@@ -221,6 +221,8 @@ void set_print_record(FpiDeviceTudor *tdev, FpPrint *print, TudorRecord *record)
     //Set data
     size_t rec_size;
     const void *rec_data = g_bytes_get_data(record->data, &rec_size);
+    uint8_t empty_rec_data = 0;
+    if(!rec_size) rec_data = &empty_rec_data;
     GVariant *print_data = g_variant_new("(@ayy@ay)", g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, &record->guid, sizeof(RECGUID), 1), record->finger, g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, rec_data, rec_size, 1));
     g_object_set(print, "fpi-data", print_data, NULL);
 }
@@ -239,7 +241,7 @@ static void delete_acked_cb(GObject *src_obj, GAsyncResult *res, gpointer user_d
     GError *error = NULL;
     IPCMessageBuf *msg = g_task_propagate_pointer(task, &error);
     if(!msg) {
-        fpi_device_clear_storage_complete(FP_DEVICE(tdev), error);
+        fpi_device_delete_complete(FP_DEVICE(tdev), error);
         g_slice_free(struct delete_params, params);
         return;
     }

@@ -70,31 +70,25 @@ static void identify_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_
                 break;
             }
 
-            //Search database mirror for record which matched
             TudorRecord *match_rec = NULL;
-            for(int i = 0; i < tdev->db_records->len; i++) {
-                TudorRecord *rec = (TudorRecord*) tdev->db_records->pdata[i];
+            FpPrint *list_print = NULL;
+            for(int i = 0; i < params->prints->len; i++) {
+                struct identify_print *print = &g_array_index(params->prints, struct identify_print, i);
+                TudorRecord *rec = print->record;
+                if(!rec) continue;
                 if(memcmp(&rec->guid, &msg->resp_identify.guid, sizeof(RECGUID)) != 0 || rec->finger != msg->resp_identify.finger) continue;
                 match_rec = rec;
+                list_print = print->print;
                 break;
             }
             if(!match_rec) {
-                g_warning("Tudor host reported identify match but couldn't find matching record!");
+                g_warning("Tudor host reported identify match outside requested candidates");
                 fpi_device_identify_report(FP_DEVICE(tdev), NULL, NULL, NULL);
                 fpi_device_identify_complete(FP_DEVICE(tdev), NULL);
                 free_identify_params(params);
                 break;
             }
             g_info("Tudor host reported identify match: GUID %08x... finger %d", match_rec->guid.PartA, match_rec->finger);
-
-            //Check if the print shows up in the list of prints to match against
-            FpPrint *list_print = NULL;
-            for(int i = 0; i < params->prints->len; i++) {
-                struct identify_print *print = &g_array_index(params->prints, struct identify_print, i);
-                if(print->record != match_rec) continue;
-                list_print = print->print;
-                break;
-            }
 
             //Report the result
             fpi_device_identify_report(FP_DEVICE(tdev), list_print, match_rec->print, NULL);

@@ -161,10 +161,17 @@ void destroy_dll(struct dll_image *dll) {
     dll->base_addr = NULL;
 }
 
-void *find_dll_export(struct dll_image *dll, const char *name) {
+void *try_find_dll_export(struct dll_image *dll, const char *name) {
     for(int i = 0; i < dll->num_exports; i++) {
         if(strcmp(dll->exports[i].name, name) == 0) return dll->exports[i].addr;
     }
+
+    return NULL;
+}
+
+void *find_dll_export(struct dll_image *dll, const char *name) {
+    void *export = try_find_dll_export(dll, name);
+    if(export) return export;
 
     log_error("Couldn't find DLL export '%s'!", name);
     abort();

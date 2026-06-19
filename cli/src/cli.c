@@ -211,7 +211,8 @@ void cli_main_loop(struct tudor_device *device) {
 
                 //Wipe records
                 int num_wiped = tudor_wipe_records(device, all_guids ? NULL: &guid, finger);
-                printf("Succesfully wiped %d enrolled finger(s)\n", num_wiped);
+                if(num_wiped < 0) puts("Error wiping enrolled finger(s)");
+                else printf("Succesfully wiped %d enrolled finger(s)\n", num_wiped);
             } goto cmdend;
             case 's': abort_cmd_loop = true; goto cmdend;
             default: printf("Unknown command '%c'!\n", cmd);

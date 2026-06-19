@@ -22,6 +22,7 @@ struct dll_image {
 bool load_dll(struct dll_image *dll, const char *name, uint8_t *data, uint32_t size);
 void destroy_dll(struct dll_image *dll);
 
+void *try_find_dll_export(struct dll_image *dll, const char *name);
 void *find_dll_export(struct dll_image *dll, const char *name);
 
 #endif

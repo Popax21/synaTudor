@@ -94,29 +94,32 @@ static void enroll_cb(tudor_async_res_t *res, bool success, struct handler_state
         }
         if(is_dupl) log_warn("Overwritting duplicate enrollment...");
 
-        //Find the resulting record
-        cant_fail_ret(pthread_mutex_lock(&state->dev->records_lock));
-
+        size_t rec_size = 0;
         struct tudor_record *enroll_rec = NULL;
-        for(struct tudor_record *rec = state->dev->records_head; rec; rec = rec->next) {
-            if(memcmp(&rec->guid, &state->action.enroll.guid, sizeof(RECGUID)) == 0 && rec->finger == state->action.enroll.finger) {
-                enroll_rec = rec;
-                break;
+        if(!tudor_uses_native_storage(state->dev)) {
+            //Find the resulting record
+            cant_fail_ret(pthread_mutex_lock(&state->dev->records_lock));
+
+            for(struct tudor_record *rec = state->dev->records_head; rec; rec = rec->next) {
+                if(memcmp(&rec->guid, &state->action.enroll.guid, sizeof(RECGUID)) == 0 && rec->finger == state->action.enroll.finger) {
+                    enroll_rec = rec;
+                    break;
+                }
             }
-        }
-        if(!enroll_rec) {
-            log_error("Couldn't find enrollment record!");
-            abort();
+            if(!enroll_rec) {
+                log_error("Couldn't find enrollment record!");
+                abort();
+            }
+
+            rec_size = enroll_rec->data_size;
+            if(rec_size > IPC_MAX_RECORD_SIZE) {
+                log_error("Enrollment record size exceeding maximum size: %lu > %d!", rec_size, IPC_MAX_RECORD_SIZE);
+                abort();
+            }
         }
 
         //Allocate response message
-        size_t rec_size = enroll_rec->data_size, resp_size = sizeof(struct ipc_msg_resp_enroll) + rec_size;
-
-        if(rec_size > IPC_MAX_RECORD_SIZE) {
-            log_error("Enrollment record size exceeding maximum size: %lu > %d!", rec_size, IPC_MAX_RECORD_SIZE);
-            abort();
-        }
-
+        size_t resp_size = sizeof(struct ipc_msg_resp_enroll) + rec_size;
         struct ipc_msg_resp_enroll *resp = (struct ipc_msg_resp_enroll*) malloc(resp_size);
         if(!resp) {
             perror("Couldn't allocate enrollment response buffer");
@@ -127,9 +130,9 @@ static void enroll_cb(tudor_async_res_t *res, bool success, struct handler_state
             .retry = false,
             .done = true
         };
-        memcpy(resp->record_data, enroll_rec->data, enroll_rec->data_size);
+        if(rec_size) memcpy(resp->record_data, enroll_rec->data, rec_size);
 
-        cant_fail_ret(pthread_mutex_unlock(&state->dev->records_lock));
+        if(!tudor_uses_native_storage(state->dev)) cant_fail_ret(pthread_mutex_unlock(&state->dev->records_lock));
 
         //Send response
         ipc_send_msg(state->ipc_sock, resp, resp_size);
@@ -295,7 +298,9 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
             size_t rec_size = ipc_recv_msg(state->ipc_sock, msg, type, sizeof(struct ipc_msg_add_record), sizeof(struct ipc_msg_add_record) + IPC_MAX_RECORD_SIZE, NULL) - sizeof(struct ipc_msg_add_record);
 
             //Add the record
-            if(!tudor_add_record(state->dev, msg->guid, msg->finger, msg->record_data, rec_size)) {
+            if(tudor_uses_native_storage(state->dev)) {
+                log_info("Accepted native storage metadata GUID %08x... finger %d", msg->guid.PartA, msg->finger);
+            } else if(!tudor_add_record(state->dev, msg->guid, msg->finger, msg->record_data, rec_size)) {
                 //Delete the old one first
                 log_warn("Replacing old record GUID %08x... finger %d", msg->guid.PartA, msg->finger);
                 tudor_wipe_records(state->dev, &msg->guid, msg->finger);
@@ -321,6 +326,7 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
 
             //Delete the record
             int num_recs = tudor_wipe_records(state->dev, &msg.guid, msg.finger);
+            if(num_recs < 0) abort();
             log_info("Deleted %d records with GUID %08x... finger %d", num_recs, msg.guid.PartA, msg.finger);
 
             //Send ACK
@@ -333,6 +339,7 @@ static inline bool handle_msg(struct handler_state *state, enum ipc_msg_type typ
 
             //Wipe records
             int num_recs = tudor_wipe_records(state->dev, NULL, TUDOR_FINGER_ANY);
+            if(num_recs < 0) abort();
             log_info("Cleared %d records", num_recs);
 
             //Send ACK

@@ -1,6 +1,39 @@
 #include "internal.h"
 
+bool tudor_uses_native_storage(struct tudor_device *device) {
+    return device && device->pipeline && device->pipeline->StorageInterface == tudor_native_storage_adapter;
+}
+
+static int tudor_wipe_native_records(struct tudor_device *device, RECGUID *guid, enum tudor_finger finger) {
+    winmodule_set_cur(&tudor_adapter_dll->module);
+
+    WINBIO_IDENTITY ident = {0};
+    if(guid) {
+        ident.Type = WINBIO_ID_TYPE_GUID;
+        ident.TemplateGuid = *(GUID*) guid;
+    } else {
+        ident.Type = WINBIO_ID_TYPE_WILDCARD;
+        ident.Wildcard = 0;
+    }
+
+    HRESULT hres = device->pipeline->StorageInterface->DeleteRecord(device->pipeline, &ident, (UCHAR) finger);
+    if(hres == WINBIO_E_DATABASE_NO_SUCH_RECORD || hres == WINBIO_E_DATABASE_NO_RESULTS) return 0;
+    if(hres != ERROR_SUCCESS) {
+        log_error("Native storage record delete failed: 0x%x", hres);
+        return -1;
+    }
+
+    if(tudor_engine_adapter->RefreshCache) {
+        hres = tudor_engine_adapter->RefreshCache(device->pipeline);
+        if(hres != ERROR_SUCCESS) log_warn("Engine cache refresh failed after native delete: 0x%x", hres);
+    }
+
+    return 1;
+}
+
 int tudor_wipe_records(struct tudor_device *device, RECGUID *guid, enum tudor_finger finger) {
+    if(tudor_uses_native_storage(device)) return tudor_wipe_native_records(device, guid, finger);
+
     cant_fail_ret(pthread_mutex_lock(&device->records_lock));
 
     //Find the record
@@ -15,6 +48,7 @@ int tudor_wipe_records(struct tudor_device *device, RECGUID *guid, enum tudor_fi
             else device->records_head = rec->next;
             if(rec->next) rec->next->prev = rec->prev;
             free(rec->data);
+            free(rec->identity);
             free(rec);
 
             device->result_records_head = device->result_records_cursor = NULL;
@@ -27,6 +61,8 @@ int tudor_wipe_records(struct tudor_device *device, RECGUID *guid, enum tudor_fi
 }
 
 bool tudor_add_record(struct tudor_device *device, RECGUID guid, enum tudor_finger finger, const void *data, size_t data_size) {
+    if(tudor_uses_native_storage(device)) return true;
+
     cant_fail_ret(pthread_mutex_lock(&device->records_lock));
 
     //Check for duplicate record
@@ -48,10 +84,10 @@ bool tudor_add_record(struct tudor_device *device, RECGUID guid, enum tudor_fing
 
     rec->guid  = guid;
     rec->finger = finger;
-    rec->data = malloc(data_size);
+    rec->data = data_size ? malloc(data_size) : NULL;
     rec->data_size = data_size;
-    if(!rec->data)  { perror("Couldn't allocate record data"); abort(); }
-    memcpy(rec->data, data, data_size);
+    if(data_size && !rec->data)  { perror("Couldn't allocate record data"); abort(); }
+    if(data_size) memcpy(rec->data, data, data_size);
 
     //Add to record list
     rec->prev = NULL;

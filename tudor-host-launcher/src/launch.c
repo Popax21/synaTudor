@@ -156,7 +156,10 @@ void launch_host_call(GDBusMethodInvocation *invoc, GVariant *params) {
 
     //Start the tudor_host process
     char *argv[] = { "tudor_host", NULL };
-    char *envp[] = { NULL };
+    const gchar *state_dir = g_getenv("STATE_DIRECTORY");
+    gchar *native_storage_path = state_dir ? g_build_filename(state_dir, "native-storage.dat", NULL) : NULL;
+    gchar *native_storage_env = native_storage_path ? g_strconcat("TUDOR_NATIVE_STORAGE_PATH=", native_storage_path, NULL) : NULL;
+    char *envp[] = { native_storage_env, NULL };
     GPid pid;
 
     int fd_out, fd_err;
@@ -171,6 +174,8 @@ void launch_host_call(GDBusMethodInvocation *invoc, GVariant *params) {
         g_assert_no_errno(close(pipe_sock));
         g_assert_no_errno(close(host_sock));
         g_free(cwd);
+        g_free(native_storage_env);
+        g_free(native_storage_path);
 
         g_dbus_method_invocation_return_gerror(invoc, error);
         g_clear_error(&error);
@@ -181,6 +186,8 @@ void launch_host_call(GDBusMethodInvocation *invoc, GVariant *params) {
     g_assert_no_errno(close(fd_err));
     g_assert_no_errno(close(host_sock));
     g_free(cwd);
+    g_free(native_storage_env);
+    g_free(native_storage_path);
 
     //Add to hosts array
     guint host_id = next_host_id++;
