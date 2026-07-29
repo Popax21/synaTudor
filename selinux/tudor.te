@@ -1,0 +1,27 @@
+module tudor 1.1;
+
+# synaTudor on Fedora: fprintd (fprintd_t) talks to tudor_host / tudor_host_launcher.
+# The launcher is a systemd service without its own SELinux domain, so it runs as
+# unconfined_service_t. The IPC channel is a SOCK_DGRAM socketpair created by the
+# launcher and passed to fprintd over D-Bus (SCM_RIGHTS) - the fd travels through
+# dbus-broker, which needs access too, otherwise it disconnects the launcher.
+
+require {
+    type fprintd_t;
+    type unconfined_service_t;
+    type system_dbusd_t;
+    class unix_dgram_socket { read write getopt getattr sendto };
+    class fd use;
+    class capability net_admin;
+}
+
+# dbus-broker relays the reply message carrying the socketpair fd
+allow system_dbusd_t unconfined_service_t:unix_dgram_socket { read write };
+
+# fprintd exchanges IPC messages with the tudor host over the passed socketpair
+allow fprintd_t unconfined_service_t:unix_dgram_socket { read write getopt getattr sendto };
+allow fprintd_t unconfined_service_t:fd use;
+
+# glib attempts a privileged setsockopt on the IPC socket; denial is harmless
+# but noisy, and granting it keeps the socket setup on the fast path
+allow fprintd_t self:capability net_admin;
