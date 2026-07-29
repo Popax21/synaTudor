@@ -44,6 +44,41 @@ sudo ninja install
 
 For documentation about build options etc., see the individual parts.
 
+### Fedora / SELinux notes
+On Fedora (and other SELinux-enforcing distributions) two extra steps are
+required after `sudo ninja install`, otherwise the launcher immediately loses
+its DBus name (`Lost DBus name 'net.reactivated.TudorHostLauncher'!`) and
+fprintd reports `Remote peer disconnected` / `No devices available`:
+
+1. **Fix the SELinux labels of the installed files.** meson's install step
+   preserves extended attributes, so files installed from your home directory
+   keep the `user_home_t` context — which prevents dbus-broker from even
+   reading the DBus policy file:
+   ```sh
+   sudo restorecon -rvF /usr/libexec/tudor /usr/share/dbus-1/system.d \
+     /usr/share/dbus-1/system-services /usr/lib/systemd/system/tudor-host-launcher.service \
+     /usr/lib64/libfprint-2 /usr/lib/udev/rules.d
+   sudo systemctl daemon-reload
+   sudo systemctl reload dbus-broker   # pick up the new DBus policy without a reboot
+   ```
+
+2. **Install the SELinux policy module** from the `selinux/` directory. The
+   launcher runs as `unconfined_service_t` and passes the IPC socketpair fd to
+   fprintd through dbus-broker; without these rules SELinux silently (the
+   denials are hidden by dontaudit rules) rejects the fd and dbus-broker
+   disconnects the launcher:
+   ```sh
+   cd selinux
+   checkmodule -M -m -o tudor.mod tudor.te
+   semodule_package -o tudor.pp -m tudor.mod
+   sudo semodule -i tudor.pp
+   ```
+
+To debug SELinux issues, temporarily disable dontaudit rules with
+`sudo semodule -DB`, reproduce, inspect `sudo ausearch -m avc,user_avc -ts recent`,
+then restore with `sudo semodule -B`. If everything works with
+`sudo setenforce 0` but not in enforcing mode, it is an SELinux problem.
+
 For the libfprint module to be picked up and work, you'll need to have a
 `libfprint-tod` fork of libfprint installed. Most Linux distributions have a
 seperate package which you can install instead of the regular libfprint one
