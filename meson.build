@@ -3,7 +3,7 @@ project('synaTudor', ['c'],
     meson_version: '>= 0.57.0'
 )
 
-INSTALL_DIR = '/sbin/tudor'
+INSTALL_DIR = '/usr/libexec/tudor'
 
 subdir('libtudor')
 subdir('cli')
