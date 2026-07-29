@@ -21,7 +21,7 @@ tudor_host_inc = include_directories('inc')
 
 tudor_host = executable('tudor_host', tudor_host_src,
     dependencies: [thread_dep, libcrypto_dep, libusb_dep, libcap_dep, libseccomp_dep, libtudor_dep],
-    c_args: ['-D_GNU_SOURCE'] + tudor_host_flags,
+    c_args: ['-D_GNU_SOURCE', '-DTUDOR_INSTALL_DIR="@0@"'.format(INSTALL_DIR)] + tudor_host_flags,
     link_args: ['-Wl,-z,noexecstack', '-Wl,--copy-dt-needed-entries'],
     include_directories: ['src', tudor_host_inc],
     install_rpath: '$ORIGIN',
