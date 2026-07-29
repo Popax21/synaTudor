@@ -9,8 +9,13 @@ mkdir -p "$TMP_DIR"
 
 #Download the driver executable and check hash
 INSTALLER="$TMP_DIR/installer.exe"
-wget https://download.lenovo.com/pccbbs/mobiles/r19fp02w.exe -O "$INSTALLER"
-shasum "$INSTALLER" | cut -d" " -f1 | cmp - "$HASH_FILE"
+DRIVER_URL="https://download.lenovo.com/pccbbs/mobiles/r19fp02w.exe"
+if command -v wget >/dev/null 2>&1; then
+    wget "$DRIVER_URL" -O "$INSTALLER"
+else
+    curl -fL "$DRIVER_URL" -o "$INSTALLER"
+fi
+sha1sum "$INSTALLER" | cut -d" " -f1 | cmp - "$HASH_FILE"
 
 #Extract the driver
 WINDRV="$TMP_DIR/windrv"
