@@ -130,7 +130,7 @@ WINAPI(DbgPrintEx)
 #define WMI_DISABLE_EVENTS 5
 
 typedef struct {
-    GUID Guid;
+    const GUID *Guid;
     HANDLE RegHandle;
 } TRACE_GUID_REGISTRATION;
 
@@ -170,7 +170,7 @@ __winfnc DWORD RegisterTraceGuidsA(Wmidprequest *request_fnc, void *request_ctx,
 
     for(int i = 0; i < num_guids; i++) {
         prov->guids[i].prov = prov;
-        prov->guids[i].guid = trace_guids[i].Guid;
+        prov->guids[i].guid = *trace_guids[i].Guid;
         prov->guids[i].handle = winhandle_create(&prov->guids[i], NULL);
         trace_guids[i].RegHandle = prov->guids[i].handle;
     }
