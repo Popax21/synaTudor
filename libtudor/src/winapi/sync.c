@@ -3,7 +3,19 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include <errno.h>
+#include <time.h>
 #include "internal.h"
+
+//pthread timed waits take an absolute CLOCK_REALTIME deadline
+static void win_wait_deadline(struct timespec *time, DWORD timeout_ms) {
+    cant_fail_ret(clock_gettime(CLOCK_REALTIME, time));
+    time->tv_sec += timeout_ms / 1000;
+    time->tv_nsec += (timeout_ms % 1000) * 1000000L;
+    if(time->tv_nsec >= 1000000000L) {
+        time->tv_sec++;
+        time->tv_nsec -= 1000000000L;
+    }
+}
 
 DWORD win_wait_sync_obj(HANDLE handle, DWORD timeout) {
     struct win_sync_object *obj = (struct win_sync_object*) handle->data;
@@ -93,6 +105,7 @@ static struct sync_event {
     pthread_mutex_t lock;
     pthread_cond_t cond;
     bool state;
+    int waiters;
 } *events_head;
 
 static void evt_destr(struct sync_event *evt) {
@@ -105,6 +118,20 @@ static void evt_destr(struct sync_event *evt) {
 
     cant_fail_ret(pthread_rwlock_unlock(&events_lock));
 
+    //Drivers may close an event while one of their threads still waits on
+    //it (e.g. a worker woken by a shutdown event). Windows tolerates that;
+    //here, leave the event allocated rather than pull it from under the waiter.
+    if(pthread_mutex_trylock(&evt->lock) != 0) {
+        log_debug("Leaking event '%s' closed while in use", evt->name ? evt->name : "");
+        return;
+    }
+    bool in_use = evt->waiters > 0;
+    cant_fail_ret(pthread_mutex_unlock(&evt->lock));
+    if(in_use) {
+        log_debug("Leaking event '%s' closed with waiters", evt->name ? evt->name : "");
+        return;
+    }
+
     //Free memory
     cant_fail_ret(pthread_cond_destroy(&evt->cond));
     cant_fail_ret(pthread_mutex_destroy(&evt->lock));
@@ -115,24 +142,25 @@ static void evt_destr(struct sync_event *evt) {
 static DWORD evt_wait(struct sync_event *evt, DWORD timeout) {
     DWORD res = 0;
     cant_fail_ret(pthread_mutex_lock(&evt->lock));
+    evt->waiters++;
 
     //Wait for the event
     while(!evt->state) {
         if(timeout != INFINITE) {
             struct timespec time;
-            time.tv_nsec = timeout * 10000000L;
-            time.tv_sec = timeout / 1000L;
+            win_wait_deadline(&time, timeout);
             int err = pthread_cond_timedwait(&evt->cond, &evt->lock, &time);
             if(err == ETIMEDOUT) {
                 res = WAIT_TIMEOUT;
                 break;
             }
-            cant_fail(err);
+            cant_fail_ret(err);
         } else cant_fail_ret(pthread_cond_wait(&evt->cond, &evt->lock));
     }
 
     //Auto-reset event
     if(res == 0 && !evt->manual_reset) evt->state = false;
+    evt->waiters--;
 
     cant_fail_ret(pthread_mutex_unlock(&evt->lock));
     return res;
@@ -148,6 +176,7 @@ HANDLE win_create_event(const char *name, bool initial_state, bool manual_reset)
     evt->name = name ? strdup(name) : NULL;
     evt->state = initial_state;
     evt->manual_reset = manual_reset;
+    evt->waiters = 0;
     cant_fail_ret(pthread_mutex_init(&evt->lock, NULL));
     cant_fail_ret(pthread_cond_init(&evt->cond, NULL));
 

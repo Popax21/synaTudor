@@ -185,8 +185,8 @@ int main() {
 
     //Open device
     struct tudor_device dev;
-    struct tudor_device_state state;
-    if(!tudor_open(&dev, usb_dev, &state)) {
+    //The host keeps no device state between runs - NULL starts from a zeroed one
+    if(!tudor_open(&dev, usb_dev, NULL)) {
         log_error("Couldn't open tudor device!");
         return EXIT_FAILURE;
     }
