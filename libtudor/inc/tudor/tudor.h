@@ -85,6 +85,9 @@ struct tudor_device {
     WINBIO_PIPELINE *pipeline;
     HANDLE winbio_file;
 
+    //Captures in a row that failed to start
+    int capture_start_fails;
+
     //Enroll data
     bool enrolling;
     RECGUID enroll_guid;

@@ -70,6 +70,10 @@ struct windrv {
     //The driver only looks up its pairing data - and with it the sensor's
     //name - while pairing, so identify the sensor by its USB serial number
     bool usb_serial_id;
+
+    //After a cancelled enrollment the sensor needs a few seconds before it
+    //accepts another capture; retry captures that fail to start meanwhile
+    bool retry_capture_start;
 };
 
 extern struct windrv *tudor_windrv;

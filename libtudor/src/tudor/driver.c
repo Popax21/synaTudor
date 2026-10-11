@@ -28,7 +28,8 @@ static struct windrv windrvs[] = {
         .dlls = { WINDRV_DLL(synaFpAdapter103, true), WINDRV_DLL(synaWudfBioUsb103, false) },
         .machine_guid = true,
         .native_storage = true, .database_id = DEFINE_GUID(5B783138, D12A, 4BA5, AD3D, 465EACA1D030),
-        .usb_serial_id = true
+        .usb_serial_id = true,
+        .retry_capture_start = true
     }
 };
 #define NUM_WINDRVS (sizeof(windrvs) / sizeof(windrvs[0]))

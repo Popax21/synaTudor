@@ -60,6 +60,7 @@ bool tudor_open(struct tudor_device *device, libusb_device_handle *usb_dev, stru
     NTSTATUS status;
 
     device->state = state ? *state : (struct tudor_device_state) {0};
+    device->capture_start_fails = 0;
     device->enrolling = false;
     cant_fail_ret(pthread_mutex_init(&device->records_lock, NULL));
     device->records_head = NULL;
@@ -229,11 +230,29 @@ bool tudor_enroll_start(struct tudor_device *device, RECGUID guid, enum tudor_fi
     return true;
 }
 
+#define CAPTURE_ABORTED 0x800703e3 //HRESULT_FROM_WIN32(ERROR_OPERATION_ABORTED)
+#define MAX_CAPTURE_START_RETRIES 15
+
+//Whether to retry a capture which failed to start - pauses before returning true
+static bool retry_capture_start(struct tudor_device *device, NTSTATUS status) {
+    if(status == STATUS_SUCCESS) {
+        device->capture_start_fails = 0;
+        return false;
+    }
+    if(!tudor_windrv->retry_capture_start || status == CAPTURE_ABORTED) return false;
+    if(++device->capture_start_fails > MAX_CAPTURE_START_RETRIES) return false;
+
+    log_warn("Retrying capture in 1s [attempt %d/%d]", device->capture_start_fails, MAX_CAPTURE_START_RETRIES);
+    sleep(1);
+    return true;
+}
+
 static void enroll_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res) {
     winmodule_set_cur(&tudor_adapter_dll->module);
     HRESULT hres;
     bool success = false, done = true;
 
+    if(retry_capture_start(res->dev, status)) done = false;
     if(status != STATUS_SUCCESS) {
         log_error("Error starting capture: 0x%x!", status);
         goto exit;
@@ -350,6 +369,7 @@ static void verify_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res) 
     HRESULT hres;
     bool success = false, retry = false, matches = false;
 
+    retry = retry_capture_start(res->dev, status);
     if(status != STATUS_SUCCESS) {
         log_error("Error starting capture: 0x%x!", status);
         goto exit;
@@ -422,6 +442,7 @@ static void identify_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res
     HRESULT hres;
     bool success = false, retry = false, found_match = false;
 
+    retry = retry_capture_start(res->dev, status);
     if(status != STATUS_SUCCESS) {
         log_error("Error starting capture: 0x%x!", status);
         goto exit;
