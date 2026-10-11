@@ -57,6 +57,9 @@ struct ovlp_cb {
 };
 
 static void *ovlp_cb_thread_func(struct ovlp_cb *cb) {
+    //The callback runs driver code, which needs this thread's own TIB - a new pthread otherwise
+    //inherits its creator's GS base, so e.g. __chkstk would probe against the creator's stack limit.
+    win_init_tib();
     cb->cb(cb->ovlp, cb->status, cb->ctx);
     free(cb);
     return NULL;

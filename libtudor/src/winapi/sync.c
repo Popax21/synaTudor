@@ -116,18 +116,17 @@ static DWORD evt_wait(struct sync_event *evt, DWORD timeout) {
     DWORD res = 0;
     cant_fail_ret(pthread_mutex_lock(&evt->lock));
 
-    //Wait for the event
+    //Wait for the event (the deadline is computed once, so spurious wakeups don't extend it)
+    struct timespec deadline;
+    if(timeout != INFINITE) win_timeout_to_abstime(timeout, &deadline);
     while(!evt->state) {
         if(timeout != INFINITE) {
-            struct timespec time;
-            time.tv_nsec = timeout * 10000000L;
-            time.tv_sec = timeout / 1000L;
-            int err = pthread_cond_timedwait(&evt->cond, &evt->lock, &time);
+            int err = pthread_cond_timedwait(&evt->cond, &evt->lock, &deadline);
             if(err == ETIMEDOUT) {
                 res = WAIT_TIMEOUT;
                 break;
             }
-            cant_fail(err);
+            cant_fail_ret(err);
         } else cant_fail_ret(pthread_cond_wait(&evt->cond, &evt->lock));
     }
 
