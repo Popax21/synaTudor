@@ -66,6 +66,10 @@ struct windrv {
     //DatabaseId from the driver's INF.
     bool native_storage;
     GUID database_id;
+
+    //The driver only looks up its pairing data - and with it the sensor's
+    //name - while pairing, so identify the sensor by its USB serial number
+    bool usb_serial_id;
 };
 
 extern struct windrv *tudor_windrv;
