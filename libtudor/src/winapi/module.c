@@ -15,6 +15,7 @@ static void module_destr(struct winmodule *module) {
 }
 
 struct winmodule *winmodule_find(const char *name) {
+    if(!name) return NULL;
     cant_fail_ret(pthread_rwlock_rdlock(&modules_lock));
 
     struct winmodule *module = NULL;
@@ -87,12 +88,14 @@ __winfnc BOOL FreeLibrary(HANDLE handle) {
 WINAPI(FreeLibrary)
 
 __winfnc HANDLE GetModuleHandleA(const char *name) {
+    if(!name) return cur_module ? cur_module->handle : NULL;
     struct winmodule *module = (struct winmodule*) winmodule_find(name);
     return module ? module->handle : NULL;
 }
 WINAPI(GetModuleHandleA)
 
 __winfnc HANDLE GetModuleHandleW(const char16_t *name) {
+    if(!name) return cur_module ? cur_module->handle : NULL;
     char *cname = winstr_to_str(name);
     struct winmodule *module = (struct winmodule*) winmodule_find(cname);
     free(cname);
@@ -103,8 +106,9 @@ WINAPI(GetModuleHandleW)
 #define GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS 0x00000004
 __winfnc BOOL GetModuleHandleExW(DWORD flags, const char16_t *name, HANDLE *out) {
     if(flags & GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS) {
-        log_warn("GetModuleHandleExW called with unsupported flag GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS! [addr=%p]", name);
-        return FALSE;
+        log_warn("GetModuleHandleExW called with unsupported flag GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS! [addr=%p] (returning current module)", name);
+        if(out) *out = cur_module ? cur_module->handle : NULL;
+        return TRUE;
     }
 
     char *cname = winstr_to_str(name);
@@ -184,3 +188,69 @@ __winfnc void *GetProcAddress(HANDLE handle, const char *name) {
     return resolv;
 }
 WINAPI(GetProcAddress)
+/* --- minimal USER32 stubs (a UMDF biometric driver shouldn't need GUI calls) --- */
+__winfnc unsigned short RegisterClassExW(const void *wnd_class) {
+    (void) wnd_class;
+    return 1; /* fake ATOM */
+}
+WINAPI(RegisterClassExW)
+
+__winfnc unsigned short RegisterClassW(const void *wnd_class) {
+    (void) wnd_class;
+    return 1;
+}
+WINAPI(RegisterClassW)
+
+__winfnc int UnregisterClassW(const char16_t *name, HANDLE hinst) {
+    (void) name; (void) hinst;
+    return 1;
+}
+WINAPI(UnregisterClassW)
+
+/* --- USER32 window/message-loop stubs (driver creates a hidden window for device
+ *     notifications; we fake it so the notification thread runs without a real GUI) --- */
+#include <stdint.h>
+
+__winfnc HANDLE CreateWindowExW(DWORD ex_style, const char16_t *cls, const char16_t *title,
+        DWORD style, int x, int y, int w, int h, HANDLE parent, HANDLE menu, HANDLE inst, void *param) {
+    (void)ex_style;(void)cls;(void)title;(void)style;(void)x;(void)y;(void)w;(void)h;
+    (void)parent;(void)menu;(void)inst;(void)param;
+    return (HANDLE)(uintptr_t)1;
+}
+WINAPI(CreateWindowExW)
+
+__winfnc int DestroyWindow(HANDLE hwnd) { (void)hwnd; return 1; }
+WINAPI(DestroyWindow)
+
+__winfnc long long DefWindowProcW(HANDLE hwnd, unsigned int msg, unsigned long long wp, long long lp) {
+    (void)hwnd;(void)msg;(void)wp;(void)lp; return 0;
+}
+WINAPI(DefWindowProcW)
+
+/* Return 0 (WM_QUIT) so any message pump we start exits cleanly instead of spinning. */
+__winfnc int GetMessageW(void *msg, HANDLE hwnd, unsigned int min, unsigned int max) {
+    (void)msg;(void)hwnd;(void)min;(void)max; return 0;
+}
+WINAPI(GetMessageW)
+
+__winfnc int PeekMessageW(void *msg, HANDLE hwnd, unsigned int min, unsigned int max, unsigned int remove) {
+    (void)msg;(void)hwnd;(void)min;(void)max;(void)remove; return 0;
+}
+WINAPI(PeekMessageW)
+
+__winfnc int TranslateMessage(const void *msg) { (void)msg; return 0; }
+WINAPI(TranslateMessage)
+
+__winfnc long long DispatchMessageW(const void *msg) { (void)msg; return 0; }
+WINAPI(DispatchMessageW)
+
+__winfnc void PostQuitMessage(int code) { (void)code; }
+WINAPI(PostQuitMessage)
+
+__winfnc HANDLE RegisterDeviceNotificationW(HANDLE recipient, void *filter, DWORD flags) {
+    (void)recipient;(void)filter;(void)flags; return (HANDLE)(uintptr_t)1;
+}
+WINAPI(RegisterDeviceNotificationW)
+
+__winfnc int UnregisterDeviceNotification(HANDLE h) { (void)h; return 1; }
+WINAPI(UnregisterDeviceNotification)
