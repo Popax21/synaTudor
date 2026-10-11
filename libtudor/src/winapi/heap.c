@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <malloc.h>
 #include "internal.h"
 
 #define PROC_HEAP_HANDLE ((HANDLE) (uintptr_t) 0x50524f4348454150) /* PROCHEAP */
@@ -44,10 +45,36 @@ __winfnc BOOL HeapFree(HANDLE heap, DWORD flags, void *mem) {
         return FALSE;
     }
 
+    //The driver frees sentinel values like (void*) -2 - ignore those
+    if((uintptr_t) mem >= (uintptr_t) -16) return TRUE;
+
     free(mem);
     return TRUE;
 }
 WINAPI(HeapFree)
+
+__winfnc void *HeapReAlloc(HANDLE heap, DWORD flags, void *mem, SIZE_T size) {
+    if(heap != PROC_HEAP_HANDLE) {
+        log_warn("HeapReAlloc called with invalid heap handle");
+        winerr_set();
+        return NULL;
+    }
+
+    size_t old_size = malloc_usable_size(mem);
+    void *nmem = realloc(mem, size);
+    if(!nmem) {
+        winerr_set_errno();
+        return NULL;
+    }
+    if((flags & HEAP_ZERO_MEMORY) && size > old_size) memset((uint8_t*) nmem + old_size, 0, size - old_size);
+    return nmem;
+}
+WINAPI(HeapReAlloc)
+
+__winfnc SIZE_T HeapSize(HANDLE heap, DWORD flags, const void *mem) {
+    return malloc_usable_size((void*) mem);
+}
+WINAPI(HeapSize)
 
 __winfnc void *LocalFree(void *mem) {
     free(mem);

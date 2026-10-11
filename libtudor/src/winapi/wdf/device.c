@@ -363,3 +363,94 @@ __winfnc NTSTATUS WdfDeviceRetrieveDeviceInterfaceString(WDF_DRIVER_GLOBALS *glo
     return STATUS_SUCCESS;
 }
 WDFFUNC(WdfDeviceRetrieveDeviceInterfaceString, 29)
+
+__winfnc void WdfDeviceSetPnpCapabilities(WDF_DRIVER_GLOBALS *globals, WDFOBJECT device_obj, void *caps) {}
+WDFFUNC(WdfDeviceSetPnpCapabilities, 33)
+
+__winfnc void WdfDeviceSetPowerCapabilities(WDF_DRIVER_GLOBALS *globals, WDFOBJECT device_obj, void *caps) {}
+WDFFUNC(WdfDeviceSetPowerCapabilities, 34)
+
+typedef struct {
+    GUID fmtid;
+    ULONG pid;
+} DEVPROPKEY;
+
+typedef struct {
+    ULONG Size;
+    const GUID *InterfaceClassGUID;
+    const UNICODE_STRING *ReferenceString;
+    const DEVPROPKEY *PropertyKey;
+    ULONG Lcid;
+    ULONG Flags;
+} WDF_DEVICE_INTERFACE_PROPERTY_DATA;
+
+//Device interface properties are kept in memory, so that whatever the driver
+//assigns can be queried back later
+struct iface_prop {
+    struct iface_prop *next;
+    GUID iface_guid;
+    DEVPROPKEY key;
+    ULONG type, size;
+    uint8_t data[];
+};
+
+static pthread_mutex_t iface_props_lock = PTHREAD_MUTEX_INITIALIZER;
+static struct iface_prop *iface_props = NULL;
+
+static struct iface_prop **find_iface_prop(const WDF_DEVICE_INTERFACE_PROPERTY_DATA *prop_data) {
+    struct iface_prop **p;
+    for(p = &iface_props; *p; p = &(*p)->next) {
+        if(memcmp(&(*p)->iface_guid, prop_data->InterfaceClassGUID, sizeof(GUID)) == 0 && memcmp(&(*p)->key, prop_data->PropertyKey, sizeof(DEVPROPKEY)) == 0) break;
+    }
+    return p;
+}
+
+__winfnc NTSTATUS WdfDeviceAssignInterfaceProperty(WDF_DRIVER_GLOBALS *globals, WDFOBJECT device_obj, WDF_DEVICE_INTERFACE_PROPERTY_DATA *prop_data, ULONG type, ULONG buf_size, void *buf) {
+    log_debug("WdfDeviceAssignInterfaceProperty | key %08x-...:%u type 0x%x size %u", prop_data->PropertyKey->fmtid.PartA, prop_data->PropertyKey->pid, type, buf_size);
+
+    struct iface_prop *prop = (struct iface_prop*) malloc(sizeof(struct iface_prop) + buf_size);
+    if(!prop) return winerr_from_errno();
+    prop->iface_guid = *prop_data->InterfaceClassGUID;
+    prop->key = *prop_data->PropertyKey;
+    prop->type = type;
+    prop->size = buf_size;
+    if(buf_size) memcpy(prop->data, buf, buf_size);
+
+    cant_fail_ret(pthread_mutex_lock(&iface_props_lock));
+    struct iface_prop **slot = find_iface_prop(prop_data);
+    if(*slot) {
+        prop->next = (*slot)->next;
+        free(*slot);
+    } else prop->next = NULL;
+    *slot = prop;
+    cant_fail_ret(pthread_mutex_unlock(&iface_props_lock));
+
+    return STATUS_SUCCESS;
+}
+WDFFUNC(WdfDeviceAssignInterfaceProperty, 50)
+
+__winfnc NTSTATUS WdfDeviceAllocAndQueryInterfaceProperty(WDF_DRIVER_GLOBALS *globals, WDFOBJECT device_obj, WDF_DEVICE_INTERFACE_PROPERTY_DATA *prop_data, int pool_type, WDF_OBJECT_ATTRIBUTES *mem_attrs, WDFOBJECT *out_mem, ULONG *out_type) {
+    cant_fail_ret(pthread_mutex_lock(&iface_props_lock));
+    struct iface_prop *prop = *find_iface_prop(prop_data);
+    if(!prop) {
+        cant_fail_ret(pthread_mutex_unlock(&iface_props_lock));
+        log_debug("WdfDeviceAllocAndQueryInterfaceProperty | key %08x-...:%u not found", prop_data->PropertyKey->fmtid.PartA, prop_data->PropertyKey->pid);
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+    }
+
+    void *data = malloc(prop->size ? prop->size : 1);
+    struct wdf_memory *mem = data ? wdf_create_memory(globals, mem_attrs, data, prop->size, true) : NULL;
+    if(!mem) {
+        cant_fail_ret(pthread_mutex_unlock(&iface_props_lock));
+        free(data);
+        return winerr_from_errno();
+    }
+    memcpy(data, prop->data, prop->size);
+    *out_type = prop->type;
+    log_debug("WdfDeviceAllocAndQueryInterfaceProperty | key %08x-...:%u type 0x%x size %u", prop->key.fmtid.PartA, prop->key.pid, prop->type, prop->size);
+    cant_fail_ret(pthread_mutex_unlock(&iface_props_lock));
+
+    *out_mem = &mem->object;
+    return STATUS_SUCCESS;
+}
+WDFFUNC(WdfDeviceAllocAndQueryInterfaceProperty, 51)

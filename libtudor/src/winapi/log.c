@@ -192,6 +192,21 @@ __winfnc DWORD UnregisterTraceGuids(HANDLE handle) {
 }
 WINAPI(UnregisterTraceGuids)
 
+//WPP: tracing is never enabled by a controller in the sandbox
+__winfnc ULONGLONG GetTraceLoggerHandle(void *buffer) { return 0; }
+WINAPI(GetTraceLoggerHandle)
+
+__winfnc ULONG GetTraceEnableFlags(ULONGLONG logger) { return 0; }
+WINAPI(GetTraceEnableFlags)
+
+__winfnc BYTE GetTraceEnableLevel(ULONGLONG logger) { return 0; }
+WINAPI(GetTraceEnableLevel)
+
+__winfnc void OutputDebugStringA(const char *str) {
+    log_debug("OutputDebugStringA | %s", str);
+}
+WINAPI(OutputDebugStringA)
+
 __winfnc ULONG TraceMessage(HANDLE handle, ULONG flags, GUID *guid, USHORT num, ...) {
     win_va_list vas;
     win_va_start(vas, num);

@@ -128,6 +128,10 @@ int main() {
     }
     int sock = STDIN_FILENO;
 
+    //The driver's host identity comes from /etc/machine-id and the SMBIOS
+    //table, which can't be read once sandboxed
+    tudor_preload_host_info();
+
     //Activate sandbox
     activate_sandbox();
     log_info("Activated sandbox");
