@@ -254,3 +254,62 @@ WINAPI(RegisterDeviceNotificationW)
 
 __winfnc int UnregisterDeviceNotification(HANDLE h) { (void)h; return 1; }
 WINAPI(UnregisterDeviceNotification)
+
+/* --- power / session notification stubs (USER32 + powrprof) --- */
+#include <stdint.h>
+
+__winfnc HANDLE RegisterPowerSettingNotification(HANDLE recipient, const void *guid, DWORD flags) {
+    (void)recipient; (void)guid; (void)flags;
+    return (HANDLE)(uintptr_t)1;
+}
+WINAPI(RegisterPowerSettingNotification)
+
+__winfnc int UnregisterPowerSettingNotification(HANDLE h) { (void)h; return 1; }
+WINAPI(UnregisterPowerSettingNotification)
+
+__winfnc HANDLE RegisterSuspendResumeNotification(HANDLE recipient, DWORD flags) {
+    (void)recipient; (void)flags;
+    return (HANDLE)(uintptr_t)1;
+}
+WINAPI(RegisterSuspendResumeNotification)
+
+__winfnc int UnregisterSuspendResumeNotification(HANDLE h) { (void)h; return 1; }
+WINAPI(UnregisterSuspendResumeNotification)
+
+__winfnc DWORD PowerSettingRegisterNotification(const void *guid, DWORD flags, HANDLE recipient, HANDLE *out) {
+    (void)guid; (void)flags; (void)recipient;
+    if(out) *out = (HANDLE)(uintptr_t)1;
+    return 0; /* ERROR_SUCCESS */
+}
+WINAPI(PowerSettingRegisterNotification)
+
+__winfnc DWORD PowerSettingUnregisterNotification(HANDLE h) { (void)h; return 0; }
+WINAPI(PowerSettingUnregisterNotification)
+
+/* --- WTSAPI32 session-notification stubs --- */
+#include <stdint.h>
+
+__winfnc int WTSRegisterSessionNotification(HANDLE hwnd, DWORD flags) { (void)hwnd; (void)flags; return 1; }
+WINAPI(WTSRegisterSessionNotification)
+
+__winfnc int WTSUnRegisterSessionNotification(HANDLE hwnd) { (void)hwnd; return 1; }
+WINAPI(WTSUnRegisterSessionNotification)
+
+__winfnc int WTSQuerySessionInformationW(HANDLE server, DWORD session, int info_class, char16_t **buf, DWORD *bytes) {
+    (void)server; (void)session; (void)info_class;
+    if(buf) *buf = NULL;
+    if(bytes) *bytes = 0;
+    return 0;
+}
+WINAPI(WTSQuerySessionInformationW)
+
+__winfnc int WTSQuerySessionInformationA(HANDLE server, DWORD session, int info_class, char **buf, DWORD *bytes) {
+    (void)server; (void)session; (void)info_class;
+    if(buf) *buf = NULL;
+    if(bytes) *bytes = 0;
+    return 0;
+}
+WINAPI(WTSQuerySessionInformationA)
+
+__winfnc void WTSFreeMemory(void *p) { (void)p; }
+WINAPI(WTSFreeMemory)
