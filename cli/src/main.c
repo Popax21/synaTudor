@@ -170,7 +170,7 @@ int main(int argc, char **argv) {
     tudor_get_pdata_fnc = get_pair_data;
     tudor_set_pdata_fnc = set_pair_data;
     log_info("Initializing tudor driver...");
-    if(!tudor_init()) {
+    if(!tudor_init(sensor_vid, sensor_pid)) {
         log_error("Error initializing tudor driver!");
         return EXIT_FAILURE;
     }

@@ -51,7 +51,14 @@ struct windrv_dll {
 };
 
 #define NUM_WINDRV_DLLS 2
-extern struct windrv_dll tudor_windrv_dlls[];
+struct windrv {
+    const char *name;
+    uint16_t vid;
+    const uint16_t *pids; //Zero-terminated
+    struct windrv_dll dlls[NUM_WINDRV_DLLS];
+};
+
+extern struct windrv *tudor_windrv;
 
 #define WINBIO_CALL_PIPELINE(fnc, ...) if((hres = fnc(__VA_ARGS__)) != ERROR_SUCCESS) { log_error("Error in WINBIO pipeline function '%s': 0x%x!", #fnc, hres); return false; }
 

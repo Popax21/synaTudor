@@ -31,8 +31,12 @@ the functionality:
 
 ## Building / Installation
 The same build system used by libfprint, meson, is used for this project.
-During the first build, the Windows driver is automatically downloaded and
-extracted. `innoextract` has to be installed for this.
+During the first build, the Windows drivers are automatically downloaded and
+extracted. `innoextract` and `unzip` have to be installed for this.
+The driver is picked by the sensor's USB ID at run time:
+- `06cb:00be`: Lenovo's driver (`synaWudfBioUsb104`)
+- `06cb:00bc` (Dell Latitude 7200/7210 2-in-1): Dell's driver
+  (`synaWudfBioUsb103`)
 To build and install all contained parts, execute:
 ```sh
 meson build

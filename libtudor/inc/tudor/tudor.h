@@ -16,7 +16,7 @@ typedef struct _WINBIO_IDENTITY WINBIO_IDENTITY;
 typedef struct _WINBIO_PIPELINE WINBIO_PIPELINE;
 
 extern bool tudor_log_traces;
-bool tudor_init();
+bool tudor_init(uint16_t vid, uint16_t pid);
 bool tudor_shutdown();
 
 typedef struct _async_res *tudor_async_res_t;

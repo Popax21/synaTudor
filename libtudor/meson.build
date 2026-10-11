@@ -69,6 +69,12 @@ driver_dll_names = [
     'synaWudfBioUsb104.dll'
 ]
 
+# Dell's driver for 06cb:00bc (Latitude 7200/7210 2-in-1)
+dell_driver_dll_names = [
+    'synaFpAdapter103.dll',
+    'synaWudfBioUsb103.dll'
+]
+
 add_global_arguments('-Wno-incompatible-pointer-types', language : 'c')
 
 driver_dlls = custom_target('driver-download', 
@@ -77,10 +83,16 @@ driver_dlls = custom_target('driver-download',
     command: [find_program('bash'), '@INPUT0@', '@INPUT1@', '@PRIVATE_DIR@', '@OUTDIR@'] + driver_dll_names
 )
 
+dell_driver_dlls = custom_target('dell-driver-download',
+    output: dell_driver_dll_names,
+    input: ['download_dell_driver.sh', 'dell_installer.sha256'],
+    command: [find_program('bash'), '@INPUT0@', '@INPUT1@', '@PRIVATE_DIR@', '@OUTDIR@'] + dell_driver_dll_names
+)
+
 driver_dll_blobs = generator(find_program('ld'),
     output: '@BASENAME@.o',
     arguments: ['-r', '-b', 'binary', '-o', '@OUTPUT@', '@INPUT@']
-).process([driver_dlls])
+).process([driver_dlls, dell_driver_dlls])
 
 libtudor_flags = []
 
