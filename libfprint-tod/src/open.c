@@ -258,9 +258,16 @@ void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer us
 
     //Check if the host process is already running
     if(tdev->host_has_id) {
-        g_task_return_int(task, 0);
-        g_object_unref(task);
-        return;
+        if(!tdev->host_dead) {
+            g_task_return_int(task, 0);
+            g_object_unref(task);
+            return;
+        }
+
+        //It died - free it and start a new one
+        g_info("Tudor host process ID %u died - starting a new one", tdev->host_id);
+        dispose_dev(tdev);
+        tdev->host_has_id = false;
     }
 
     //Open a DBus connection
