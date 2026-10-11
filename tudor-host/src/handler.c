@@ -87,12 +87,34 @@ static void enroll_cb(tudor_async_res_t *res, bool success, struct handler_state
     //Send response
     if(state->action.enroll.done) {
         //Commit the enrollment
+        //A refused commit (most commonly: the engine considers the finger a duplicate of an existing
+        //record) is a normal outcome to report back, not a reason to kill the host - tudor_enroll_commit
+        //returns false for duplicates too, so the old "overwrite duplicate" branch was unreachable and
+        //every duplicate aborted the host (fprintd then only reports the device as disconnected).
         bool is_dupl;
         if(!tudor_enroll_commit(state->dev, &is_dupl)) {
-            log_error("Couldn't commit enrollment!");
-            abort();
+            if(is_dupl) {
+                log_warn("Enrollment for GUID %08x... finger %d is a duplicate of an existing record - discarding", state->action.enroll.guid.PartA, state->action.enroll.finger);
+            } else {
+                log_error("Couldn't commit enrollment for GUID %08x... finger %d - discarding", state->action.enroll.guid.PartA, state->action.enroll.finger);
+            }
+
+            if(!tudor_enroll_discard(state->dev)) {
+                log_error("Couldn't discard enrollment!");
+                abort();
+            }
+
+            struct ipc_msg_resp_enroll resp = {
+                .type = IPC_MSG_RESP_ENROLL,
+                .retry = false,
+                .done = true,
+                .duplicate = is_dupl,
+                .failed = !is_dupl
+            };
+            ipc_send_msg(state->ipc_sock, &resp, sizeof(resp));
+            cant_fail_ret(pthread_mutex_unlock(&state->lock));
+            return;
         }
-        if(is_dupl) log_warn("Overwritting duplicate enrollment...");
 
         //Find the resulting record
         cant_fail_ret(pthread_mutex_lock(&state->dev->records_lock));
@@ -125,7 +147,9 @@ static void enroll_cb(tudor_async_res_t *res, bool success, struct handler_state
         *resp = (struct ipc_msg_resp_enroll) {
             .type = IPC_MSG_RESP_ENROLL,
             .retry = false,
-            .done = true
+            .done = true,
+            .duplicate = false,
+            .failed = false
         };
         memcpy(resp->record_data, enroll_rec->data, enroll_rec->data_size);
 

@@ -98,6 +98,7 @@ struct ipc_msg_resp_enroll {
     enum ipc_msg_type type;
 
     bool retry, done;
+    bool duplicate, failed; //Only valid if done - no record data follows if either is set
     uint8_t record_data[];
 };
 
