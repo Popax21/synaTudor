@@ -25,7 +25,8 @@ static struct windrv windrvs[] = {
     {
         .name = "Dell synaWudfBioUsb103 (Latitude 7200/7210 2-in-1)",
         .vid = 0x06cb, .pids = (const uint16_t[]) { 0x00bc, 0 },
-        .dlls = { WINDRV_DLL(synaFpAdapter103, true), WINDRV_DLL(synaWudfBioUsb103, false) }
+        .dlls = { WINDRV_DLL(synaFpAdapter103, true), WINDRV_DLL(synaWudfBioUsb103, false) },
+        .machine_guid = true
     }
 };
 #define NUM_WINDRVS (sizeof(windrvs) / sizeof(windrvs[0]))
@@ -62,6 +63,12 @@ WINBIO_ENGINE_INTERFACE *tudor_engine_adapter;
 
 static DRIVER_OBJECT umdf_driver;
 struct winwdf_driver *tudor_wdf_driver;
+
+void tudor_preload_host_info() {
+    char16_t guid[37];
+    tudor_machine_guid(guid);
+    winapi_load_smbios_table();
+}
 
 bool tudor_init(uint16_t vid, uint16_t pid) {
     //Pick the Windows driver for the sensor

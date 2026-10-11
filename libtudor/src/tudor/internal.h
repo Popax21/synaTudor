@@ -56,6 +56,9 @@ struct windrv {
     uint16_t vid;
     const uint16_t *pids; //Zero-terminated
     struct windrv_dll dlls[NUM_WINDRV_DLLS];
+
+    //Serve HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid (from /etc/machine-id)
+    bool machine_guid;
 };
 
 extern struct windrv *tudor_windrv;
@@ -67,6 +70,8 @@ extern struct winwdf_driver *tudor_wdf_driver;
 extern WINBIO_SENSOR_INTERFACE *tudor_sensor_adapter;
 extern WINBIO_ENGINE_INTERFACE *tudor_engine_adapter;
 extern WINBIO_STORAGE_INTERFACE *tudor_storage_adapter;
+
+bool tudor_machine_guid(char16_t out[37]);
 
 bool tudor_reg_handler(void *ctx, void *ctx_obj, const char *key_name, const char *val_name, bool is_write, void *buf, size_t *buf_size, enum winreg_val_type *val_type);
 

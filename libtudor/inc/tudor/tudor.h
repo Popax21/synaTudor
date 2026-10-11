@@ -16,6 +16,8 @@ typedef struct _WINBIO_IDENTITY WINBIO_IDENTITY;
 typedef struct _WINBIO_PIPELINE WINBIO_PIPELINE;
 
 extern bool tudor_log_traces;
+//Reads /etc/machine-id and the SMBIOS table up front; call before sandboxing
+void tudor_preload_host_info();
 bool tudor_init(uint16_t vid, uint16_t pid);
 bool tudor_shutdown();
 

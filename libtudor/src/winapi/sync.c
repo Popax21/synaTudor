@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include <errno.h>
+#include <string.h>
 #include <time.h>
 #include "internal.h"
 
@@ -63,6 +64,12 @@ __winfnc void InitializeCriticalSection(CRITICAL_SECTION *sect) {
     }
 }
 WINAPI(InitializeCriticalSection)
+
+__winfnc BOOL InitializeCriticalSectionAndSpinCount(CRITICAL_SECTION *sect, DWORD spin_count) {
+    InitializeCriticalSection(sect);
+    return TRUE;
+}
+WINAPI(InitializeCriticalSectionAndSpinCount)
 
 __winfnc void DeleteCriticalSection(CRITICAL_SECTION* sect) {
     //Destroy the mutex
@@ -225,6 +232,77 @@ __winfnc HANDLE CreateEventW(void *attrs, BOOL manual_reset, BOOL initial_state,
     return evt;
 }
 WINAPI(CreateEventW);
+
+__winfnc HANDLE OpenEventW(DWORD access, BOOL inherit, const char16_t *name) {
+    char *cname = winstr_to_str(name);
+    HANDLE handle = NULL;
+
+    cant_fail_ret(pthread_rwlock_rdlock(&events_lock));
+    for(struct sync_event *evt = events_head; evt; evt = evt->next) {
+        if(evt->name && strcmp(evt->name, cname) == 0) {
+            handle = evt->handle;
+            break;
+        }
+    }
+    cant_fail_ret(pthread_rwlock_unlock(&events_lock));
+
+    log_debug("OpenEventW | '%s' -> %s", cname, handle ? "found" : "not found");
+    free(cname);
+    if(!handle) winerr_set_code(2); /* ERROR_FILE_NOT_FOUND */
+    return handle;
+}
+WINAPI(OpenEventW)
+
+struct sync_mutex {
+    struct win_sync_object sync_obj;
+    pthread_mutex_t lock;
+};
+
+static void mutex_destr(struct sync_mutex *mtx) {
+    cant_fail_ret(pthread_mutex_destroy(&mtx->lock));
+    free(mtx);
+}
+
+static DWORD mutex_wait(struct sync_mutex *mtx, DWORD timeout) {
+    if(timeout == INFINITE) {
+        cant_fail_ret(pthread_mutex_lock(&mtx->lock));
+        return 0;
+    }
+
+    struct timespec time;
+    win_wait_deadline(&time, timeout);
+    int err = pthread_mutex_timedlock(&mtx->lock, &time);
+    if(err == ETIMEDOUT) return WAIT_TIMEOUT;
+    cant_fail_ret(err);
+    return 0;
+}
+
+__winfnc HANDLE CreateMutexA(void *attrs, BOOL initial_owner, const char *name) {
+    struct sync_mutex *mtx = (struct sync_mutex*) malloc(sizeof(struct sync_mutex));
+    if(!mtx) { winerr_set_errno(); return NULL; }
+    mtx->sync_obj.wait_fnc = (win_sync_obj_wait_fnc*) mutex_wait;
+
+    //Windows mutexes can be re-acquired by their owning thread
+    pthread_mutexattr_t mattr;
+    cant_fail_ret(pthread_mutexattr_init(&mattr));
+    cant_fail_ret(pthread_mutexattr_settype(&mattr, PTHREAD_MUTEX_RECURSIVE));
+    cant_fail_ret(pthread_mutex_init(&mtx->lock, &mattr));
+    cant_fail_ret(pthread_mutexattr_destroy(&mattr));
+    if(initial_owner) cant_fail_ret(pthread_mutex_lock(&mtx->lock));
+
+    return winhandle_create(mtx, (winhandle_destr_fnc*) mutex_destr);
+}
+WINAPI(CreateMutexA)
+
+__winfnc BOOL ReleaseMutex(HANDLE handle) {
+    struct sync_mutex *mtx = (struct sync_mutex*) handle->data;
+    if(pthread_mutex_unlock(&mtx->lock) != 0) {
+        winerr_set_code(288); /* ERROR_NOT_OWNER */
+        return FALSE;
+    }
+    return TRUE;
+}
+WINAPI(ReleaseMutex)
 
 __winfnc BOOL SetEvent(HANDLE handle) {
     if(handle == INVALID_HANDLE_VALUE) return FALSE;
