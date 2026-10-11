@@ -59,6 +59,13 @@ struct windrv {
 
     //Serve HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid (from /etc/machine-id)
     bool machine_guid;
+
+    //Match-in-sensor parts: only the vendor storage adapter registers
+    //enrollments where the sensor's matcher looks - with the host-side one,
+    //enrollment succeeds but nothing ever verifies. database_id is the
+    //DatabaseId from the driver's INF.
+    bool native_storage;
+    GUID database_id;
 };
 
 extern struct windrv *tudor_windrv;
@@ -70,6 +77,7 @@ extern struct winwdf_driver *tudor_wdf_driver;
 extern WINBIO_SENSOR_INTERFACE *tudor_sensor_adapter;
 extern WINBIO_ENGINE_INTERFACE *tudor_engine_adapter;
 extern WINBIO_STORAGE_INTERFACE *tudor_storage_adapter;
+extern WINBIO_STORAGE_INTERFACE *tudor_native_storage_adapter;
 
 bool tudor_machine_guid(char16_t out[37]);
 

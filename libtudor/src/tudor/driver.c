@@ -26,7 +26,8 @@ static struct windrv windrvs[] = {
         .name = "Dell synaWudfBioUsb103 (Latitude 7200/7210 2-in-1)",
         .vid = 0x06cb, .pids = (const uint16_t[]) { 0x00bc, 0 },
         .dlls = { WINDRV_DLL(synaFpAdapter103, true), WINDRV_DLL(synaWudfBioUsb103, false) },
-        .machine_guid = true
+        .machine_guid = true,
+        .native_storage = true, .database_id = DEFINE_GUID(5B783138, D12A, 4BA5, AD3D, 465EACA1D030)
     }
 };
 #define NUM_WINDRVS (sizeof(windrvs) / sizeof(windrvs[0]))
@@ -60,6 +61,7 @@ typedef BOOL __winfnc (*api_DllMain)(HANDLE hinstDLL, int fdwReason, void *lpRes
 struct windrv_dll *tudor_adapter_dll, *tudor_driver_dll;
 WINBIO_SENSOR_INTERFACE *tudor_sensor_adapter;
 WINBIO_ENGINE_INTERFACE *tudor_engine_adapter;
+WINBIO_STORAGE_INTERFACE *tudor_native_storage_adapter;
 
 static DRIVER_OBJECT umdf_driver;
 struct winwdf_driver *tudor_wdf_driver;
@@ -164,6 +166,16 @@ bool tudor_init(uint16_t vid, uint16_t pid) {
     if((hres = ((api_WbioQueryEngineInterface) find_dll_export(&tudor_adapter_dll->image, "WbioQueryEngineInterface"))(&tudor_engine_adapter)) != 0) {
         log_error("Error querying engine interface: 0x%x!", hres);
         return false;
+    }
+
+    //Drivers for match-in-sensor parts keep their templates on the sensor
+    tudor_native_storage_adapter = NULL;
+    if(tudor_windrv->native_storage) {
+        if((hres = ((api_WbioQueryStorageInterface) find_dll_export(&tudor_adapter_dll->image, "WbioQueryStorageInterface"))(&tudor_native_storage_adapter)) != 0) {
+            log_error("Error querying vendor storage interface: 0x%x!", hres);
+            return false;
+        }
+        log_info("Using the vendor storage adapter");
     }
 
     return true;
