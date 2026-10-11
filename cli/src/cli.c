@@ -2,16 +2,46 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <signal.h>
+#include <semaphore.h>
+#include <errno.h>
+#include <time.h>
 #include <tudor/log.h>
 #include "cli.h"
 
-static bool abort_cmd_loop = false;
+static volatile bool abort_cmd_loop = false;
 static void sigint_handler(int sig) {
     if(abort_cmd_loop) {
         log_warn("Forcefully exitting!");
         exit(EXIT_FAILURE);
     }
-    abort_cmd_loop = false;
+    abort_cmd_loop = true;
+}
+
+//Captures wait for a finger with no timeout, so a pending operation has to be cancellable with
+//Ctrl+C - polls the abort flag while waiting and cancels the operation through the driver once set.
+static void async_done_cb(tudor_async_res_t res, bool success, void *ctx) { sem_post((sem_t*) ctx); }
+
+static bool cli_wait_async(tudor_async_res_t res) {
+    sem_t done;
+    sem_init(&done, 0, 0);
+    tudor_set_async_callback(res, async_done_cb, &done);
+
+    bool cancelled = false;
+    while(true) {
+        struct timespec deadline;
+        clock_gettime(CLOCK_REALTIME, &deadline);
+        deadline.tv_nsec += 200000000;
+        if(deadline.tv_nsec >= 1000000000) { deadline.tv_sec++; deadline.tv_nsec -= 1000000000; }
+        if(sem_timedwait(&done, &deadline) == 0) break;
+        if(errno != ETIMEDOUT && errno != EINTR) { perror("sem_timedwait"); abort(); }
+        if(abort_cmd_loop && !cancelled) {
+            log_warn("Cancelling pending operation...");
+            tudor_cancel_async(res);
+            cancelled = true;
+        }
+    }
+    sem_destroy(&done);
+    return tudor_wait_async(res);
 }
 
 void cli_main_loop(struct tudor_device *device) {
@@ -66,10 +96,10 @@ void cli_main_loop(struct tudor_device *device) {
                     //Update enrollment
                     bool is_done;
                     tudor_async_res_t async_res = NULL;
-                    if(!tudor_enroll_capture(device, &is_done, &async_res) || !tudor_wait_async(async_res)) {
+                    if(!tudor_enroll_capture(device, &is_done, &async_res) || !cli_wait_async(async_res)) {
                         if(async_res) tudor_cleanup_async(async_res);
 
-                        if(!is_done) {
+                        if(!is_done && !abort_cmd_loop) {
                             log_warn("Retrying enrollment update...");
                             continue;
                         }
@@ -115,10 +145,10 @@ void cli_main_loop(struct tudor_device *device) {
 
                     bool retry;
                     tudor_async_res_t async_res = NULL;
-                    if(!tudor_verify(device, guid, TUDOR_FINGER_ANY, &retry, &matches, &async_res) || !tudor_wait_async(async_res)) {
+                    if(!tudor_verify(device, guid, TUDOR_FINGER_ANY, &retry, &matches, &async_res) || !cli_wait_async(async_res)) {
                         if(async_res) tudor_cleanup_async(async_res);
 
-                        if(retry) {
+                        if(retry && !abort_cmd_loop) {
                             log_warn("Retrying verify capture...");
                             continue;
                         }
@@ -141,10 +171,10 @@ void cli_main_loop(struct tudor_device *device) {
                     puts("Put your finger on the sensor");
                     bool retry;
                     tudor_async_res_t async_res = NULL;
-                    if(!tudor_identify(device, &retry, &found_match, &match_guid, &match_finger, &async_res) || !tudor_wait_async(async_res)) {
+                    if(!tudor_identify(device, &retry, &found_match, &match_guid, &match_finger, &async_res) || !cli_wait_async(async_res)) {
                         if(async_res) tudor_cleanup_async(async_res);
 
-                        if(retry) {
+                        if(retry && !abort_cmd_loop) {
                             log_warn("Retrying verify capture...");
                             continue;
                         }
