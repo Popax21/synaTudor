@@ -217,13 +217,13 @@ static void identify_cb(tudor_async_res_t *res, bool success, struct handler_sta
     }
 
     //Check success
-    if(!success) {
+    if(!success && !state->action.identify.retry) {
         log_error("Identify action failed!");
         abort();
     }
 
     //If we're retrying, start again
-    if(!success && !state->action.verify.retry) {
+    if(!success) {
         init_action(state);
         if(!tudor_identify(state->dev, &state->action.identify.retry, &state->action.identify.has_match, &state->action.identify.guid, &state->action.identify.finger, &state->async_res)) {
             log_error("Couldn't start identify action retry!");
