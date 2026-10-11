@@ -4,9 +4,11 @@ native Windows driver. It is used by the [CLI wrapper](../cli/README.md) and the
 [libfprint host](../tudor-host/README.md).
 
 ## Driver Download / Extraction
-During your first build, the Windows driver will automatically be downloaded and
+During your first build, the Windows drivers will automatically be downloaded and
 extracted (you'll need a working internet connection). This requires
-`innoextract` to be installed (https://pkgs.org/download/innoextract).
+`innoextract` (https://pkgs.org/download/innoextract) and `unzip` to be
+installed. Both Lenovo's driver (for `06cb:00be`) and Dell's driver (for
+`06cb:00bc`) are embedded; `tudor_init` picks one by the sensor's USB ID.
 
 ## Build Options
 Currently, the following build options are defined:

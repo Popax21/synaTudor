@@ -2,28 +2,45 @@
 
 extern uint8_t _binary_libtudor_synaFpAdapter104_dll_start, _binary_libtudor_synaFpAdapter104_dll_end;
 extern uint8_t _binary_libtudor_synaWudfBioUsb104_dll_start, _binary_libtudor_synaWudfBioUsb104_dll_end;
+extern uint8_t _binary_libtudor_synaFpAdapter103_dll_start, _binary_libtudor_synaFpAdapter103_dll_end;
+extern uint8_t _binary_libtudor_synaWudfBioUsb103_dll_start, _binary_libtudor_synaWudfBioUsb103_dll_end;
 
-#define NUM_WINDRV_DLLS 2
-struct windrv_dll tudor_windrv_dlls[] = {
+#define WINDRV_DLL(dll_name, adapter) { \
+    .module = { \
+        .name = #dll_name ".dll", \
+        .cmdline = #dll_name ".dll", \
+        .environ = (const char*[]) { NULL } \
+    }, \
+    .pe_image = &_binary_libtudor_##dll_name##_dll_start, .pe_image_end = &_binary_libtudor_##dll_name##_dll_end, \
+    .is_adapter = adapter, .is_driver = !(adapter) \
+}
+
+//The Windows driver packages, and the sensors each one is used for
+static struct windrv windrvs[] = {
     {
-        .module = {
-            .name = "synaFpAdapter104.dll",
-            .cmdline = "synaFpAdapter104.dll",
-            .environ = (const char*[]) { NULL }
-        },
-        .pe_image = &_binary_libtudor_synaFpAdapter104_dll_start, .pe_image_end = &_binary_libtudor_synaFpAdapter104_dll_end,
-        .is_adapter = true, .is_driver = false
+        .name = "Lenovo synaWudfBioUsb104",
+        .vid = 0x06cb, .pids = (const uint16_t[]) { 0x00be, 0 },
+        .dlls = { WINDRV_DLL(synaFpAdapter104, true), WINDRV_DLL(synaWudfBioUsb104, false) }
     },
     {
-        .module = {
-            .name = "synaWudfBioUsb104.dll",
-            .cmdline = "synaWudfBioUsb104.dll",
-            .environ = (const char*[]) { NULL }
-        },
-        .pe_image = &_binary_libtudor_synaWudfBioUsb104_dll_start, .pe_image_end = &_binary_libtudor_synaWudfBioUsb104_dll_end,
-        .is_adapter = false, .is_driver = true
+        .name = "Dell synaWudfBioUsb103 (Latitude 7200/7210 2-in-1)",
+        .vid = 0x06cb, .pids = (const uint16_t[]) { 0x00bc, 0 },
+        .dlls = { WINDRV_DLL(synaFpAdapter103, true), WINDRV_DLL(synaWudfBioUsb103, false) }
     }
 };
+#define NUM_WINDRVS (sizeof(windrvs) / sizeof(windrvs[0]))
+
+struct windrv *tudor_windrv;
+
+static struct windrv *find_windrv(uint16_t vid, uint16_t pid) {
+    for(int i = 0; i < NUM_WINDRVS; i++) {
+        if(windrvs[i].vid != vid) continue;
+        for(const uint16_t *p = windrvs[i].pids; *p; p++) {
+            if(*p == pid) return &windrvs[i];
+        }
+    }
+    return NULL;
+}
 
 bool tudor_log_traces;
 
@@ -46,7 +63,14 @@ WINBIO_ENGINE_INTERFACE *tudor_engine_adapter;
 static DRIVER_OBJECT umdf_driver;
 struct winwdf_driver *tudor_wdf_driver;
 
-bool tudor_init() {
+bool tudor_init(uint16_t vid, uint16_t pid) {
+    //Pick the Windows driver for the sensor
+    if(!(tudor_windrv = find_windrv(vid, pid))) {
+        log_error("No Windows driver for sensor %04x:%04x!", vid, pid);
+        return false;
+    }
+    log_info("Using Windows driver '%s' for sensor %04x:%04x", tudor_windrv->name, vid, pid);
+
     //Register dummy modules
     winmodule_register(&ntdll_module);
 
@@ -70,7 +94,7 @@ bool tudor_init() {
     //Load driver DLLs
     tudor_adapter_dll = tudor_driver_dll = NULL;
     for(int i = 0; i < NUM_WINDRV_DLLS; i++) {
-        struct windrv_dll *dll = &tudor_windrv_dlls[i];
+        struct windrv_dll *dll = &tudor_windrv->dlls[i];
         if(!load_dll(&dll->image, dll->module.name, dll->pe_image, dll->pe_image_end - dll->pe_image)) {
             log_error("Error loading driver DLL!");
             return false;
@@ -86,7 +110,7 @@ bool tudor_init() {
 
     //Initialize driver DLLs
     for(int i = 0; i < NUM_WINDRV_DLLS; i++) {
-        struct windrv_dll *dll = &tudor_windrv_dlls[i];
+        struct windrv_dll *dll = &tudor_windrv->dlls[i];
 
         if(dll->image.entry_point) {
             log_info("Initializing driver DLL '%s'...", dll->module.name);
@@ -153,7 +177,7 @@ bool tudor_shutdown() {
 
     //Uninitialize driver DLLs
     for(int i = 0; i < NUM_WINDRV_DLLS; i++) {
-        struct windrv_dll *dll = &tudor_windrv_dlls[i];
+        struct windrv_dll *dll = &tudor_windrv->dlls[i];
 
         if(dll->image.entry_point) {
             log_info("Uninitializing driver DLL '%s'...", dll->module.name);
@@ -167,7 +191,7 @@ bool tudor_shutdown() {
     }
 
     //Destroy driver DLLs
-    for(int i = 0; i < NUM_WINDRV_DLLS; i++) destroy_dll(&tudor_windrv_dlls[i].image);
+    for(int i = 0; i < NUM_WINDRV_DLLS; i++) destroy_dll(&tudor_windrv->dlls[i].image);
 
     //Unregister dummy modules
     winmodule_unregister(&ntdll_module);
