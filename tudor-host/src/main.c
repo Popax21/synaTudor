@@ -48,6 +48,7 @@ static void recv_init_msg(int sock, int *usb_dev_fd, uint8_t *usb_bus, uint8_t *
 }
 
 static bool has_sensor_name;
+static char sensor_name[IPC_SENSOR_NAME_SIZE+1];
 static int pdata_ipc_sock;
 static const struct tudor_pair_data *get_pdata_cb(const char *name) {
     log_info("Getting pairing data for sensor '%s'...", name);
@@ -57,11 +58,11 @@ static const struct tudor_pair_data *get_pdata_cb(const char *name) {
     strncpy(msg.sensor_name, name, IPC_SENSOR_NAME_SIZE);
     ipc_send_msg(pdata_ipc_sock, &msg, sizeof(msg));
 
-    if(has_sensor_name && strcmp(name, probe_sensor_name) != 0){
+    if(has_sensor_name && strcmp(name, sensor_name) != 0){
         log_error("Attempted multiple different sensor pairing data loads!");
         abort();
     } else if(!has_sensor_name) {
-        strncpy(probe_sensor_name, name, IPC_SENSOR_NAME_SIZE);
+        strncpy(sensor_name, name, IPC_SENSOR_NAME_SIZE);
         has_sensor_name = true;
     }
 
@@ -203,11 +204,23 @@ int main() {
     }
     log_info("Opened tudor device");
 
-    //Check that we have determined the sensor name
-    if(!has_sensor_name) {
-        log_error("Failed to acquire sensor name!");
-        return EXIT_FAILURE;
+    //Determine the name reported when probing - libfprint uses it as the
+    //device ID, which fprintd files stored prints under
+    if(tudor_identify_by_usb_serial()) {
+        //Like libfprint's own drivers, use the USB serial number
+        if((usb_err = libusb_get_string_descriptor_ascii(usb_dev, usb_desc.iSerialNumber, (unsigned char*) probe_sensor_name, IPC_SENSOR_NAME_SIZE+1)) <= 0) {
+            log_error("Error getting USB serial number: %d [%s]", usb_err, libusb_error_name(usb_err));
+            return EXIT_FAILURE;
+        }
+    } else {
+        //Check that we have determined the sensor name
+        if(!has_sensor_name) {
+            log_error("Failed to acquire sensor name!");
+            return EXIT_FAILURE;
+        }
+        strcpy(probe_sensor_name, sensor_name);
     }
+    log_info("Sensor ID: '%s'", probe_sensor_name);
 
     //Send ready message
     enum ipc_msg_type ready_type = IPC_MSG_READY;

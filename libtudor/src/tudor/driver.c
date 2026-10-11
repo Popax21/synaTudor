@@ -27,7 +27,8 @@ static struct windrv windrvs[] = {
         .vid = 0x06cb, .pids = (const uint16_t[]) { 0x00bc, 0 },
         .dlls = { WINDRV_DLL(synaFpAdapter103, true), WINDRV_DLL(synaWudfBioUsb103, false) },
         .machine_guid = true,
-        .native_storage = true, .database_id = DEFINE_GUID(5B783138, D12A, 4BA5, AD3D, 465EACA1D030)
+        .native_storage = true, .database_id = DEFINE_GUID(5B783138, D12A, 4BA5, AD3D, 465EACA1D030),
+        .usb_serial_id = true
     }
 };
 #define NUM_WINDRVS (sizeof(windrvs) / sizeof(windrvs[0]))
@@ -70,6 +71,10 @@ void tudor_preload_host_info() {
     char16_t guid[37];
     tudor_machine_guid(guid);
     winapi_load_smbios_table();
+}
+
+bool tudor_identify_by_usb_serial() {
+    return tudor_windrv->usb_serial_id;
 }
 
 bool tudor_init(uint16_t vid, uint16_t pid) {

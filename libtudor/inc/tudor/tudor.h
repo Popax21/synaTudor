@@ -19,6 +19,9 @@ extern bool tudor_log_traces;
 //Reads /etc/machine-id and the SMBIOS table up front; call before sandboxing
 void tudor_preload_host_info();
 bool tudor_init(uint16_t vid, uint16_t pid);
+//Whether to identify the sensor by its USB serial number instead of the name
+//it has in the pairing data (which some drivers only look up while pairing)
+bool tudor_identify_by_usb_serial();
 bool tudor_shutdown();
 
 typedef struct _async_res *tudor_async_res_t;
