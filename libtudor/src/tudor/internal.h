@@ -51,7 +51,32 @@ struct windrv_dll {
 };
 
 #define NUM_WINDRV_DLLS 2
-extern struct windrv_dll tudor_windrv_dlls[];
+struct windrv {
+    const char *name;
+    uint16_t vid;
+    const uint16_t *pids; //Zero-terminated
+    struct windrv_dll dlls[NUM_WINDRV_DLLS];
+
+    //Serve HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid (from /etc/machine-id)
+    bool machine_guid;
+
+    //Match-in-sensor parts: only the vendor storage adapter registers
+    //enrollments where the sensor's matcher looks - with the host-side one,
+    //enrollment succeeds but nothing ever verifies. database_id is the
+    //DatabaseId from the driver's INF.
+    bool native_storage;
+    GUID database_id;
+
+    //The driver only looks up its pairing data - and with it the sensor's
+    //name - while pairing, so identify the sensor by its USB serial number
+    bool usb_serial_id;
+
+    //After a cancelled enrollment the sensor needs a few seconds before it
+    //accepts another capture; retry captures that fail to start meanwhile
+    bool retry_capture_start;
+};
+
+extern struct windrv *tudor_windrv;
 
 #define WINBIO_CALL_PIPELINE(fnc, ...) if((hres = fnc(__VA_ARGS__)) != ERROR_SUCCESS) { log_error("Error in WINBIO pipeline function '%s': 0x%x!", #fnc, hres); return false; }
 
@@ -60,6 +85,9 @@ extern struct winwdf_driver *tudor_wdf_driver;
 extern WINBIO_SENSOR_INTERFACE *tudor_sensor_adapter;
 extern WINBIO_ENGINE_INTERFACE *tudor_engine_adapter;
 extern WINBIO_STORAGE_INTERFACE *tudor_storage_adapter;
+extern WINBIO_STORAGE_INTERFACE *tudor_native_storage_adapter;
+
+bool tudor_machine_guid(char16_t out[37]);
 
 bool tudor_reg_handler(void *ctx, void *ctx_obj, const char *key_name, const char *val_name, bool is_write, void *buf, size_t *buf_size, enum winreg_val_type *val_type);
 

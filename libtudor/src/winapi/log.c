@@ -130,7 +130,7 @@ WINAPI(DbgPrintEx)
 #define WMI_DISABLE_EVENTS 5
 
 typedef struct {
-    GUID Guid;
+    const GUID *Guid;
     HANDLE RegHandle;
 } TRACE_GUID_REGISTRATION;
 
@@ -170,7 +170,7 @@ __winfnc DWORD RegisterTraceGuidsA(Wmidprequest *request_fnc, void *request_ctx,
 
     for(int i = 0; i < num_guids; i++) {
         prov->guids[i].prov = prov;
-        prov->guids[i].guid = trace_guids[i].Guid;
+        prov->guids[i].guid = *trace_guids[i].Guid;
         prov->guids[i].handle = winhandle_create(&prov->guids[i], NULL);
         trace_guids[i].RegHandle = prov->guids[i].handle;
     }
@@ -191,6 +191,21 @@ __winfnc DWORD UnregisterTraceGuids(HANDLE handle) {
     return ERROR_SUCCESS;
 }
 WINAPI(UnregisterTraceGuids)
+
+//WPP: tracing is never enabled by a controller in the sandbox
+__winfnc ULONGLONG GetTraceLoggerHandle(void *buffer) { return 0; }
+WINAPI(GetTraceLoggerHandle)
+
+__winfnc ULONG GetTraceEnableFlags(ULONGLONG logger) { return 0; }
+WINAPI(GetTraceEnableFlags)
+
+__winfnc BYTE GetTraceEnableLevel(ULONGLONG logger) { return 0; }
+WINAPI(GetTraceEnableLevel)
+
+__winfnc void OutputDebugStringA(const char *str) {
+    log_debug("OutputDebugStringA | %s", str);
+}
+WINAPI(OutputDebugStringA)
 
 __winfnc ULONG TraceMessage(HANDLE handle, ULONG flags, GUID *guid, USHORT num, ...) {
     win_va_list vas;

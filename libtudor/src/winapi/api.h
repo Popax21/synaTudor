@@ -24,6 +24,9 @@ void __register_windows_api(struct __winapi_descr *descr);
 
 void *resolve_windows_api(const char *name);
 
+//Host information the driver reads (must be loaded before sandboxing)
+void winapi_load_smbios_table();
+
 #define WIN_CALL_CALLBACK(cb, ...) ((cb) ? (cb)(__VA_ARGS__) : 0)
 
 //Strings

@@ -16,7 +16,12 @@ typedef struct _WINBIO_IDENTITY WINBIO_IDENTITY;
 typedef struct _WINBIO_PIPELINE WINBIO_PIPELINE;
 
 extern bool tudor_log_traces;
-bool tudor_init();
+//Reads /etc/machine-id and the SMBIOS table up front; call before sandboxing
+void tudor_preload_host_info();
+bool tudor_init(uint16_t vid, uint16_t pid);
+//Whether to identify the sensor by its USB serial number instead of the name
+//it has in the pairing data (which some drivers only look up while pairing)
+bool tudor_identify_by_usb_serial();
 bool tudor_shutdown();
 
 typedef struct _async_res *tudor_async_res_t;
@@ -80,6 +85,9 @@ struct tudor_device {
     WINBIO_PIPELINE *pipeline;
     HANDLE winbio_file;
 
+    //Captures in a row that failed to start
+    int capture_start_fails;
+
     //Enroll data
     bool enrolling;
     RECGUID enroll_guid;
@@ -94,6 +102,8 @@ struct tudor_device {
 bool tudor_open(struct tudor_device *device, libusb_device_handle *usb_dev, struct tudor_device_state *state);
 bool tudor_close(struct tudor_device *device);
 
+//Whether templates live on the sensor (vendor storage adapter) rather than in the host records
+bool tudor_uses_native_storage(struct tudor_device *device);
 int tudor_wipe_records(struct tudor_device *device, RECGUID *guid, enum tudor_finger finger);
 bool tudor_add_record(struct tudor_device *device, RECGUID guid, enum tudor_finger finger, const void *data, size_t data_size);
 

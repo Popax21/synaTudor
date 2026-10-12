@@ -1,6 +1,65 @@
 #include "internal.h"
 
+#define WINBIO_IDENTITY_WILDCARD 0x25066282
+
+bool tudor_uses_native_storage(struct tudor_device *device) {
+    return tudor_native_storage_adapter && device->pipeline && device->pipeline->StorageInterface == tudor_native_storage_adapter;
+}
+
+struct native_record_ref {
+    WINBIO_IDENTITY identity;
+    UCHAR subfactor;
+};
+
+//With the vendor storage adapter, templates live on the sensor. Collect the
+//matching records first (deleting invalidates the query results), then
+//delete them one by one.
+static int wipe_native_records(struct tudor_device *device, RECGUID *guid, enum tudor_finger finger) {
+    winmodule_set_cur(&tudor_adapter_dll->module);
+    WINBIO_STORAGE_INTERFACE *storage = device->pipeline->StorageInterface;
+
+    WINBIO_IDENTITY query = { .Type = guid ? WINBIO_ID_TYPE_GUID : WINBIO_ID_TYPE_WILDCARD };
+    if(guid) query.TemplateGuid = *(GUID*) guid;
+    else query.Wildcard = WINBIO_IDENTITY_WILDCARD;
+
+    HRESULT hres = storage->QueryBySubject(device->pipeline, &query, (UCHAR) finger);
+    if(hres == ERROR_SUCCESS) hres = storage->FirstRecord(device->pipeline);
+    if(hres == WINBIO_E_DATABASE_NO_RESULTS || hres == WINBIO_E_DATABASE_NO_SUCH_RECORD) return 0;
+
+    struct native_record_ref *refs = NULL;
+    int num_refs = 0;
+    while(hres == ERROR_SUCCESS) {
+        WINBIO_STORAGE_RECORD rec = {0};
+        if((hres = storage->GetCurrentRecord(device->pipeline, &rec)) != ERROR_SUCCESS) break;
+
+        struct native_record_ref *nrefs = realloc(refs, (num_refs + 1) * sizeof(*refs));
+        if(!nrefs) { perror("Couldn't allocate sensor record list"); abort(); }
+        refs = nrefs;
+        refs[num_refs++] = (struct native_record_ref) { .identity = *rec.Identity, .subfactor = rec.SubFactor };
+
+        hres = storage->NextRecord(device->pipeline);
+    }
+    if(hres != WINBIO_E_DATABASE_NO_MORE_RECORDS) {
+        log_error("Error listing sensor records: 0x%x!", hres);
+        free(refs);
+        return -1;
+    }
+
+    int num_deleted = 0;
+    for(int i = 0; i < num_refs; i++) {
+        if((hres = storage->DeleteRecord(device->pipeline, &refs[i].identity, refs[i].subfactor)) != ERROR_SUCCESS) {
+            log_error("Error deleting sensor record guid=%08x... subfactor=%x: 0x%x!", refs[i].identity.TemplateGuid.PartA, refs[i].subfactor, hres);
+            continue;
+        }
+        num_deleted++;
+    }
+    free(refs);
+    return num_deleted;
+}
+
 int tudor_wipe_records(struct tudor_device *device, RECGUID *guid, enum tudor_finger finger) {
+    if(tudor_uses_native_storage(device)) return wipe_native_records(device, guid, finger);
+
     cant_fail_ret(pthread_mutex_lock(&device->records_lock));
 
     //Find the record
