@@ -1,0 +1,17 @@
+[Unit]
+Description=Pre-warm Synaptics Tudor fingerprint device
+# The Tudor driver takes ~4s to load its (relinked) Windows DLLs and pair with the
+# sensor. GDM/lock-screen ask for the device as soon as they start, so warm it up at
+# boot (before the display manager) to avoid "no fingerprint device" at login.
+After=tudor-host-launcher.service
+Requires=tudor-host-launcher.service
+
+[Service]
+Type=oneshot
+# fprintd-list activates fprintd (which spawns the Tudor host) and opens the device;
+# the host lingers afterwards, so the sensor is ready for GDM/gtklock.
+ExecStart=/usr/bin/fprintd-list root
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
