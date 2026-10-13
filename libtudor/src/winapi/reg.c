@@ -191,3 +191,39 @@ __winfnc LONG RegSetValueExW(HANDLE hkey, const char16_t *val_name, DWORD resv, 
     return suc ? ERROR_SUCCESS : WINERR_SET_CODE;
 }
 WINAPI(RegSetValueExW)
+/* --- RegQueryInfoKey (A/W): report an empty key (fresh data store) --- */
+#include <stdint.h>
+
+__winfnc long RegQueryInfoKeyW(HANDLE hkey, char16_t *cls, DWORD *cls_len, DWORD *reserved,
+        DWORD *subkeys, DWORD *max_subkey_len, DWORD *max_class_len,
+        DWORD *values, DWORD *max_val_name_len, DWORD *max_val_len,
+        DWORD *sec_desc_len, void *last_write_time) {
+    (void)hkey; (void)cls; (void)reserved; (void)last_write_time;
+    if(cls_len) *cls_len = 0;
+    if(subkeys) *subkeys = 0;
+    if(max_subkey_len) *max_subkey_len = 0;
+    if(max_class_len) *max_class_len = 0;
+    if(values) *values = 0;
+    if(max_val_name_len) *max_val_name_len = 0;
+    if(max_val_len) *max_val_len = 0;
+    if(sec_desc_len) *sec_desc_len = 0;
+    return 0; /* ERROR_SUCCESS */
+}
+WINAPI(RegQueryInfoKeyW)
+
+__winfnc long RegQueryInfoKeyA(HANDLE hkey, char *cls, DWORD *cls_len, DWORD *reserved,
+        DWORD *subkeys, DWORD *max_subkey_len, DWORD *max_class_len,
+        DWORD *values, DWORD *max_val_name_len, DWORD *max_val_len,
+        DWORD *sec_desc_len, void *last_write_time) {
+    (void)hkey; (void)cls; (void)reserved; (void)last_write_time;
+    if(cls_len) *cls_len = 0;
+    if(subkeys) *subkeys = 0;
+    if(max_subkey_len) *max_subkey_len = 0;
+    if(max_class_len) *max_class_len = 0;
+    if(values) *values = 0;
+    if(max_val_name_len) *max_val_name_len = 0;
+    if(max_val_len) *max_val_len = 0;
+    if(sec_desc_len) *sec_desc_len = 0;
+    return 0;
+}
+WINAPI(RegQueryInfoKeyA)

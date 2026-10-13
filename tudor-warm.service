@@ -1,0 +1,12 @@
+[Unit]
+Description=Pre-warm Synaptics Tudor fingerprint device
+After=tudor-host-launcher.service
+Requires=tudor-host-launcher.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/fprintd-list root
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

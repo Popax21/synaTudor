@@ -65,11 +65,9 @@ libtudor_src = [
 ]
 
 driver_dll_names = [
-    'synaFpAdapter104.dll',
-    'synaWudfBioUsb104.dll'
+    'synaFpAdapter139.dll',
+    'synaWudfBioUsb139.dll'
 ]
-
-add_global_arguments('-Wno-incompatible-pointer-types', language : 'c')
 
 driver_dlls = custom_target('driver-download', 
     output: driver_dll_names,
