@@ -193,6 +193,16 @@ __winfnc NTSTATUS WdfUsbTargetDeviceCreate(WDF_DRIVER_GLOBALS *globals, WDFOBJEC
         }
     }
 
+    //Claim all interfaces up-front so USB transfers work regardless of whether
+    //the driver explicitly requests an interface object first.
+    //(fixes: kernel usbfs "did not claim interface 0 before use")
+    for(int i = 0; i < usb_dev->cfg_descr->bNumInterfaces; i++) {
+        int claim_err = libusb_claim_interface(usb_dev->libusb_dev, i);
+        if(claim_err != 0) {
+            log_error("libusb_claim_interface(%d) failed: %d [%s]", i, claim_err, libusb_error_name(claim_err));
+        }
+    }
+
     wdf_set_usb_device(dev, usb_dev);
     *out = &usb_dev->object;
     return STATUS_SUCCESS;
