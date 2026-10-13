@@ -10,7 +10,7 @@ tudor_tod_src = [
 ]
 
 libfprint_tod_dep = dependency('libfprint-2-tod-1')
-udev_dep = dependency('udev')
+udev_dep = dependency('libudev')
 libusb_dep = dependency('libusb-1.0')
 gusb_dep = dependency('gusb')
 json_glib_dep = dependency('json-glib-1.0')
@@ -25,5 +25,5 @@ tudor_tod = shared_module('tudor_tod',
 )
 
 install_data('60-tudor-libfprint-tod.rules',
-    install_dir: udev_dep.get_variable(pkgconfig: 'udevdir'),
+    install_dir: udev_dep.get_variable(pkgconfig: 'udevdir', default_value: '/usr/lib/udev'),
 )
