@@ -111,4 +111,4 @@ When iterating on the driver itself, use `tools/tudor-probe.sh` (builds with
 
 - Runs Synaptics' proprietary Windows binaries (see project disclaimer); x86-64 only.
 - `contrib/README.md` explains *why* fixes 12–13 exist and how to verify.
-- `REVERSE_ENGINEERING_HANDBOOK.md` has the full method and an AI prompt to continue.
+- `REVERSE_ENGINEERING_HANDBOOK.md` has the full method and findings.

@@ -1,4 +1,4 @@
-# Linux Driver Reverse-Engineering Handbook & AI Prompt
+# Linux Driver Reverse-Engineering Handbook
 ## Target: Synaptics `06cb:00fd` fingerprint sensor (Lenovo IdeaPad 3 14ITL6)
 
 > A field manual for driving a proprietary Windows UMDF biometric driver on Linux,
@@ -87,7 +87,7 @@ WINAPI(RegisterClassExW)           /* registers by name for the loader */
 
 ---
 
-## 4. Progress achieved (live, this session)
+## 4. Progress achieved (verified live)
 
 | # | Wall hit | Fix | File |
 |---|----------|-----|------|
@@ -124,60 +124,7 @@ returns to "No devices available". (Done and verified.)
 
 ---
 
-## 5. THE AI PROMPT (copy-paste this to an AI agent)
-
-```
-You are a senior systems/reverse-engineering engineer. Goal: make the Synaptics
-fingerprint sensor with USB ID 06cb:00fd work on Linux by completing the synaTudor
-runtime-relink driver (github.com/Popax21/synaTudor), targeting Ubuntu 26.04 / libfprint
-1.95.1 TOD. Work directly on the machine.
-
-CONTEXT
-- The sensor is unsupported by upstream libfprint. synaTudor relinks Synaptics' Windows
-  UMDF DLLs (from the Lenovo IdeaPad consumer driver package, current DLLs are v139) and
-  exposes them as a libfprint TOD module.
-- The driver calls WDF functions BY INDEX into a 261-entry table (see Microsoft
-  Windows-Driver-Frameworks wdffuncenum.h). Unimplemented indices abort with
-  "Unresolved WDF function N called!" when built -DDBGWDF.
-- Win32 imports are resolved by name; missing ones abort with
-  "Unresolved import name@lib.dll called!" when built -DDBGIMPORT.
-- Already implemented this session (in the working tree): WDF indices 50/51/52
-  (WdfDevice*InterfaceProperty store) + index 33 stub; GetModuleHandleW(NULL) fix;
-  USER32 RegisterClassEx*/CreateWindowExW + message-loop stubs. The driver now reaches
-  "Opened USB device" and the window/message path; fprintd activation blocks.
-
-METHOD (repeat strictly)
-1. Rebuild with: meson configure build -DDBGWDF=true -DDBGIMPORT=true -DUNMOUNTFS=false
-2. Run the harness: printf 'y\nq\n' > /tmp/yes.txt; sudo /sbin/tudor/tudor_cli /tmp/store
-   -P00fd < /tmp/yes.txt
-3. Read the FIRST unresolved WDF index / import.
-4. Implement it (WDF: __winfnc + WDFFUNC(fn, index); import: __winfnc + WINAPI(name)).
-   Use Microsoft's wdffuncenum.h to map indices to names/signatures. For imports, prefer
-   a minimal correct semantic stub; proxy to existing A-variants converted via
-   winstr_to_str().
-5. Rebuild, reinstall, goto 2. If it crashes, run under gdb
-   (gdb -batch -ex 'run < /tmp/yes.txt' -ex bt --args /sbin/tudor/tudor_cli /tmp/store -P00fd)
-   and fix the top frame.
-6. Success = tudor_cli reaches its "Commands:" prompt, then `e` enroll / `v` verify work.
-   Then re-enable the TOD module + launcher + udev id 06cb:00fd and confirm
-   `fprintd-list` shows the device and GNOME Settings can enroll.
-
-CONSTRAINTS
-- Never leave the system in a state where fprintd hangs (it can break PAM auth).
-  If an iteration leaves fprintd stuck, revert the TOD integration before stopping.
-- Keep changes minimal and in the style of the existing code.
-- Supplying the vendor Windows driver binaries is required (download_driver.sh does it).
-  The project warns about bricked sensors / corrupted firmware: proceed carefully.
-
-DELIVERABLES
-- Working sensor (fprintd + GNOME enrollment), OR a precise backtrace + the next
-  concrete fix if a wall remains.
-- A short changelog of every index/import implemented.
-```
-
----
-
-## 6. Reference: WDF function-table indices (subset, from `wdffuncenum.h`)
+## 5. Reference: WDF function-table indices (subset, from `wdffuncenum.h`)
 
 ```
 16  WdfDeviceInitSetS0IdleSettings? (device init setters 16..29)
@@ -220,7 +167,7 @@ Full source: microsoft/Windows-Driver-Frameworks -> src/publicinc/wdf/umdf/<ver>
 
 ---
 
-## 7. Relevant repositories / references
+## 6. Relevant repositories / references
 
 - `Popax21/synaTudor` — the relinker (issue **#20** documents this exact wall: 33 → 50).
 - `vixalien/synaTudor` (branch `00c9`) — another attempt that got enroll working with stubs.
@@ -231,7 +178,7 @@ Full source: microsoft/Windows-Driver-Frameworks -> src/publicinc/wdf/umdf/<ver>
 
 ---
 
-## 8. Test cases
+## 7. Test cases
 
 | ID | Test | Command | Pass criteria |
 |----|------|---------|---------------|
@@ -247,7 +194,7 @@ Automate TC1–TC3 with `tools/tudor-probe.sh` (below).
 
 ---
 
-## 9. Caveats
+## 8. Caveats
 
 - This executes **Synaptics' proprietary Windows binaries**; upstream warns of bricked
   sensors / corrupted firmware. Low real-world downside here (sensor is already unusable
