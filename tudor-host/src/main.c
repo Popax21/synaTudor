@@ -57,7 +57,7 @@ static const struct tudor_pair_data *get_pdata_cb(const char *name) {
     strncpy(msg.sensor_name, name, IPC_SENSOR_NAME_SIZE);
     ipc_send_msg(pdata_ipc_sock, &msg, sizeof(msg));
 
-    if(has_sensor_name && strcmp(name, probe_sensor_name) == 0){
+    if(has_sensor_name && strcmp(name, probe_sensor_name) != 0){
         log_error("Attempted multiple different sensor pairing data loads!");
         abort();
     } else if(!has_sensor_name) {
