@@ -9,7 +9,12 @@ mkdir -p "$TMP_DIR"
 
 #Download Dell's driver package (Synaptics 6.0.18.1103 A06, release 3PFJG) and check hash
 INSTALLER="$TMP_DIR/installer.exe"
-wget https://downloads.dell.com/FOLDER12308597M/1/Synaptics-Fingerprint-Sensor-Driver_3PFJG_WIN64_6.0.18.1103_A06.EXE -O "$INSTALLER"
+DRIVER_URL="https://downloads.dell.com/FOLDER12308597M/1/Synaptics-Fingerprint-Sensor-Driver_3PFJG_WIN64_6.0.18.1103_A06.EXE"
+if command -v wget >/dev/null 2>&1; then
+    wget "$DRIVER_URL" -O "$INSTALLER"
+else
+    curl -fL "$DRIVER_URL" -o "$INSTALLER"
+fi
 sha256sum "$INSTALLER" | cut -d" " -f1 | cmp - "$HASH_FILE"
 
 #Extract the driver (the package is a self-extracting zip)
