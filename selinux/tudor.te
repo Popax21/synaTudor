@@ -22,6 +22,7 @@ allow system_dbusd_t unconfined_service_t:unix_dgram_socket { read write };
 allow fprintd_t unconfined_service_t:unix_dgram_socket { read write getopt getattr sendto };
 allow fprintd_t unconfined_service_t:fd use;
 
-# glib attempts a privileged setsockopt on the IPC socket; denial is harmless
-# but noisy, and granting it keeps the socket setup on the fast path
-allow fprintd_t self:capability net_admin;
+# glib attempts a privileged setsockopt on the IPC socket; the denial is
+# harmless but noisy, so suppress the audit record rather than grant the
+# capability
+dontaudit fprintd_t self:capability net_admin;
