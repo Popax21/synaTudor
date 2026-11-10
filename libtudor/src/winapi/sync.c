@@ -3,6 +3,8 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include <errno.h>
+#include <string.h>
+#include <time.h>
 #include "internal.h"
 
 DWORD win_wait_sync_obj(HANDLE handle, DWORD timeout) {
@@ -52,6 +54,12 @@ __winfnc void InitializeCriticalSection(CRITICAL_SECTION *sect) {
 }
 WINAPI(InitializeCriticalSection)
 
+__winfnc BOOL InitializeCriticalSectionAndSpinCount(CRITICAL_SECTION *sect, DWORD spin_count) {
+    InitializeCriticalSection(sect);
+    return TRUE;
+}
+WINAPI(InitializeCriticalSectionAndSpinCount)
+
 __winfnc void DeleteCriticalSection(CRITICAL_SECTION* sect) {
     //Destroy the mutex
     cant_fail_ret(pthread_mutex_destroy((pthread_mutex_t*) sect->LockSemaphore));
@@ -93,6 +101,7 @@ static struct sync_event {
     pthread_mutex_t lock;
     pthread_cond_t cond;
     bool state;
+    int waiters;
 } *events_head;
 
 static void evt_destr(struct sync_event *evt) {
@@ -105,6 +114,20 @@ static void evt_destr(struct sync_event *evt) {
 
     cant_fail_ret(pthread_rwlock_unlock(&events_lock));
 
+    //Drivers may close an event while one of their threads still waits on
+    //it (e.g. a worker woken by a shutdown event). Windows tolerates that;
+    //here, leave the event allocated rather than pull it from under the waiter.
+    if(pthread_mutex_trylock(&evt->lock) != 0) {
+        log_debug("Leaking event '%s' closed while in use", evt->name ? evt->name : "");
+        return;
+    }
+    bool in_use = evt->waiters > 0;
+    cant_fail_ret(pthread_mutex_unlock(&evt->lock));
+    if(in_use) {
+        log_debug("Leaking event '%s' closed with waiters", evt->name ? evt->name : "");
+        return;
+    }
+
     //Free memory
     cant_fail_ret(pthread_cond_destroy(&evt->cond));
     cant_fail_ret(pthread_mutex_destroy(&evt->lock));
@@ -115,24 +138,25 @@ static void evt_destr(struct sync_event *evt) {
 static DWORD evt_wait(struct sync_event *evt, DWORD timeout) {
     DWORD res = 0;
     cant_fail_ret(pthread_mutex_lock(&evt->lock));
+    evt->waiters++;
 
-    //Wait for the event
+    //Wait for the event (the deadline is computed once, so spurious wakeups don't extend it)
+    struct timespec deadline;
+    if(timeout != INFINITE) win_timeout_to_abstime(timeout, &deadline);
     while(!evt->state) {
         if(timeout != INFINITE) {
-            struct timespec time;
-            time.tv_nsec = timeout * 10000000L;
-            time.tv_sec = timeout / 1000L;
-            int err = pthread_cond_timedwait(&evt->cond, &evt->lock, &time);
+            int err = pthread_cond_timedwait(&evt->cond, &evt->lock, &deadline);
             if(err == ETIMEDOUT) {
                 res = WAIT_TIMEOUT;
                 break;
             }
-            cant_fail(err);
+            cant_fail_ret(err);
         } else cant_fail_ret(pthread_cond_wait(&evt->cond, &evt->lock));
     }
 
     //Auto-reset event
     if(res == 0 && !evt->manual_reset) evt->state = false;
+    evt->waiters--;
 
     cant_fail_ret(pthread_mutex_unlock(&evt->lock));
     return res;
@@ -148,6 +172,7 @@ HANDLE win_create_event(const char *name, bool initial_state, bool manual_reset)
     evt->name = name ? strdup(name) : NULL;
     evt->state = initial_state;
     evt->manual_reset = manual_reset;
+    evt->waiters = 0;
     cant_fail_ret(pthread_mutex_init(&evt->lock, NULL));
     cant_fail_ret(pthread_cond_init(&evt->cond, NULL));
 
@@ -196,6 +221,77 @@ __winfnc HANDLE CreateEventW(void *attrs, BOOL manual_reset, BOOL initial_state,
     return evt;
 }
 WINAPI(CreateEventW);
+
+__winfnc HANDLE OpenEventW(DWORD access, BOOL inherit, const char16_t *name) {
+    char *cname = winstr_to_str(name);
+    HANDLE handle = NULL;
+
+    cant_fail_ret(pthread_rwlock_rdlock(&events_lock));
+    for(struct sync_event *evt = events_head; evt; evt = evt->next) {
+        if(evt->name && strcmp(evt->name, cname) == 0) {
+            handle = evt->handle;
+            break;
+        }
+    }
+    cant_fail_ret(pthread_rwlock_unlock(&events_lock));
+
+    log_debug("OpenEventW | '%s' -> %s", cname, handle ? "found" : "not found");
+    free(cname);
+    if(!handle) winerr_set_code(2); /* ERROR_FILE_NOT_FOUND */
+    return handle;
+}
+WINAPI(OpenEventW)
+
+struct sync_mutex {
+    struct win_sync_object sync_obj;
+    pthread_mutex_t lock;
+};
+
+static void mutex_destr(struct sync_mutex *mtx) {
+    cant_fail_ret(pthread_mutex_destroy(&mtx->lock));
+    free(mtx);
+}
+
+static DWORD mutex_wait(struct sync_mutex *mtx, DWORD timeout) {
+    if(timeout == INFINITE) {
+        cant_fail_ret(pthread_mutex_lock(&mtx->lock));
+        return 0;
+    }
+
+    struct timespec time;
+    win_timeout_to_abstime(timeout, &time);
+    int err = pthread_mutex_timedlock(&mtx->lock, &time);
+    if(err == ETIMEDOUT) return WAIT_TIMEOUT;
+    cant_fail_ret(err);
+    return 0;
+}
+
+__winfnc HANDLE CreateMutexA(void *attrs, BOOL initial_owner, const char *name) {
+    struct sync_mutex *mtx = (struct sync_mutex*) malloc(sizeof(struct sync_mutex));
+    if(!mtx) { winerr_set_errno(); return NULL; }
+    mtx->sync_obj.wait_fnc = (win_sync_obj_wait_fnc*) mutex_wait;
+
+    //Windows mutexes can be re-acquired by their owning thread
+    pthread_mutexattr_t mattr;
+    cant_fail_ret(pthread_mutexattr_init(&mattr));
+    cant_fail_ret(pthread_mutexattr_settype(&mattr, PTHREAD_MUTEX_RECURSIVE));
+    cant_fail_ret(pthread_mutex_init(&mtx->lock, &mattr));
+    cant_fail_ret(pthread_mutexattr_destroy(&mattr));
+    if(initial_owner) cant_fail_ret(pthread_mutex_lock(&mtx->lock));
+
+    return winhandle_create(mtx, (winhandle_destr_fnc*) mutex_destr);
+}
+WINAPI(CreateMutexA)
+
+__winfnc BOOL ReleaseMutex(HANDLE handle) {
+    struct sync_mutex *mtx = (struct sync_mutex*) handle->data;
+    if(pthread_mutex_unlock(&mtx->lock) != 0) {
+        winerr_set_code(288); /* ERROR_NOT_OWNER */
+        return FALSE;
+    }
+    return TRUE;
+}
+WINAPI(ReleaseMutex)
 
 __winfnc BOOL SetEvent(HANDLE handle) {
     if(handle == INVALID_HANDLE_VALUE) return FALSE;

@@ -4,6 +4,7 @@
 
 __winfnc BOOL CryptAcquireContextA(struct crypt_provider **prov, const char *cont_name, const char *prov_name, DWORD prov_type, DWORD flags) {
     switch(prov_type) {
+        case PROV_RSA_FULL:
         case PROV_RSA_AES: *prov = &crypt_prov_rsa_aes; return TRUE;
         default: {
             log_warn("CryptAcquireContextA | Couldn't find provider for container '%s' provider '%s' provider type 0x%x flags 0x%x", cont_name, prov_name, prov_type, flags);
@@ -12,6 +13,11 @@ __winfnc BOOL CryptAcquireContextA(struct crypt_provider **prov, const char *con
     }
 }
 WINAPI(CryptAcquireContextA)
+
+__winfnc BOOL CryptAcquireContextW(struct crypt_provider **prov, const char16_t *cont_name, const char16_t *prov_name, DWORD prov_type, DWORD flags) {
+    return CryptAcquireContextA(prov, NULL, NULL, prov_type, flags);
+}
+WINAPI(CryptAcquireContextW)
 
 __winfnc BOOL CryptReleaseContext(struct crypt_provider *prov, DWORD flags) {
     return TRUE;
@@ -33,6 +39,9 @@ __winfnc BOOL CryptImportKey(struct crypt_provider *prov, const BLOBHEADER *data
     if(!key) { winerr_set_errno(); return FALSE; }
     key->prov = prov;
     key->key_data = NULL;
+    key->mode = CRYPT_MODE_CBC;
+    memset(key->iv, 0, sizeof(key->iv));
+    key->cipher_ctx = NULL;
 
     if(data->bType == type_PLAINTEXTKEYBLOB) {
         //Copy plaintext data
@@ -67,11 +76,107 @@ WINAPI(CryptImportKey)
 
 __winfnc BOOL CryptDestroyKey(struct crypt_key *key) {
     if(key->prov->destroy_key) key->prov->destroy_key(key->prov, key->key_data);
+    EVP_CIPHER_CTX_free(key->cipher_ctx);
     free(key->plain_data);
     free(key);
     return TRUE;
 }
 WINAPI(CryptDestroyKey)
+
+__winfnc BOOL CryptSetKeyParam(struct crypt_key *key, DWORD param, const BYTE *data, DWORD flags) {
+    switch(param) {
+        case KP_IV:
+            memcpy(key->iv, data, sizeof(key->iv));
+            break;
+        case KP_MODE:
+            key->mode = *(const DWORD*) data;
+            break;
+        case KP_PADDING:
+            //Padding is never applied, see key_cipher_run
+            break;
+        default:
+            log_warn("CryptSetKeyParam | unsupported param %u", param);
+            winerr_set();
+            return FALSE;
+    }
+
+    //A new IV / mode starts a new message
+    EVP_CIPHER_CTX_free(key->cipher_ctx);
+    key->cipher_ctx = NULL;
+    return TRUE;
+}
+WINAPI(CryptSetKeyParam)
+
+static const EVP_CIPHER *key_cipher(struct crypt_key *key) {
+    bool ecb = key->mode == CRYPT_MODE_ECB;
+    switch(key->plain_size) {
+        case 16: return ecb ? EVP_aes_128_ecb() : EVP_aes_128_cbc();
+        case 24: return ecb ? EVP_aes_192_ecb() : EVP_aes_192_cbc();
+        case 32: return ecb ? EVP_aes_256_ecb() : EVP_aes_256_cbc();
+        default: return NULL;
+    }
+}
+
+//The driver encrypts multi-part data across several calls, so the cipher
+//context lives on the key until the Final call to keep CBC chaining intact.
+//Padding is never applied: the driver only passes whole blocks.
+static BOOL key_cipher_run(struct crypt_key *key, int enc, BOOL final, BYTE *data, DWORD *data_len) {
+    if(key->cipher_ctx && key->cipher_enc != enc) {
+        EVP_CIPHER_CTX_free(key->cipher_ctx);
+        key->cipher_ctx = NULL;
+    }
+
+    if(!key->cipher_ctx) {
+        const EVP_CIPHER *cipher = key->plain_data ? key_cipher(key) : NULL;
+        if(!cipher) {
+            log_warn("%s | unsupported key (size %zu mode %u)", enc ? "CryptEncrypt" : "CryptDecrypt", key->plain_size, key->mode);
+            winerr_set();
+            return FALSE;
+        }
+
+        key->cipher_ctx = EVP_CIPHER_CTX_new();
+        if(!key->cipher_ctx || !EVP_CipherInit_ex(key->cipher_ctx, cipher, NULL, key->plain_data, key->mode == CRYPT_MODE_ECB ? NULL : key->iv, enc)) {
+            log_warn("Error initializing cipher: %s", ERR_error_string(ERR_get_error(), NULL));
+            winerr_set();
+            return FALSE;
+        }
+        EVP_CIPHER_CTX_set_padding(key->cipher_ctx, 0);
+        key->cipher_enc = enc;
+    }
+
+    int out_len = 0, final_len = 0;
+    if(!EVP_CipherUpdate(key->cipher_ctx, data, &out_len, data, *data_len) ||
+        (final && !EVP_CipherFinal_ex(key->cipher_ctx, data + out_len, &final_len))) {
+        log_warn("Error running cipher: %s", ERR_error_string(ERR_get_error(), NULL));
+        winerr_set();
+        return FALSE;
+    }
+
+    if(final) {
+        EVP_CIPHER_CTX_free(key->cipher_ctx);
+        key->cipher_ctx = NULL;
+    }
+
+    *data_len = out_len + final_len;
+    return TRUE;
+}
+
+__winfnc BOOL CryptEncrypt(struct crypt_key *key, struct crypt_hash *hash, BOOL final, DWORD flags, BYTE *data, DWORD *data_len, DWORD buf_len) {
+    if(hash) { log_warn("CryptEncrypt called with a hash object"); winerr_set(); return FALSE; }
+
+    //Size query: without padding the output is as long as the input
+    if(!data) return TRUE;
+    if(*data_len > buf_len) { winerr_set_code(ERROR_INSUFFICIENT_BUFFER); return FALSE; }
+
+    return key_cipher_run(key, 1, final, data, data_len);
+}
+WINAPI(CryptEncrypt)
+
+__winfnc BOOL CryptDecrypt(struct crypt_key *key, struct crypt_hash *hash, BOOL final, DWORD flags, BYTE *data, DWORD *data_len) {
+    if(hash) { log_warn("CryptDecrypt called with a hash object"); winerr_set(); return FALSE; }
+    return key_cipher_run(key, 0, final, data, data_len);
+}
+WINAPI(CryptDecrypt)
 
 __winfnc BOOL CryptCreateHash(struct crypt_provider *prov, ALG_ID alg_id, struct crypt_key *key, DWORD flags, struct crypt_hash **out) {
     //Get the algorithm

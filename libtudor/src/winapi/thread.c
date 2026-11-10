@@ -40,12 +40,11 @@ static DWORD thread_wait(struct win_thread *thread, DWORD timeout) {
     if(timeout == INFINITE) {
         cant_fail_ret(pthread_join(thread->thread, NULL));
     } else {
-        struct timespec time;
-        time.tv_nsec = timeout * 10000000L;
-        time.tv_sec = timeout / 1000L;
-        int err = pthread_timedjoin_np(thread->thread, NULL, &time);
+        struct timespec deadline;
+        win_timeout_to_abstime(timeout, &deadline);
+        int err = pthread_timedjoin_np(thread->thread, NULL, &deadline);
         if(err == ETIMEDOUT) return WAIT_TIMEOUT;
-        cant_fail(err);
+        cant_fail_ret(err);
     }
 
     thread->has_detached = TRUE;

@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <signal.h>
 #include <tudor/dbus-launcher.h>
 #include "dbus.h"
 #include "launch.h"
@@ -54,6 +55,10 @@ static void name_lost(GDBusConnection *con, const gchar *name, gpointer user_dat
 }
 
 int main() {
+    //Ignore SIGUSR1 - the sandbox setup of tudor_host uses it for
+    //parent/child synchronization, and a stray delivery must not kill us
+    signal(SIGUSR1, SIG_IGN);
+
     //Connect to DBus
     GError *error = NULL;
     dbus_con = g_bus_get_sync(G_BUS_TYPE_SYSTEM, NULL, &error);

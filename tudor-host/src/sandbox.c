@@ -114,8 +114,8 @@ static void unmount_root() {
 #ifdef UNMOUNTFS
     //Pivot root
     cant_fail(mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL));
-    cant_fail(mount("/sbin/tudor", "/sbin/tudor", NULL, MS_BIND | MS_NOSUID | MS_RDONLY, NULL));
-    cant_fail(chdir("/sbin/tudor"));
+    cant_fail(mount(TUDOR_INSTALL_DIR, TUDOR_INSTALL_DIR, NULL, MS_BIND | MS_NOSUID | MS_RDONLY, NULL));
+    cant_fail(chdir(TUDOR_INSTALL_DIR));
     cant_fail(syscall(SYS_pivot_root, ".", "."));
     cant_fail(umount2(".", MNT_DETACH));
     cant_fail(chdir("/"));
@@ -168,6 +168,7 @@ static void setup_seccomp() {
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(clock_getres), 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(clock_gettime), 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(clock_nanosleep), 0));
+    cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ALLOW, SCMP_SYS(restart_syscall), 0));
 
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(access), 0));
     cant_fail(seccomp_rule_add(scmp_ctx, SCMP_ACT_ERRNO(ENOSYS), SCMP_SYS(stat), 0));

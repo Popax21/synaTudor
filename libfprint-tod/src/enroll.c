@@ -70,6 +70,16 @@ static void enroll_recv_cb(GObject *src_obj, GAsyncResult *res, gpointer user_da
                 break;
             }
 
+            //The host refused to commit the enrollment (and already discarded it)
+            if(msg->resp_enroll.duplicate || msg->resp_enroll.failed) {
+                g_info("Tudor host reported enroll %s for GUID %08x... finger %d", msg->resp_enroll.duplicate ? "duplicate" : "commit failure", params->guid.PartA, params->finger);
+                fpi_device_enroll_complete(FP_DEVICE(tdev), NULL, msg->resp_enroll.duplicate
+                    ? fpi_device_error_new(FP_DEVICE_ERROR_DATA_DUPLICATE)
+                    : fpi_device_error_new_msg(FP_DEVICE_ERROR_GENERAL, "Tudor host couldn't commit the enrollment"));
+                free_enroll_params(params);
+                break;
+            }
+
             //Complete the enrollment
             //Get the print to enroll
             FpPrint *print;

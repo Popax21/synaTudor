@@ -46,8 +46,12 @@ NTSTATUS winwdf_open_device(struct winwdf_device *device, struct winwdf_file **o
     WDF_FILEOBJECT_CONFIG *cfg = wdf_get_fs_config(device);
     if(create_queue) {
         wdf_queue_create(create_queue, req);
-    } else if(cfg) {
-        if(cfg->EvtDeviceFileCreate) cfg->EvtDeviceFileCreate((WDFOBJECT) device, (WDFOBJECT) req, &file->object);
+    } else if(cfg && cfg->EvtDeviceFileCreate) {
+        cfg->EvtDeviceFileCreate((WDFOBJECT) device, (WDFOBJECT) req, &file->object);
+    } else {
+        //The driver handles creates neither through a queue nor a callback -
+        //like the framework, let the create succeed
+        wdf_complete_request(req, STATUS_SUCCESS, NULL);
     }
 
     NTSTATUS status = winwdf_wait_request(req);

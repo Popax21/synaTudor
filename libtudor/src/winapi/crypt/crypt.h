@@ -22,7 +22,19 @@ struct crypt_key {
 
     void *plain_data;
     size_t plain_size;
+
+    //Symmetric cipher state for CryptEncrypt / CryptDecrypt
+    DWORD mode;
+    uint8_t iv[16];
+    EVP_CIPHER_CTX *cipher_ctx;
+    int cipher_enc;
 };
+
+#define KP_IV 1
+#define KP_PADDING 3
+#define KP_MODE 4
+#define CRYPT_MODE_CBC 1
+#define CRYPT_MODE_ECB 2
 
 extern struct crypt_provider crypt_prov_rsa_aes;
 

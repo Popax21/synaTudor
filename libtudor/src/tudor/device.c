@@ -60,6 +60,7 @@ bool tudor_open(struct tudor_device *device, libusb_device_handle *usb_dev, stru
     NTSTATUS status;
 
     device->state = state ? *state : (struct tudor_device_state) {0};
+    device->capture_start_fails = 0;
     device->enrolling = false;
     cant_fail_ret(pthread_mutex_init(&device->records_lock, NULL));
     device->records_head = NULL;
@@ -101,21 +102,36 @@ bool tudor_open(struct tudor_device *device, libusb_device_handle *usb_dev, stru
     *device->pipeline = (WINBIO_PIPELINE) {0};
     device->pipeline->EngineInterface = tudor_engine_adapter;
     device->pipeline->SensorInterface = tudor_sensor_adapter;
-    device->pipeline->StorageInterface = tudor_storage_adapter;
+    device->pipeline->StorageInterface = tudor_native_storage_adapter ? tudor_native_storage_adapter : tudor_storage_adapter;
     device->pipeline->SensorHandle = device->winbio_file = winio_create_file(device, true, NULL, NULL, (winio_devctrl_fnc*) tudor_devctrl, (winio_cancel_fnc*) tudor_cancel, (winio_cleanup_fnc*) tudor_cleanup, NULL);
     device->pipeline->EngineHandle = INVALID_HANDLE_VALUE;
     device->pipeline->StorageHandle = INVALID_HANDLE_VALUE;
-    device->pipeline->StorageContext = device;
+    //The vendor adapter must find the context empty at Attach
+    device->pipeline->StorageContext = tudor_native_storage_adapter ? NULL : device;
 
     log_debug("Attaching interfaces to pipeline...");
     WINBIO_CALL_PIPELINE(tudor_sensor_adapter->Attach, device->pipeline);
     WINBIO_CALL_PIPELINE(tudor_engine_adapter->Attach, device->pipeline);
-    WINBIO_CALL_PIPELINE(tudor_storage_adapter->Attach, device->pipeline);
+    WINBIO_CALL_PIPELINE(device->pipeline->StorageInterface->Attach, device->pipeline);
 
     log_debug("Initializing pipeline interfaces...");
     WINBIO_CALL_PIPELINE(tudor_sensor_adapter->PipelineInit, device->pipeline);
     WINBIO_CALL_PIPELINE(tudor_engine_adapter->PipelineInit, device->pipeline);
-    WINBIO_CALL_PIPELINE(tudor_storage_adapter->PipelineInit, device->pipeline);
+    WINBIO_CALL_PIPELINE(device->pipeline->StorageInterface->PipelineInit, device->pipeline);
+
+    //The vendor adapter's database lives on the sensor, but OpenDatabase still
+    //wants non-NULL path strings
+    if(tudor_native_storage_adapter) {
+        log_debug("Opening the sensor template database...");
+        char16_t *db_path = winstr_from_str("tudor-sensor.db"), *db_connect = winstr_from_str("");
+        hres = tudor_native_storage_adapter->OpenDatabase(device->pipeline, &tudor_windrv->database_id, db_path, db_connect);
+        free(db_path);
+        free(db_connect);
+        if(hres != ERROR_SUCCESS) {
+            log_error("Error opening the sensor template database: 0x%x!", hres);
+            return false;
+        }
+    }
 
     //Reset the sensor
     log_debug("Resetting sensor...");
@@ -125,7 +141,7 @@ bool tudor_open(struct tudor_device *device, libusb_device_handle *usb_dev, stru
     log_debug("Activating pipeline...");
     WINBIO_CALL_PIPELINE(tudor_sensor_adapter->Activate, device->pipeline);
     WINBIO_CALL_PIPELINE(tudor_engine_adapter->Activate, device->pipeline);
-    WINBIO_CALL_PIPELINE(tudor_storage_adapter->Activate, device->pipeline);
+    WINBIO_CALL_PIPELINE(device->pipeline->StorageInterface->Activate, device->pipeline);
 
     //Check the sensor status
     log_debug("Checking sensor status...");
@@ -148,18 +164,20 @@ bool tudor_close(struct tudor_device *device) {
     log_debug("Deactivating pipeline...");
     WINBIO_CALL_PIPELINE(tudor_sensor_adapter->Deactivate, device->pipeline);
     WINBIO_CALL_PIPELINE(tudor_engine_adapter->Deactivate, device->pipeline);
-    WINBIO_CALL_PIPELINE(tudor_storage_adapter->Deactivate, device->pipeline);
+    WINBIO_CALL_PIPELINE(device->pipeline->StorageInterface->Deactivate, device->pipeline);
 
     //Uninitialize the pipeline
     log_debug("Uninitializing pipeline interfaces...");
     WINBIO_CALL_PIPELINE(tudor_sensor_adapter->PipelineCleanup, device->pipeline);
     WINBIO_CALL_PIPELINE(tudor_engine_adapter->PipelineCleanup, device->pipeline);
-    WINBIO_CALL_PIPELINE(tudor_storage_adapter->PipelineCleanup, device->pipeline);
+    WINBIO_CALL_PIPELINE(device->pipeline->StorageInterface->PipelineCleanup, device->pipeline);
+
+    if(tudor_native_storage_adapter) WINBIO_CALL_PIPELINE(tudor_native_storage_adapter->CloseDatabase, device->pipeline);
 
     log_debug("Detaching interfaces from pipeline...");
     WINBIO_CALL_PIPELINE(tudor_sensor_adapter->Detach, device->pipeline);
     WINBIO_CALL_PIPELINE(tudor_engine_adapter->Detach, device->pipeline);
-    WINBIO_CALL_PIPELINE(tudor_storage_adapter->Detach, device->pipeline);
+    WINBIO_CALL_PIPELINE(device->pipeline->StorageInterface->Detach, device->pipeline);
     free(device->pipeline);
 
     winhandle_destroy(device->winbio_file);
@@ -199,7 +217,7 @@ bool tudor_enroll_start(struct tudor_device *device, RECGUID guid, enum tudor_fi
     //Follow https://docs.microsoft.com/en-us/windows/win32/secbiomet/adapter-workflow - WinBioEnrollBegin
     WINBIO_CALL_PIPELINE(tudor_sensor_adapter->ClearContext, device->pipeline);
     WINBIO_CALL_PIPELINE(tudor_engine_adapter->ClearContext, device->pipeline);
-    WINBIO_CALL_PIPELINE(tudor_storage_adapter->ClearContext, device->pipeline);
+    WINBIO_CALL_PIPELINE(device->pipeline->StorageInterface->ClearContext, device->pipeline);
     WINBIO_CALL_PIPELINE(tudor_engine_adapter->CreateEnrollment, device->pipeline);
     WINBIO_CALL_PIPELINE(tudor_engine_adapter->SetEnrollmentParameters, device->pipeline, &(WINBIO_EXTENDED_ENROLLMENT_PARAMETERS) {
         .Size = sizeof(WINBIO_EXTENDED_ENROLLMENT_PARAMETERS),
@@ -212,11 +230,29 @@ bool tudor_enroll_start(struct tudor_device *device, RECGUID guid, enum tudor_fi
     return true;
 }
 
+#define CAPTURE_ABORTED 0x800703e3 //HRESULT_FROM_WIN32(ERROR_OPERATION_ABORTED)
+#define MAX_CAPTURE_START_RETRIES 15
+
+//Whether to retry a capture which failed to start - pauses before returning true
+static bool retry_capture_start(struct tudor_device *device, NTSTATUS status) {
+    if(status == STATUS_SUCCESS) {
+        device->capture_start_fails = 0;
+        return false;
+    }
+    if(!tudor_windrv->retry_capture_start || status == CAPTURE_ABORTED) return false;
+    if(++device->capture_start_fails > MAX_CAPTURE_START_RETRIES) return false;
+
+    log_warn("Retrying capture in 1s [attempt %d/%d]", device->capture_start_fails, MAX_CAPTURE_START_RETRIES);
+    sleep(1);
+    return true;
+}
+
 static void enroll_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res) {
     winmodule_set_cur(&tudor_adapter_dll->module);
     HRESULT hres;
     bool success = false, done = true;
 
+    if(retry_capture_start(res->dev, status)) done = false;
     if(status != STATUS_SUCCESS) {
         log_error("Error starting capture: 0x%x!", status);
         goto exit;
@@ -333,6 +369,7 @@ static void verify_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res) 
     HRESULT hres;
     bool success = false, retry = false, matches = false;
 
+    retry = retry_capture_start(res->dev, status);
     if(status != STATUS_SUCCESS) {
         log_error("Error starting capture: 0x%x!", status);
         goto exit;
@@ -405,6 +442,7 @@ static void identify_cb(OVERLAPPED *ovlp, NTSTATUS status, tudor_async_res_t res
     HRESULT hres;
     bool success = false, retry = false, found_match = false;
 
+    retry = retry_capture_start(res->dev, status);
     if(status != STATUS_SUCCESS) {
         log_error("Error starting capture: 0x%x!", status);
         goto exit;

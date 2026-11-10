@@ -25,5 +25,5 @@ tudor_tod = shared_module('tudor_tod',
 )
 
 install_data('60-tudor-libfprint-tod.rules',
-    install_dir: udev_dep.get_variable(pkgconfig: 'udevdir'),
+    install_dir: udev_dep.get_variable(pkgconfig: 'udevdir') / 'rules.d',
 )

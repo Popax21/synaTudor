@@ -24,6 +24,7 @@ enum ipc_msg_type {
     IPC_MSG_ADD_RECORD,
     IPC_MSG_DEL_RECORD,
     IPC_MSG_CLEAR_RECORDS,
+    IPC_MSG_CLEAR_HOST_RECORDS,
 
     IPC_MSG_ENROLL,
     IPC_MSG_RESP_ENROLL,
@@ -98,6 +99,7 @@ struct ipc_msg_resp_enroll {
     enum ipc_msg_type type;
 
     bool retry, done;
+    bool duplicate, failed; //Only valid if done - no record data follows if either is set
     uint8_t record_data[];
 };
 
