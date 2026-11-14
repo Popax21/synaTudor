@@ -76,7 +76,7 @@ static void host_died_signal_cb(GDBusConnection *con, const gchar *sender, const
 
 void register_host_process_monitor(FpiDeviceTudor *tdev) {
     //Register a signal listener
-    g_dbus_connection_signal_subscribe(tdev->dbus_con,
+    tdev->host_died_signal_id = g_dbus_connection_signal_subscribe(tdev->dbus_con,
         TUDOR_HOST_LAUNCHER_SERVICE, TUDOR_HOST_LAUNCHER_INTERF, TUDOR_HOST_LAUNCHER_HOST_DIED_SIGNAL, TUDOR_HOST_LAUNCHER_OBJ,
         NULL, G_DBUS_SIGNAL_FLAGS_NONE,
         host_died_signal_cb, tdev, NULL
@@ -250,7 +250,7 @@ static void init_host_proc(FpiDeviceTudor *tdev, GTask *task, GUsbDevice *usb_de
     recv_ipc_msg(tdev, init_recv_cb, task);
 }
 
-void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer user_data) {
+static void do_open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer user_data) {
     GError *error = NULL;
 
     //Create task
@@ -323,6 +323,59 @@ void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer us
         g_task_return_int(task, 0);
         g_object_unref(task);
     }
+}
+
+static void open_waiters_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
+
+    GError *error = NULL;
+    g_task_propagate_int(G_TASK(res), &error);
+
+    //logind refuses sleep inhibitors while a sleep is in progress - keep the waiters and retry once the system has resumed
+    if(error && is_sleep_in_progress_error(error)) {
+        g_info("Deferring tudor device open until resume...");
+        tdev->open_deferred = true;
+        g_clear_error(&error);
+        return;
+    }
+
+    //Complete all tasks which waited for this open
+    GPtrArray *waiters = tdev->open_waiters;
+    tdev->open_waiters = NULL;
+
+    for(guint i = 0; i < waiters->len; i++) {
+        GTask *task = G_TASK(g_ptr_array_index(waiters, i));
+        if(error) g_task_return_error(task, g_error_copy(error));
+        else g_task_return_int(task, 0);
+        g_object_unref(task);
+    }
+
+    g_ptr_array_free(waiters, TRUE);
+    g_clear_error(&error);
+}
+
+void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer user_data) {
+    GTask *task = g_task_new(tdev, NULL, callback, user_data);
+
+    //If the device is already being opened (e.g. after resume), wait for that to finish instead of using a half-initialized host
+    if(tdev->open_waiters) {
+        g_debug("Waiting for in-progress tudor device open...");
+        g_ptr_array_add(tdev->open_waiters, task);
+        return;
+    }
+
+    tdev->open_waiters = g_ptr_array_new();
+    g_ptr_array_add(tdev->open_waiters, task);
+    do_open_device(tdev, open_waiters_cb, NULL);
+}
+
+bool resume_deferred_open(FpiDeviceTudor *tdev) {
+    if(!tdev->open_deferred) return false;
+    tdev->open_deferred = false;
+
+    g_info("Retrying deferred tudor device open after resume...");
+    do_open_device(tdev, open_waiters_cb, NULL);
+    return true;
 }
 
 static void shutdown_timeout_cb(FpDevice *dev, gpointer user_data) {

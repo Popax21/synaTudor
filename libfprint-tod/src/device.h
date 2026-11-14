@@ -13,6 +13,7 @@ struct _FpiDeviceTudor {
     GList *dev_list_link;
 
     GDBusConnection *dbus_con;
+    guint host_died_signal_id, suspend_signal_id;
     gint usb_fd;
 
     guint host_id;
@@ -24,6 +25,8 @@ struct _FpiDeviceTudor {
     IPCMessageBuf *send_msg;
 
     gchar *pdata_sensor_name;
+    GPtrArray *open_waiters;
+    bool open_deferred;
     GTask *close_task;
     GSource *close_timeout_src;
 

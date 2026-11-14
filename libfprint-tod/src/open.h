@@ -10,6 +10,7 @@
 void register_host_process_monitor(FpiDeviceTudor *tdev);
 
 void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer user_data);
+bool resume_deferred_open(FpiDeviceTudor *tdev);
 void close_device(FpiDeviceTudor *tdev, bool orphan_host, GAsyncReadyCallback callback, gpointer user_data);
 
 void fpi_device_tudor_probe(FpDevice *dev);

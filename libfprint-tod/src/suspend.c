@@ -8,6 +8,7 @@
 #define LOGIND_OBJ "/org/freedesktop/login1"
 #define LOGIND_PREPARE_SLEEP_SIGNAL "PrepareForSleep"
 #define LOGIND_SLEEP_INHIBIT_METHOD "Inhibit"
+#define LOGIND_OPERATION_IN_PROGRESS_ERROR "org.freedesktop.login1.OperationInProgress"
 
 static void suspend_close_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
     GTask *task = G_TASK(res);
@@ -80,6 +81,21 @@ static void suspend_timeout_cb(FpDevice *dev, gpointer user_data) {
     }
 }
 
+static void resume_open_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
+
+    //Check for errors
+    GError *error = NULL;
+    g_task_propagate_int(G_TASK(res), &error);
+    if(error) {
+        g_warning("Error reopening tudor device after resume: %s (%s code %d)", error->message, g_quark_to_string(error->domain), error->code);
+        g_clear_error(&error);
+        return;
+    }
+
+    g_info("Reopened tudor device after resume (host ID %d)", tdev->host_id);
+}
+
 static void suspend_signal_cb(GDBusConnection *con, const gchar *sender, const gchar *obj, const gchar *interf, const gchar *signal, GVariant *params, gpointer user_data) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(user_data);
 
@@ -92,7 +108,17 @@ static void suspend_signal_cb(GDBusConnection *con, const gchar *sender, const g
     gboolean enter_sleep;
     g_variant_get(params, "(b)", &enter_sleep);
 
-    if(!enter_sleep) return;
+    if(!enter_sleep) {
+        //Retry an open which was deferred because of the sleep
+        if(resume_deferred_open(tdev)) return;
+
+        //Reopen the device in the background, so that it's ready by the time it's first used after resume
+        if(!tdev->host_has_id) {
+            g_info("Reopening tudor device after resume...");
+            open_device(tdev, resume_open_cb, NULL);
+        }
+        return;
+    }
 
     //Steal the sleep inhibitor
     gint sleep_inhib = tdev->host_sleep_inhib;
@@ -123,11 +149,20 @@ static void suspend_signal_cb(GDBusConnection *con, const gchar *sender, const g
 
 void register_suspend_monitor(FpiDeviceTudor *tdev) {
     //Register a signal listener
-    g_dbus_connection_signal_subscribe(tdev->dbus_con,
+    tdev->suspend_signal_id = g_dbus_connection_signal_subscribe(tdev->dbus_con,
         LOGIND_SERVICE, LOGIND_INTERF, LOGIND_PREPARE_SLEEP_SIGNAL, LOGIND_OBJ,
         NULL, G_DBUS_SIGNAL_FLAGS_NONE,
         suspend_signal_cb, tdev, NULL
     );
+}
+
+bool is_sleep_in_progress_error(const GError *error) {
+    if(!g_dbus_error_is_remote_error(error)) return false;
+
+    gchar *name = g_dbus_error_get_remote_error(error);
+    bool in_progress = g_strcmp0(name, LOGIND_OPERATION_IN_PROGRESS_ERROR) == 0;
+    g_free(name);
+    return in_progress;
 }
 
 bool create_sleep_inhibitor(FpiDeviceTudor *tdev, GError **error) {
