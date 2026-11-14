@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <dlfcn.h>
 #include <sys/stat.h>
 #include <sys/socket.h>
 
@@ -127,6 +128,12 @@ int main() {
         return EXIT_FAILURE;
     }
     int sock = STDIN_FILENO;
+
+    //Preload libgcc_s - glibc lazily loads it to unwind threads on pthread_exit (e.g. ExitThread on suspend), which aborts once the sandbox has unmounted the file system
+    if(!dlopen("libgcc_s.so.1", RTLD_NOW | RTLD_NODELETE)) {
+        log_error("Couldn't preload libgcc_s: %s", dlerror());
+        return EXIT_FAILURE;
+    }
 
     //Activate sandbox
     activate_sandbox();
