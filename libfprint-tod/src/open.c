@@ -250,7 +250,7 @@ static void init_host_proc(FpiDeviceTudor *tdev, GTask *task, GUsbDevice *usb_de
     recv_ipc_msg(tdev, init_recv_cb, task);
 }
 
-void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer user_data) {
+static void do_open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer user_data) {
     GError *error = NULL;
 
     //Create task
@@ -323,6 +323,42 @@ void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer us
         g_task_return_int(task, 0);
         g_object_unref(task);
     }
+}
+
+static void open_waiters_cb(GObject *src_obj, GAsyncResult *res, gpointer user_data) {
+    FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(src_obj);
+
+    GError *error = NULL;
+    g_task_propagate_int(G_TASK(res), &error);
+
+    //Complete all tasks which waited for this open
+    GPtrArray *waiters = tdev->open_waiters;
+    tdev->open_waiters = NULL;
+
+    for(guint i = 0; i < waiters->len; i++) {
+        GTask *task = G_TASK(g_ptr_array_index(waiters, i));
+        if(error) g_task_return_error(task, g_error_copy(error));
+        else g_task_return_int(task, 0);
+        g_object_unref(task);
+    }
+
+    g_ptr_array_free(waiters, TRUE);
+    g_clear_error(&error);
+}
+
+void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer user_data) {
+    GTask *task = g_task_new(tdev, NULL, callback, user_data);
+
+    //If the device is already being opened (e.g. after resume), wait for that to finish instead of using a half-initialized host
+    if(tdev->open_waiters) {
+        g_debug("Waiting for in-progress tudor device open...");
+        g_ptr_array_add(tdev->open_waiters, task);
+        return;
+    }
+
+    tdev->open_waiters = g_ptr_array_new();
+    g_ptr_array_add(tdev->open_waiters, task);
+    do_open_device(tdev, open_waiters_cb, NULL);
 }
 
 static void shutdown_timeout_cb(FpDevice *dev, gpointer user_data) {
