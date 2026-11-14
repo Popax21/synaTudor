@@ -76,7 +76,7 @@ static void host_died_signal_cb(GDBusConnection *con, const gchar *sender, const
 
 void register_host_process_monitor(FpiDeviceTudor *tdev) {
     //Register a signal listener
-    g_dbus_connection_signal_subscribe(tdev->dbus_con,
+    tdev->host_died_signal_id = g_dbus_connection_signal_subscribe(tdev->dbus_con,
         TUDOR_HOST_LAUNCHER_SERVICE, TUDOR_HOST_LAUNCHER_INTERF, TUDOR_HOST_LAUNCHER_HOST_DIED_SIGNAL, TUDOR_HOST_LAUNCHER_OBJ,
         NULL, G_DBUS_SIGNAL_FLAGS_NONE,
         host_died_signal_cb, tdev, NULL

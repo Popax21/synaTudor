@@ -123,7 +123,7 @@ static void suspend_signal_cb(GDBusConnection *con, const gchar *sender, const g
 
 void register_suspend_monitor(FpiDeviceTudor *tdev) {
     //Register a signal listener
-    g_dbus_connection_signal_subscribe(tdev->dbus_con,
+    tdev->suspend_signal_id = g_dbus_connection_signal_subscribe(tdev->dbus_con,
         LOGIND_SERVICE, LOGIND_INTERF, LOGIND_PREPARE_SLEEP_SIGNAL, LOGIND_OBJ,
         NULL, G_DBUS_SIGNAL_FLAGS_NONE,
         suspend_signal_cb, tdev, NULL

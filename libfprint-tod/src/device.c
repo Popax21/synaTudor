@@ -47,6 +47,7 @@ static void ensure_closed(FpiDeviceTudor *tdev) {
 static GList *dev_list = 0;
 
 static void fpi_device_tudor_init(FpiDeviceTudor *tdev) {
+    tdev->host_died_signal_id = tdev->suspend_signal_id = 0;
     tdev->usb_fd = -1;
     tdev->host_has_id = false;
     tdev->host_sleep_inhib = -1;
@@ -81,6 +82,12 @@ static void fpi_device_tudor_dispose(GObject *obj) {
 
 static void fpi_device_tudor_finalize(GObject *obj) {
     FpiDeviceTudor *tdev = FPI_DEVICE_TUDOR(obj);
+
+    //Unsubscribe from signals - the connection is shared, so they would otherwise outlive the device
+    if(tdev->dbus_con) {
+        if(tdev->host_died_signal_id != 0) g_dbus_connection_signal_unsubscribe(tdev->dbus_con, tdev->host_died_signal_id);
+        if(tdev->suspend_signal_id != 0) g_dbus_connection_signal_unsubscribe(tdev->dbus_con, tdev->suspend_signal_id);
+    }
 
     //Close DBus connection
     g_clear_object(&tdev->dbus_con);
