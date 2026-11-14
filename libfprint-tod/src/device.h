@@ -26,6 +26,7 @@ struct _FpiDeviceTudor {
 
     gchar *pdata_sensor_name;
     GPtrArray *open_waiters;
+    bool open_deferred;
     GTask *close_task;
     GSource *close_timeout_src;
 

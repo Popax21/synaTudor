@@ -6,6 +6,7 @@
 #define SUSPEND_CANCEL_TIMEOUT_SECS 10
 
 void register_suspend_monitor(FpiDeviceTudor *tdev);
+bool is_sleep_in_progress_error(const GError *error);
 bool create_sleep_inhibitor(FpiDeviceTudor *tdev, GError **error);
 
 static inline void close_sleep_inhibitor(gint inhib) {

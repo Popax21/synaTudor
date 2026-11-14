@@ -55,6 +55,7 @@ static void fpi_device_tudor_init(FpiDeviceTudor *tdev) {
     tdev->ipc_cancel = NULL;
     tdev->pdata_sensor_name = NULL;
     tdev->open_waiters = NULL;
+    tdev->open_deferred = false;
     tdev->close_task = NULL;
     tdev->close_timeout_src = NULL;
     tdev->cancel_handler_id = 0;

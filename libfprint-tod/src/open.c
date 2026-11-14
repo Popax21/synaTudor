@@ -331,6 +331,14 @@ static void open_waiters_cb(GObject *src_obj, GAsyncResult *res, gpointer user_d
     GError *error = NULL;
     g_task_propagate_int(G_TASK(res), &error);
 
+    //logind refuses sleep inhibitors while a sleep is in progress - keep the waiters and retry once the system has resumed
+    if(error && is_sleep_in_progress_error(error)) {
+        g_info("Deferring tudor device open until resume...");
+        tdev->open_deferred = true;
+        g_clear_error(&error);
+        return;
+    }
+
     //Complete all tasks which waited for this open
     GPtrArray *waiters = tdev->open_waiters;
     tdev->open_waiters = NULL;
@@ -359,6 +367,15 @@ void open_device(FpiDeviceTudor *tdev, GAsyncReadyCallback callback, gpointer us
     tdev->open_waiters = g_ptr_array_new();
     g_ptr_array_add(tdev->open_waiters, task);
     do_open_device(tdev, open_waiters_cb, NULL);
+}
+
+bool resume_deferred_open(FpiDeviceTudor *tdev) {
+    if(!tdev->open_deferred) return false;
+    tdev->open_deferred = false;
+
+    g_info("Retrying deferred tudor device open after resume...");
+    do_open_device(tdev, open_waiters_cb, NULL);
+    return true;
 }
 
 static void shutdown_timeout_cb(FpDevice *dev, gpointer user_data) {
