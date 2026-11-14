@@ -1,3 +1,5 @@
+#include <errno.h>
+#include <time.h>
 #include "internal.h"
 
 typedef struct {
@@ -96,6 +98,7 @@ static void usb_dev_destr(struct wdf_usb_device *usb_dev) {
 }
 
 struct wdf_usb_pipe;
+struct transfer_req_ctx;
 
 struct wdf_usb_interface {
     struct wdf_object object;
@@ -115,7 +118,17 @@ struct wdf_usb_pipe {
 
     UCHAR pipe_idx;
     const struct libusb_endpoint_descriptor *libusb_ep;
+
+    pthread_mutex_t xfers_lock;
+    pthread_cond_t xfers_cond;
+    struct transfer_req_ctx *xfers_head;
 };
+
+static void usb_pipe_destr(struct wdf_usb_pipe *usb_pipe) {
+    cant_fail_ret(pthread_mutex_destroy(&usb_pipe->xfers_lock));
+    cant_fail_ret(pthread_cond_destroy(&usb_pipe->xfers_cond));
+    wdf_cleanup_obj(&usb_pipe->object);
+}
 
 static void usb_if_destr(struct wdf_usb_interface *usb_if) {
     if(usb_if->libusb_if) {
@@ -270,11 +283,15 @@ __winfnc WDFOBJECT WdfUsbTargetDeviceGetInterface(WDF_DRIVER_GLOBALS *globals, W
     for(int i = 0; i < usb_if->num_pipes; i++) {
         struct wdf_usb_pipe *usb_pipe = &usb_if->pipes[i];
 
-        wdf_create_obj((struct wdf_object*) winwdf_get_driver(globals), &usb_pipe->object, wdf_cleanup_obj, NULL);
+        wdf_create_obj((struct wdf_object*) winwdf_get_driver(globals), &usb_pipe->object, (wdf_obj_destr_fnc*) usb_pipe_destr, NULL);
         usb_pipe->usb_if = usb_if;
 
         usb_pipe->pipe_idx = i;
         usb_pipe->libusb_ep = &if_descrp->endpoint[i];
+
+        cant_fail_ret(pthread_mutex_init(&usb_pipe->xfers_lock, NULL));
+        cant_fail_ret(pthread_cond_init(&usb_pipe->xfers_cond, NULL));
+        usb_pipe->xfers_head = NULL;
     }
 
     //Link into USB device interface list
@@ -341,11 +358,12 @@ WDFFUNC(WdfUsbInterfaceGetConfiguredPipe, 239)
 __winfnc void WdfUsbTargetPipeSetNoMaximumPacketSizeCheck(WDF_DRIVER_GLOBALS *globals, WDFOBJECT usb_pipe_obj) {}
 WDFFUNC(WdfUsbTargetPipeSetNoMaximumPacketSizeCheck, 220)
 
-__winfnc NTSTATUS WdfUsbTargetPipeAbortSynchronously(WDF_DRIVER_GLOBALS *globals, WDFOBJECT usb_pipe_obj, WDFOBJECT request, WDF_REQUEST_SEND_OPTIONS *req_opts) { return STATUS_SUCCESS; }
-WDFFUNC(WdfUsbTargetPipeAbortSynchronously, 226)
-
 __winfnc NTSTATUS WdfUsbTargetPipeResetSynchronously(WDF_DRIVER_GLOBALS *globals, WDFOBJECT usb_pipe_obj, WDFOBJECT request, WDF_REQUEST_SEND_OPTIONS *req_opts) {
     struct wdf_usb_pipe *usb_pipe = (struct wdf_usb_pipe*) usb_pipe_obj;
+
+#ifdef DBGUSB
+    log_info("USB reset pipe ep 0x%02x", usb_pipe->libusb_ep->bEndpointAddress);
+#endif
 
     int usb_err;
     if((usb_err = libusb_clear_halt(usb_pipe->usb_if->usb_device->libusb_dev, usb_pipe->libusb_ep->bEndpointAddress)) != 0) {
@@ -364,7 +382,96 @@ struct transfer_req_ctx {
     void *ctrl_buf;
 
     struct libusb_transfer *transfer;
+
+    struct wdf_usb_pipe *pipe;
+    struct transfer_req_ctx *xfer_prev, *xfer_next;
 };
+
+#define ABORT_TIMEOUT_SECS 5
+
+static void link_pipe_xfer(struct transfer_req_ctx *ctx) {
+    struct wdf_usb_pipe *usb_pipe = ctx->pipe;
+    cant_fail_ret(pthread_mutex_lock(&usb_pipe->xfers_lock));
+    ctx->xfer_prev = NULL;
+    ctx->xfer_next = usb_pipe->xfers_head;
+    if(usb_pipe->xfers_head) usb_pipe->xfers_head->xfer_prev = ctx;
+    usb_pipe->xfers_head = ctx;
+    cant_fail_ret(pthread_mutex_unlock(&usb_pipe->xfers_lock));
+}
+
+static void unlink_pipe_xfer(struct transfer_req_ctx *ctx) {
+    struct wdf_usb_pipe *usb_pipe = ctx->pipe;
+    cant_fail_ret(pthread_mutex_lock(&usb_pipe->xfers_lock));
+    if(ctx->xfer_prev) ctx->xfer_prev->xfer_next = ctx->xfer_next;
+    else usb_pipe->xfers_head = ctx->xfer_next;
+    if(ctx->xfer_next) ctx->xfer_next->xfer_prev = ctx->xfer_prev;
+    cant_fail_ret(pthread_cond_broadcast(&usb_pipe->xfers_cond));
+    cant_fail_ret(pthread_mutex_unlock(&usb_pipe->xfers_lock));
+}
+
+static bool has_pipe_xfers(struct wdf_usb_pipe *usb_pipe, struct transfer_req_ctx **xfers, int num_xfers) {
+    for(struct transfer_req_ctx *ctx = usb_pipe->xfers_head; ctx; ctx = ctx->xfer_next) {
+        for(int i = 0; i < num_xfers; i++) {
+            if(ctx == xfers[i]) return true;
+        }
+    }
+    return false;
+}
+
+__winfnc NTSTATUS WdfUsbTargetPipeAbortSynchronously(WDF_DRIVER_GLOBALS *globals, WDFOBJECT usb_pipe_obj, WDFOBJECT request, WDF_REQUEST_SEND_OPTIONS *req_opts) {
+    struct wdf_usb_pipe *usb_pipe = (struct wdf_usb_pipe*) usb_pipe_obj;
+
+    //Snapshot the pending transfers - they can't be cancelled with the lock held, as their requests' locks are taken before it when they're started
+    cant_fail_ret(pthread_mutex_lock(&usb_pipe->xfers_lock));
+
+    int num_xfers = 0;
+    for(struct transfer_req_ctx *ctx = usb_pipe->xfers_head; ctx; ctx = ctx->xfer_next) num_xfers++;
+
+    struct transfer_req_ctx **xfers = NULL;
+    struct winwdf_request **reqs = NULL;
+    if(num_xfers > 0) {
+        xfers = (struct transfer_req_ctx**) malloc(num_xfers * sizeof(struct transfer_req_ctx*));
+        reqs = (struct winwdf_request**) malloc(num_xfers * sizeof(struct winwdf_request*));
+        if(!xfers || !reqs) { perror("Couldn't allocate USB pipe abort buffers"); abort(); }
+
+        int i = 0;
+        for(struct transfer_req_ctx *ctx = usb_pipe->xfers_head; ctx; ctx = ctx->xfer_next, i++) {
+            xfers[i] = ctx;
+            reqs[i] = ctx->request;
+        }
+    }
+
+    cant_fail_ret(pthread_mutex_unlock(&usb_pipe->xfers_lock));
+
+#ifdef DBGUSB
+    log_info("USB abort pipe ep 0x%02x - %d pending transfer(s)", usb_pipe->libusb_ep->bEndpointAddress, num_xfers);
+#endif
+    if(num_xfers <= 0) return STATUS_SUCCESS;
+
+    //Cancel the transfers
+    for(int i = 0; i < num_xfers; i++) winwdf_cancel_request(reqs[i]);
+
+    //Wait for them to complete
+    struct timespec deadline;
+    cant_fail(clock_gettime(CLOCK_REALTIME, &deadline));
+    deadline.tv_sec += ABORT_TIMEOUT_SECS;
+
+    cant_fail_ret(pthread_mutex_lock(&usb_pipe->xfers_lock));
+    while(has_pipe_xfers(usb_pipe, xfers, num_xfers)) {
+        int err = pthread_cond_timedwait(&usb_pipe->xfers_cond, &usb_pipe->xfers_lock, &deadline);
+        if(err == ETIMEDOUT) {
+            log_warn("Timed out waiting for aborted transfers on USB pipe ep 0x%02x!", usb_pipe->libusb_ep->bEndpointAddress);
+            break;
+        }
+        cant_fail_ret(err);
+    }
+    cant_fail_ret(pthread_mutex_unlock(&usb_pipe->xfers_lock));
+
+    free(xfers);
+    free(reqs);
+    return STATUS_SUCCESS;
+}
+WDFFUNC(WdfUsbTargetPipeAbortSynchronously, 226)
 
 #define USBD_STATUS_SUCCESS 0x00000000
 #define USBD_STATUS_ERROR 0xc0000000
@@ -377,6 +484,13 @@ struct transfer_req_ctx {
 
 static void pipe_transfer_callback(struct libusb_transfer *transfer) {
     struct transfer_req_ctx *ctx = (struct transfer_req_ctx*) transfer->user_data;
+
+#ifdef DBGUSB
+    log_info("USB complete ep 0x%02x status %d len %d/%d", transfer->endpoint, transfer->status, transfer->actual_length, transfer->length);
+#endif
+
+    //Remove from the pipe's pending transfers
+    if(ctx->pipe) unlink_pipe_xfer(ctx);
 
     //Handle status
     if(transfer->status == LIBUSB_TRANSFER_CANCELLED) {
@@ -444,9 +558,16 @@ static NTSTATUS usb_transfer_start(struct winwdf_request *req, struct transfer_r
         memcpy((BYTE*) ctx->ctrl_buf + sizeof(struct libusb_control_setup), ctx->mem->data + ctx->mem_off.BufferOffset, ctx->mem_off.BufferLength);
     }
 
+#ifdef DBGUSB
+    log_info("USB submit ep 0x%02x len %d timeout %u", ctx->transfer->endpoint, ctx->transfer->length, ctx->transfer->timeout);
+#endif
+
     //Submit the transfer
+    if(ctx->pipe) link_pipe_xfer(ctx);
+
     int usb_err;
     if((usb_err = libusb_submit_transfer(ctx->transfer)) != 0) {
+        if(ctx->pipe) unlink_pipe_xfer(ctx);
         log_warn("libusb_submit_transfer failed: %d [%s]", usb_err, libusb_error_name(usb_err));
         return WINERR_SET_CODE;
     }
@@ -455,9 +576,16 @@ static NTSTATUS usb_transfer_start(struct winwdf_request *req, struct transfer_r
 }
 
 static void usb_transfer_cancel(struct winwdf_request *req, struct transfer_req_ctx *ctx, void *data) {
+#ifdef DBGUSB
+    log_info("USB cancel ep 0x%02x", ctx->transfer->endpoint);
+#endif
+
     //Cancel the transfer
     int usb_err;
     if((usb_err = libusb_cancel_transfer(ctx->transfer)) != 0) {
+        //The transfer already completed - its callback will complete the request
+        if(usb_err == LIBUSB_ERROR_NOT_FOUND) return;
+
         log_warn("libusb_cancel_transfer failed: %d [%s]", usb_err, libusb_error_name(usb_err));
         abort();
     }
@@ -494,6 +622,7 @@ __winfnc NTSTATUS WdfUsbTargetDeviceFormatRequestForControlTransfer(WDF_DRIVER_G
     ctx->transfer->endpoint = 0;
     ctx->transfer->type = LIBUSB_TRANSFER_TYPE_CONTROL;
     ctx->transfer->flags = 0;
+    ctx->pipe = NULL;
 
     //Configure the request
     wdf_configure_request(req, NULL, ctx, 0, 0, (wdf_request_start_fnc*) usb_transfer_start, (wdf_request_cancel_fnc*) usb_transfer_cancel, (wdf_request_cleanup_fnc*) usb_transfer_cleanup, NULL);
@@ -540,6 +669,7 @@ __winfnc NTSTATUS WdfUsbTargetPipeFormatRequestForRead(WDF_DRIVER_GLOBALS *globa
     ctx->transfer->endpoint = usb_pipe->libusb_ep->bEndpointAddress;
     ctx->transfer->type = transfer_type;
     ctx->transfer->flags = 0;
+    ctx->pipe = usb_pipe;
 
     //Configure the request
     wdf_configure_request(req, NULL, ctx, 0, 0, (wdf_request_start_fnc*) usb_transfer_start, (wdf_request_cancel_fnc*) usb_transfer_cancel, (wdf_request_cleanup_fnc*) usb_transfer_cleanup, NULL);
@@ -586,6 +716,7 @@ __winfnc NTSTATUS WdfUsbTargetPipeFormatRequestForWrite(WDF_DRIVER_GLOBALS *glob
     ctx->transfer->endpoint = usb_pipe->libusb_ep->bEndpointAddress;
     ctx->transfer->type = transfer_type;
     ctx->transfer->flags = 0;
+    ctx->pipe = usb_pipe;
 
     //Configure the request
     wdf_configure_request(req, NULL, ctx, 0, 0, (wdf_request_start_fnc*) usb_transfer_start, (wdf_request_cancel_fnc*) usb_transfer_cancel, (wdf_request_cleanup_fnc*) usb_transfer_cleanup, NULL);

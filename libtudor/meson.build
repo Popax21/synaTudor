@@ -92,6 +92,10 @@ if get_option('DBGWDF')
     libtudor_flags += ['-DDBGWDF']
 endif
 
+if get_option('DBGUSB')
+    libtudor_flags += ['-DDBGUSB']
+endif
+
 thread_dep = dependency('threads')
 libcrypto_dep = dependency('libcrypto', version: '>=3.0.0')
 libusb_dep = dependency('libusb-1.0')
